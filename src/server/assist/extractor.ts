@@ -29,15 +29,44 @@ export const GROSS_FIELD_KEYS: GrossFieldKey[] = [
   "cassettes",
 ];
 
+/**
+ * Why a value needs review (machine-readable twin of `note`). The server uses it to decide
+ * whether an operator's confirmation actually addressed the uncertainty: e.g. choosing a unit
+ * resolves "unit_missing" but not "possible_missed_decimal".
+ */
+export type ReviewReason =
+  | "unit_missing"
+  | "mixed_units"
+  | "ambiguous_number"
+  | "possible_missed_decimal"
+  | "extra_numbers"
+  | "multiple_measurements"
+  | "count_conflict"
+  | "type_differs_from_order"
+  | "label_site_differs"
+  | "cassette_part_mismatch"
+  | "cassette_range_spans_parts"
+  | "cassette_pieces_unclear"
+  | "unspecified";
+
 /** A stored field value with provenance (extends the shared GrossValue shape). */
 export type StoredValue<T> = GrossValue<T> & {
   origin?: "transcript" | "typed" | null;
   /** What the transcript (or typing) originally proposed, kept after confirmation. */
   proposedValue?: T | null;
+  /** Codes for a needs_review status (see ReviewReason). */
+  reviewReasons?: ReviewReason[] | null;
+  /** Set when the operator kept a needs-review value as dictated after checking the specimen. */
+  reviewAcknowledged?: { reasons: ReviewReason[]; note: string | null; by: string; byName: string; at: string } | null;
   confirmedBy?: string | null;
   confirmedByName?: string | null;
   confirmedAt?: string | null;
 };
+
+interface Issue {
+  code: ReviewReason;
+  text: string;
+}
 
 export type ExtractedFields = { [K in GrossFieldKey]: StoredValue<NonNullable<GrossFields[K]["value"]>> };
 
@@ -251,6 +280,8 @@ function normalizeSite(s: string): string[] {
 
 const LATERALITY_WORDS = ["left", "right", "bilateral", "midline"];
 
+const SECTION_FACTOR: Record<string, number> = { bisected: 2, halved: 2, trisected: 3, quadrisected: 4 };
+
 function fmtNum(n: number): string {
   return String(Number(n.toFixed(4)));
 }
@@ -276,9 +307,12 @@ export function extractGrossFields(text: string, opts: ExtractOptions = {}): Ext
   const missing = <T,>(note = "Not stated in transcript"): StoredValue<T> => ({
     value: null, status: "missing", evidence: null, note, origin: "transcript", proposedValue: null,
   });
-  const make = <T,>(value: T | null, evidence: Evidence | null, notes: string[], missingIfNull = true): StoredValue<T> => {
-    const status: FieldStatus = value === null && missingIfNull && !notes.length ? "missing" : notes.length ? (value === null ? "needs_review" : "needs_review") : "proposed";
-    return { value, status, evidence, note: notes.length ? notes.join(" ") : null, origin: "transcript", proposedValue: value };
+  const make = <T,>(value: T | null, evidence: Evidence | null, issues: Issue[]): StoredValue<T> => {
+    const status: FieldStatus = issues.length ? "needs_review" : value === null ? "missing" : "proposed";
+    return {
+      value, status, evidence, note: issues.length ? issues.map((i) => i.text).join(" ") : null, origin: "transcript", proposedValue: value,
+      ...(issues.length ? { reviewReasons: [...new Set(issues.map((i) => i.code))] } : {}),
+    };
   };
 
   // ---- specimen type
@@ -290,9 +324,12 @@ export function extractGrossFields(text: string, opts: ExtractOptions = {}): Ext
       if (!m) continue;
       const w = m[1].toLowerCase();
       const value = w.startsWith("nail") ? "nail_clipping" : w === "ellipse" || w === "excision" ? "excision" : w.startsWith("curett") ? "curettage" : w;
-      const notes: string[] = [];
+      const notes: Issue[] = [];
       if (opts.orderProcedure && opts.orderProcedure !== "not_stated" && opts.orderProcedure !== value) {
-        notes.push(`Transcript describes "${m[1]}"; the order says ${opts.orderProcedure.replace("_", " ")}. Confirm the observed specimen type (nothing is corrected automatically).`);
+        notes.push({
+          code: "type_differs_from_order",
+          text: `Transcript describes "${m[1]}"; the order says ${opts.orderProcedure.replace("_", " ")}. Confirm the observed specimen type (nothing is corrected automatically).`,
+        });
       }
       specimen_type = make(value, ev(text, s.start + m.index, s.start + m.index + m[0].length), notes);
       break;
@@ -301,10 +338,11 @@ export function extractGrossFields(text: string, opts: ExtractOptions = {}): Ext
 
   // ---- received in
   let received_in: StoredValue<string> = missing<string>("Fixative / transport medium not stated in transcript");
-  {
-    const m = /\breceived\s+(?:in\s+)?(formalin|fresh|saline|michel'?s(?:\s+medium)?)\b/i.exec(usable.map((s) => s.text).join(" ") ? text : "");
-    if (m && !ignoredInstructions.some((e) => m.index >= e.start && m.index < e.end)) {
-      received_in = make(m[1].toLowerCase(), ev(text, m.index, m.index + m[0].length), []);
+  for (const s of usable) {
+    const m = /\breceived\s+(?:in\s+)?(formalin|fresh|saline|michel'?s(?:\s+medium)?)\b/i.exec(s.text);
+    if (m) {
+      received_in = make(m[1].toLowerCase(), ev(text, s.start + m.index, s.start + m.index + m[0].length), []);
+      break;
     }
   }
 
@@ -343,7 +381,7 @@ export function extractGrossFields(text: string, opts: ExtractOptions = {}): Ext
         } else {
           const lat = latA && latB && latA !== latB ? ` Laterality differs (${latA} vs ${latB}).` : "";
           container_label_matches = {
-            value: null, status: "needs_review", evidence: evd, origin: "transcript", proposedValue: null,
+            value: null, status: "needs_review", evidence: evd, origin: "transcript", proposedValue: null, reviewReasons: ["label_site_differs"],
             note: `Dictated label site "${dictatedSite}" differs from the part site "${opts.partSite}".${lat} Check the physical container; the part site is not changed here.`,
           };
         }
@@ -371,9 +409,9 @@ export function extractGrossFields(text: string, opts: ExtractOptions = {}): Ext
           note: `Dictation says "${first.phrase}": count not stated. Count the pieces and enter the number.`,
         };
       } else {
-        const notes: string[] = [];
+        const notes: Issue[] = [];
         const others = matches.slice(1).filter((m) => !m.vague && m.value !== null && m.value !== first.value);
-        if (others.length) notes.push(`Transcript gives different counts ("${first.phrase}" and "${others[0].phrase}"). Confirm the piece count.`);
+        if (others.length) notes.push({ code: "count_conflict", text: `Transcript gives different counts ("${first.phrase}" and "${others[0].phrase}"). Confirm the piece count.` });
         piece_count = make(first.value, evd, notes);
       }
     }
@@ -414,20 +452,20 @@ export function extractGrossFields(text: string, opts: ExtractOptions = {}): Ext
       if (!nums.length) {
         dimensions = { value: null, status: "missing", evidence: ev(text, mt.start, mt.end), note: "\"measuring\" was dictated but no number followed", origin: "transcript", proposedValue: null };
       } else {
-        const notes: string[] = [];
+        const notes: Issue[] = [];
         const distinctUnits = [...new Set(units)];
         let unit: DimensionUnit | null = null;
         if (distinctUnits.length === 1) unit = distinctUnits[0];
-        else if (distinctUnits.length > 1) notes.push("Mixed units dictated (cm and mm). Confirm each dimension and one unit.");
-        else notes.push("Unit not stated in transcript. Choose cm or mm; no unit is assumed.");
-        for (const n of nums) if (n.ambiguous) notes.push(`Ambiguous number: ${n.ambiguous}.`);
+        else if (distinctUnits.length > 1) notes.push({ code: "mixed_units", text: "Mixed units dictated (cm and mm). Confirm each dimension and one unit." });
+        else notes.push({ code: "unit_missing", text: "Unit not stated in transcript. Choose cm or mm; no unit is assumed." });
+        for (const n of nums) if (n.ambiguous) notes.push({ code: "ambiguous_number", text: `Ambiguous number: ${n.ambiguous}.` });
         const hasSmallDecimal = nums.some((n) => n.decimal && n.value !== null && n.value < 1);
         for (const n of nums) {
           if (!n.decimal && n.value !== null && n.value >= 1 && hasSmallDecimal) {
-            notes.push(`Possible missed decimal: ${fmtNum(n.value)} vs ${fmtNum(n.value / 10)}.`);
+            notes.push({ code: "possible_missed_decimal", text: `Possible missed decimal: ${fmtNum(n.value)} vs ${fmtNum(n.value / 10)}.` });
           }
         }
-        if (nums.length > 3) notes.push("More than three numbers dictated; only the first three are proposed.");
+        if (nums.length > 3) notes.push({ code: "extra_numbers", text: "More than three numbers dictated; only the first three are proposed." });
         const first = nums[0];
         const raw = text.slice(first.start, lastEnd);
         const value: Dimensions = {
@@ -437,7 +475,7 @@ export function extractGrossFields(text: string, opts: ExtractOptions = {}): Ext
           unit,
           raw,
         };
-        const extra = measuring.length > 1 ? ["More than one measurement was dictated; the first is proposed."] : [];
+        const extra: Issue[] = measuring.length > 1 ? [{ code: "multiple_measurements", text: "More than one measurement was dictated; the first is proposed." }] : [];
         dimensions = make(value, ev(text, mt.start, lastEnd), [...notes, ...extra]);
       }
     }
@@ -454,13 +492,20 @@ export function extractGrossFields(text: string, opts: ExtractOptions = {}): Ext
   {
     const hits = usable.filter((s) => /\b(ink(?:ed)?|suture|stitch|orient(?:ed|ation)|o'clock)\b/i.test(s.text) && !/\bcassettes?\b/i.test(s.text));
     if (hits.length) {
-      const value = hits.map((s) => s.text.replace(/[.;]+$/, "")).join("; ");
+      const value = hits
+        .map((s, i) => {
+          const t = s.text.replace(/[.;]+$/, "");
+          return i === 0 ? t : t.charAt(0).toLowerCase() + t.slice(1);
+        })
+        .join("; ");
       ink_orientation = make(value, ev(text, hits[0].start, hits[hits.length - 1].end), []);
     }
   }
 
   // ---- sectioning
   let sectioning: StoredValue<string> = missing<string>("Sectioning not stated in transcript");
+  /** Cut pieces per specimen piece implied by the dictated sectioning (bisected = 2, trisected = 3...), or null. */
+  let sectionFactor: { factor: number; phrase: string } | null = null;
   {
     const found: { phrase: string; start: number; end: number }[] = [];
     for (const s of usable) {
@@ -470,6 +515,8 @@ export function extractGrossFields(text: string, opts: ExtractOptions = {}): Ext
     }
     if (found.length) {
       const phrases = [...new Set(found.map((f) => (f.phrase === "entirely submitted" || f.phrase === "submitted in toto" ? "submitted entirely" : f.phrase)))];
+      const cut = phrases.find((p) => p in SECTION_FACTOR);
+      if (cut) sectionFactor = { factor: SECTION_FACTOR[cut], phrase: cut };
       const main = phrases.filter((p) => p !== "after softening");
       let value = main.join(" and ");
       if (phrases.includes("after softening")) value = `${value} after softening`.trim();
@@ -483,7 +530,7 @@ export function extractGrossFields(text: string, opts: ExtractOptions = {}): Ext
   let cassettePieces: { value: number; phrase: string } | null = null;
   if (cassetteSentences.length) {
     const labels: string[] = [];
-    const notes: string[] = [];
+    const notes: Issue[] = [];
     let description = "";
     for (const s of cassetteSentences) {
       const covered: [number, number][] = [];
@@ -491,7 +538,7 @@ export function extractGrossFields(text: string, opts: ExtractOptions = {}): Ext
       let m: RegExpExecArray | null;
       while ((m = range.exec(s.text))) {
         const letter = m[1];
-        if (m[3] && m[3] !== letter) notes.push(`Cassette range "${m[0]}" spans two part letters.`);
+        if (m[3] && m[3] !== letter) notes.push({ code: "cassette_range_spans_parts", text: `Cassette range "${m[0]}" spans two part letters.` });
         const from = Number(m[2]);
         const to = Number(m[4]);
         if (to >= from && to - from < 20) for (let k = from; k <= to; k++) labels.push(`${letter}${k}`);
@@ -518,10 +565,10 @@ export function extractGrossFields(text: string, opts: ExtractOptions = {}): Ext
     if (unique.length) {
       if (opts.partDesignation) {
         const wrong = unique.filter((l) => l[0] !== opts.partDesignation);
-        if (wrong.length) notes.push(`Cassette label ${wrong.join(", ")} does not match part ${opts.partDesignation}. Confirm the cassette labels.`);
+        if (wrong.length) notes.push({ code: "cassette_part_mismatch", text: `Cassette label ${wrong.join(", ")} does not match part ${opts.partDesignation}. Confirm the cassette labels.` });
       }
       const pieces = cassettePieces && unique.length === 1 ? cassettePieces.value : null;
-      if (cassettePieces && unique.length > 1) notes.push(`Dictated "${cassettePieces.phrase}" but it is not clear which cassette it refers to.`);
+      if (cassettePieces && unique.length > 1) notes.push({ code: "cassette_pieces_unclear", text: `Dictated "${cassettePieces.phrase}" but it is not clear which cassette it refers to.` });
       const value: CassetteAllocation[] = unique.map((label) => ({ label, pieces, description }));
       const first = cassetteSentences[0];
       const last = cassetteSentences[cassetteSentences.length - 1];
@@ -536,9 +583,20 @@ export function extractGrossFields(text: string, opts: ExtractOptions = {}): Ext
 
   // ---- cross-field check: piece count vs cassette pieces
   if (cassettePieces && piece_count.value !== null && cassettePieces.value !== piece_count.value) {
-    const msg = `Transcript gives ${piece_count.value} piece(s) ("${piece_count.evidence?.text ?? ""}") but the cassette is dictated with "${cassettePieces.phrase}". Confirm the piece count and the cassette contents.`;
-    piece_count = { ...piece_count, status: "needs_review", note: [piece_count.note, msg].filter(Boolean).join(" ") };
-    if (cassettes.value) cassettes = { ...cassettes, status: "needs_review", note: [cassettes.note, msg].filter(Boolean).join(" ") };
+    const explained = sectionFactor && cassettePieces.value === piece_count.value * sectionFactor.factor && cassettes.value?.length === 1;
+    if (explained && cassettes.value) {
+      // "One shave, trisected ... three pieces in A1": the cut pieces are explained by the dictated sectioning, not a conflict.
+      // The cassette "pieces" field counts specimen pieces, so the dictated cut pieces are kept in the cassette contents instead.
+      const cutNote = `Dictated "${cassettePieces.phrase}" in ${cassettes.value[0].label} after the ${piece_count.value === 1 ? "piece was" : "pieces were"} ${sectionFactor!.phrase}: kept in the cassette contents. Specimen pieces in the cassette are left for you to enter.`;
+      const cut = `${cassettePieces.phrase} (${sectionFactor!.phrase})`;
+      const value = cassettes.value.map((c) => ({ ...c, pieces: null, description: [c.description, cut].filter(Boolean).join("; ") }));
+      cassettes = { ...cassettes, value, proposedValue: value, note: [cassettes.note, cutNote].filter(Boolean).join(" ") };
+    } else {
+      const msg = `Transcript gives ${piece_count.value} piece(s) ("${piece_count.evidence?.text ?? ""}") but the cassette is dictated with "${cassettePieces.phrase}". Confirm the piece count and the cassette contents.`;
+      const addReason = (r: ReviewReason[] | null | undefined): ReviewReason[] => [...new Set([...(r ?? []), "count_conflict" as const])];
+      piece_count = { ...piece_count, status: "needs_review", note: [piece_count.note, msg].filter(Boolean).join(" "), reviewReasons: addReason(piece_count.reviewReasons) };
+      if (cassettes.value) cassettes = { ...cassettes, status: "needs_review", note: [cassettes.note, msg].filter(Boolean).join(" "), reviewReasons: addReason(cassettes.reviewReasons) };
+    }
   }
 
   const fields: ExtractedFields = {

@@ -34,7 +34,7 @@ export function StatTile({ label, value, unknownReason, unit, n, stillOpen, miss
   const body = (
     <>
       <div className="flex items-start justify-between gap-2">
-        <span className="text-sm font-medium text-ink-secondary">{label}</span>
+        <span className="line-clamp-3 min-h-[3.375rem] text-sm font-medium text-ink-secondary">{label}</span>
         {href ? <ChevronRight className="mt-0.5 size-4 shrink-0 text-ink-muted" aria-hidden /> : null}
       </div>
       <div className="mt-1 flex items-baseline gap-1">
@@ -57,7 +57,7 @@ export function StatTile({ label, value, unknownReason, unit, n, stillOpen, miss
       ) : null}
       {illustrative ? (
         <div className="mt-2">
-          <IllustrativeTag>{typeof illustrative === "string" ? illustrative : "Illustrative"}</IllustrativeTag>
+          <IllustrativeTag className="max-w-full shrink whitespace-normal">{typeof illustrative === "string" ? illustrative : "Illustrative"}</IllustrativeTag>
         </div>
       ) : null}
     </>

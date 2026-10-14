@@ -275,6 +275,22 @@ export function reviewCandidate(ctx: Ctx, candidateId: string, expectedVersion: 
       `${c.display_id} cannot be changed: ${accessioned.map((m) => m.display_id).join(", ")} is already accessioned. Open a correction review on the case instead.`,
     );
   }
+  // A request already sent to the source is not withdrawn locally: the decision it was based on stays until it is issued.
+  if (members.length) {
+    const ph = members.map(() => "?").join(",");
+    const inFlight = db
+      .prepare(
+        `SELECT DISTINCT ar.display_id FROM accession_request ar JOIN accession_request_item ai ON ai.request_id = ar.id
+          WHERE ar.status = 'submitted' AND ai.intake_item_id IN (${ph})`,
+      )
+      .all(...members.map((m) => m.id)) as { display_id: string }[];
+    if (inFlight.length) {
+      throw new DomainError(
+        "BLOCKED",
+        `${c.display_id} cannot be changed while accession request ${inFlight.map((r) => r.display_id).join(", ")} is waiting for the simulated source. Retry that request when the source is back; after issue, a post-accession question goes to a correction review.`,
+      );
+    }
+  }
   if (decision === "single_accession_approved" && c.detection_rule === DETECTION_RULE_DUPLICATE_RECORD) {
     throw new DomainError(
       "INVARIANT",

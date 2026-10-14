@@ -4,7 +4,6 @@ import { httpStatusFor } from "@/server/core/errors";
 import { getDb } from "@/server/db/db";
 import { getActorId, rejectCrossOrigin } from "@/server/session";
 
-
 /**
  * POST /api/commands/<name>  body: { input, idempotencyKey }
  * Single HTTP entry point for every state change. The acting staff member

@@ -64,7 +64,8 @@ export function seedDemo(db: DB, opts: { clockRunning?: boolean } = {}): { slide
     setSetting(db, "sound_feedback", "off");
     setSetting(db, "processing_requires_approved_gross", "1");
     setSetting(db, "seed_version", SEED_VERSION);
-    setClock(db, at("10:52"), opts.clockRunning ?? true);
+    // Paused by default: the demo clock moves only when the presenter moves it.
+    setClock(db, at("10:52"), opts.clockRunning ?? false);
 
     const slides = (db.prepare("SELECT COUNT(*) n FROM slide").get() as { n: number }).n;
     const cases = (db.prepare("SELECT COUNT(*) n FROM accession WHERE is_prior_day = 0").get() as { n: number }).n;

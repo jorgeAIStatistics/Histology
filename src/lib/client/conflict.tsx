@@ -37,6 +37,8 @@ interface ConflictContextValue {
 const ConflictContext = createContext<ConflictContextValue | null>(null);
 
 const IGNORED_INPUT_KEYS = new Set(["id", "version", "expectedVersion", "expected_version", "idempotencyKey"]);
+/** Input keys whose object value holds the edited columns (e.g. `patch`). */
+const NESTED_INPUT_KEYS = new Set(["patch", "observed"]);
 
 function toSnake(key: string): string {
   return key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
@@ -62,12 +64,20 @@ export function deriveConflictFields(
   const current = d.current ?? null;
   const rows: ConflictField[] = [];
   if (current && yours) {
+    // Commands that edit a row usually send `{ id, expectedVersion, patch: {...} }`: compare the patched columns too.
+    const entries: [string, unknown][] = [];
     for (const [key, value] of Object.entries(yours)) {
+      if (NESTED_INPUT_KEYS.has(key) && value && typeof value === "object" && !Array.isArray(value)) entries.push(...Object.entries(value as Record<string, unknown>));
+      else entries.push([key, value]);
+    }
+    for (const [key, value] of entries) {
       if (IGNORED_INPUT_KEYS.has(key)) continue;
       const col: string = key in current ? key : toSnake(key);
       if (!(col in current)) continue;
-      if (same(current[col], value)) continue;
-      rows.push({ field: col, label: labels[key] ?? labels[col], theirs: current[col], yours: value });
+      // SQLite stores booleans as 0/1.
+      const theirs = typeof value === "boolean" && (current[col] === 0 || current[col] === 1) ? current[col] === 1 : current[col];
+      if (same(theirs, value)) continue;
+      rows.push({ field: col, label: labels[key] ?? labels[col], theirs, yours: value });
     }
   }
   if (rows.length === 0 && (d.currentVersion !== undefined || d.expectedVersion !== undefined)) {

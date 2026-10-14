@@ -22,6 +22,18 @@ export type HoldTransition =
   | "tray_delivery"
   | "all";
 
+/** Plain-language names for the steps a hold can stop. */
+export const HOLD_TRANSITION_LABEL: Record<HoldTransition, string> = {
+  accession_request: "accession request",
+  routing_confirm: "routing confirmation",
+  gross_approval: "gross approval",
+  processing: "processing",
+  sectioning: "sectioning",
+  print: "label printing",
+  tray_delivery: "tray delivery",
+  all: "all steps",
+};
+
 export type ScopeType = "intake_item" | "container" | "order_part" | "specimen_part" | "block" | "slide" | "work_order" | "accession";
 
 export interface Scope {
@@ -170,13 +182,24 @@ export function placeHold(ctx: Ctx, input: PlaceHoldInput): HoldRow {
     entityId: id,
     accessionId: input.accessionId,
     intakeItemId: input.intakeItemId,
-    summary: `${display} placed on ${input.scopeLabel}: ${input.reasonText} (blocks ${input.blocks.join(", ")})`,
+    summary: `${display} placed on ${input.scopeLabel}: ${input.reasonText} (holds ${input.blocks.map((b) => HOLD_TRANSITION_LABEL[b] ?? b).join(", ")})`,
   });
   if (input.accessionId) {
     const path = ctx.db.prepare("SELECT assigned_pathologist_id p FROM accession WHERE id = ?").get(input.accessionId) as { p: string } | undefined;
     recordWorklistChange(ctx, { accessionId: input.accessionId, pathologistId: path?.p, type: "changed", summary: `Hold ${display} on ${input.scopeLabel}` });
   }
   return ctx.db.prepare("SELECT * FROM hold WHERE id = ?").get(id) as HoldRow;
+}
+
+/**
+ * Other domains react to a released hold (e.g. grossing re-derives which
+ * cassettes became eligible for processing). Listeners register at module
+ * load; this avoids an import cycle between holds and those domains.
+ */
+type HoldReleaseListener = (ctx: Ctx, hold: HoldRow) => void;
+const releaseListeners: HoldReleaseListener[] = [];
+export function onHoldReleased(listener: HoldReleaseListener): void {
+  if (!releaseListeners.includes(listener)) releaseListeners.push(listener);
 }
 
 export function releaseHold(ctx: Ctx, holdId: string, reason: string, expectedVersion?: number): HoldRow {
@@ -204,5 +227,6 @@ export function releaseHold(ctx: Ctx, holdId: string, reason: string, expectedVe
     const path = ctx.db.prepare("SELECT assigned_pathologist_id p FROM accession WHERE id = ?").get(h.accession_id) as { p: string } | undefined;
     recordWorklistChange(ctx, { accessionId: h.accession_id, pathologistId: path?.p, type: "changed", summary: `Hold ${h.display_id} released (${h.scope_label})` });
   }
+  for (const listener of releaseListeners) listener(ctx, updated);
   return updated;
 }

@@ -129,8 +129,13 @@ export function grossFinalizeBlockers(fields: GrossFields, narrative: string): F
   if (c.status === "confirmed" && c.value) {
     if (c.value.length === 0) out.push({ field: "cassettes", message: "No cassettes allocated" });
     const pieces = c.value.reduce((s, x) => s + (x.pieces ?? 0), 0);
-    if (pc.status === "confirmed" && pc.value && c.value.every((x) => x.pieces !== null) && pieces !== pc.value && fields.sectioning.value?.match(/entirely/i)) {
-      out.push({ field: "cassettes", message: `Cassette piece total (${pieces}) does not match piece count (${pc.value}) — confirm sectioning` });
+    // Cassette pieces count tissue fragments after sectioning, so one specimen
+    // that was bisected/trisected legitimately yields 2/3 pieces in cassettes.
+    const sectioningText = fields.sectioning.value ?? "";
+    const multiplier = /trisect/i.test(sectioningText) ? 3 : /bisect/i.test(sectioningText) ? 2 : 1;
+    const expectedPieces = (pc.value ?? 0) * multiplier;
+    if (pc.status === "confirmed" && pc.value && c.value.every((x) => x.pieces !== null) && pieces !== pc.value && pieces !== expectedPieces && /entirely/i.test(sectioningText)) {
+      out.push({ field: "cassettes", message: `Cassette piece total (${pieces}) does not match the specimen piece count (${pc.value}${multiplier > 1 ? `, or ${expectedPieces} after sectioning` : ""}) — confirm sectioning` });
     }
   }
   if (!narrative.trim()) out.push({ field: "narrative", message: "Narrative is empty" });

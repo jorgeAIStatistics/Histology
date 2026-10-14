@@ -3,7 +3,7 @@
 import { useId, useState, type ReactNode } from "react";
 import { OctagonX } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { ERROR_TITLE, useCommand, type CommandFailure, type UseCommandOptions } from "@/lib/client/command";
+import { ERROR_TITLE, failureMessage, useCommand, type CommandFailure, type UseCommandOptions } from "@/lib/client/command";
 import { Button, type ButtonSize, type ButtonVariant } from "./button";
 import { ConfirmDialog } from "./dialog";
 
@@ -17,7 +17,7 @@ export function CommandError({ error, className, id }: { error: CommandFailure |
     <p id={id} role="alert" className={cn("flex items-start gap-1.5 text-sm text-danger-fg", className)}>
       <OctagonX className="mt-0.5 size-4 shrink-0 text-danger-solid" aria-hidden />
       <span>
-        <span className="font-semibold">{ERROR_TITLE[error.code] ?? "Action failed"}:</span> {error.message}
+        <span className="font-semibold">{ERROR_TITLE[error.code] ?? "Action failed"}:</span> {failureMessage(error)}
       </span>
     </p>
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { fmtFull, fmtSmart } from "@/lib/time";
+import { fmtDateTime, fmtFull, fmtSmart } from "@/lib/time";
 import { Button } from "./button";
 import { Dialog } from "./dialog";
 
@@ -53,6 +53,8 @@ export function humanizeField(name: string): string {
 export function formatConflictValue(v: unknown): ReactNode {
   if (v === null || v === undefined || v === "") return <span className="text-ink-muted">None</span>;
   if (typeof v === "boolean") return v ? "Yes" : "No";
+  // Timestamps (UTC ISO) read in lab time.
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v) && !Number.isNaN(Date.parse(v))) return `${fmtDateTime(v)} ET`;
   if (typeof v === "object") {
     try {
       return <code className="id-mono whitespace-pre-wrap break-all text-xs">{JSON.stringify(v)}</code>;
@@ -96,7 +98,7 @@ export function ConflictDialog({
       title="Someone else changed this item"
       description={
         <>
-          {lead} Nothing was saved. Review their values before you continue. Press Esc to keep editing.
+          {lead} Your changes were not saved yet. Compare the values below; press Esc to keep editing.
         </>
       }
       size="lg"

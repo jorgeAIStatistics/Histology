@@ -1,6 +1,6 @@
 import type { DB } from "../db/db";
 import type { Role, Permission } from "@/lib/roles";
-import { roleCan, ROLE_LABEL, rolesFor } from "@/lib/roles";
+import { roleCan, ROLE_LABEL, rolesFor, PERMISSION_LABEL } from "@/lib/roles";
 import { DomainError } from "./errors";
 import { demoNow } from "./clock";
 
@@ -45,7 +45,7 @@ export function requirePermission(ctx: Ctx, permission: Permission): void {
     const allowed = rolesFor(permission).map((r) => ROLE_LABEL[r]).join(", ");
     throw new DomainError(
       "FORBIDDEN",
-      `${ROLE_LABEL[ctx.actor.role]} cannot perform "${permission}". Allowed: ${allowed}.`,
+      `Not allowed: ${ROLE_LABEL[ctx.actor.role]} cannot ${PERMISSION_LABEL[permission] ?? permission}. Allowed: ${allowed}.`,
       { permission, role: ctx.actor.role },
     );
   }

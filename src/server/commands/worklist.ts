@@ -8,26 +8,10 @@ import { DomainError } from "../core/errors";
 import { currentWorklistSeq, recordWorklistChange } from "../core/feed";
 import { displayId, newId } from "../core/ids";
 import { updateVersioned } from "../core/versioning";
-import { ROLE_LABEL, type Role } from "@/lib/roles";
 import { fmtFull } from "@/lib/time";
 import { getWorklist, loadSourceFreshness } from "../queries/worklist";
 import { describeFilters, worklistFiltersSchema, worklistViewSchema, VIEW_LABEL } from "@/components/worklist/views";
-
-/** Roles that run bench work and may own operational tasks. Read-only demo roles and pathologists cannot claim lab tasks. */
-const TASK_ROLES: Role[] = ["accessioner", "accessioning_lead", "grosser", "histology_assistant", "histotech", "supervisor"];
-/** Roles that may release a task someone else owns. */
-const TASK_RELEASE_ANY: Role[] = ["accessioning_lead", "supervisor"];
-
-function requireTaskRole(ctx: Ctx, action: string): void {
-  if (ctx.origin !== "user") return;
-  if (!TASK_ROLES.includes(ctx.actor.role)) {
-    throw new DomainError(
-      "FORBIDDEN",
-      `${ROLE_LABEL[ctx.actor.role]} cannot ${action}. Allowed: ${TASK_ROLES.map((r) => ROLE_LABEL[r]).join(", ")}.`,
-      { role: ctx.actor.role },
-    );
-  }
-}
+import { checkClaim, checkRelease, roleLabel, TASK_ROLES } from "@/components/worklist/task-rules";
 
 // ---------------------------------------------------------------- worklist.ack
 
@@ -103,7 +87,7 @@ export const worklistSnapshot = defineCommand({
       action: "worklist.snapshot",
       entityType: "worklist_snapshot",
       entityId: id,
-      summary: `${display}: ${input.format === "print" ? "printed" : "downloaded (CSV)"} ${VIEW_LABEL[input.view]} worklist v${data.seq}, ${rowCount} row(s), filters: ${describeFilters(input.filters ?? {}, doctorName)}. Generated ${fmtFull(ctx.now)}.${freshness.stale ? " Source data was stale at generation." : ""}`,
+      summary: `${display}: ${input.format === "print" ? "printed" : "downloaded (CSV)"} ${VIEW_LABEL[input.view]} worklist v${data.seq}, ${rowCount} ${rowCount === 1 ? "row" : "rows"}, filters: ${describeFilters(input.filters ?? {}, doctorName)}. Generated ${fmtFull(ctx.now)}.${freshness.stale ? " Source data was stale at generation." : ""}`,
       after: { seq: data.seq, rowCount, dataAsOf: freshness.dataAsOf, stale: freshness.stale },
     });
     return {
@@ -212,74 +196,95 @@ function noteTaskChange(ctx: Ctx, t: TaskRow, summary: string): void {
   }
 }
 
+function rulesView(ctx: Ctx, t: TaskRow) {
+  return { ownerId: t.owner_id, ownerName: t.owner_id ? staffName(ctx, t.owner_id) : null, ownerRole: t.owner_role, status: t.status };
+}
+
+/**
+ * Permission note: there is no dedicated `task.claim` key in src/lib/roles.ts (foundation). The command
+ * registry checks `worklist.ack`; the real rules (role must fit the task, takeover only by a lead or the
+ * supervisor with a reason) live in components/worklist/task-rules.ts and are enforced here on the server.
+ */
 export const taskClaim = defineCommand({
   name: "task.claim",
-  description: "Take ownership of a task (become the current task owner). Detects a stale view if someone else claimed or changed it first.",
+  description:
+    "Take ownership of a task (become the current task owner). The claimant's role must fit the task; taking over someone else's task needs an accessioning lead or the supervisor and a reason. Detects a stale view.",
   permission: "worklist.ack",
-  input: z.object({ taskId: z.string().min(1).max(64), expectedVersion: z.number().int().min(1) }),
+  input: z.object({
+    taskId: z.string().min(1).max(64),
+    expectedVersion: z.number().int().min(1),
+    /** Required when taking over a task someone else owns. */
+    reason: z.string().trim().max(200).optional(),
+  }),
   run: (ctx, input) => {
-    requireTaskRole(ctx, "claim lab tasks");
     const t = loadTask(ctx, input.taskId);
-    if (t.status === "done" || t.status === "canceled") {
-      throw new DomainError("INVARIANT", `This task is already ${t.status === "done" ? "done" : "canceled"}; there is nothing to claim.`);
+    const pre = checkClaim(ctx.actor, rulesView(ctx, t));
+    // Closed tasks and roles that never own bench tasks are refused before anything else.
+    if (!pre.ok && (pre.code === "INVARIANT" || !TASK_ROLES.includes(ctx.actor.role))) throw new DomainError(pre.code, pre.reason, { role: ctx.actor.role });
+    // Already mine and in progress (double click, second tab): nothing to change.
+    if (pre.ok && pre.unchanged) return { taskId: t.id, ownerId: ctx.actor.id, version: t.version, unchanged: true };
+    // A stale view is reported as a conflict first: someone claimed or changed this task after the user loaded it.
+    if (t.version !== input.expectedVersion) {
+      throw new DomainError(
+        "CONFLICT",
+        `This task changed since you loaded it (you had version ${input.expectedVersion}, current is ${t.version}; owner now: ${t.owner_id ? staffName(ctx, t.owner_id) : "nobody"}). Review it before claiming.`,
+        { table: "task", id: t.id, expectedVersion: input.expectedVersion, currentVersion: t.version, current: t },
+      );
     }
-    if (t.owner_id === ctx.actor.id && t.status === "in_progress") {
-      if (t.version !== input.expectedVersion) {
-        // Same outcome the user wanted; still report that the row moved on.
-        return { taskId: t.id, ownerId: ctx.actor.id, version: t.version, unchanged: true };
-      }
-      return { taskId: t.id, ownerId: ctx.actor.id, version: t.version, unchanged: true };
+    if (!pre.ok) throw new DomainError(pre.code, pre.reason, { role: ctx.actor.role, ownerRole: t.owner_role });
+    const reason = input.reason?.trim() || null;
+    if (pre.takeover && (!reason || reason.length < 3)) {
+      throw new DomainError("VALIDATION", `Taking over a task from ${staffName(ctx, t.owner_id)} needs a reason (recorded in the audit log).`);
     }
-    const updated = updateVersioned(ctx.db, "task", t.id, input.expectedVersion, {
-      owner_id: ctx.actor.id,
-      owner_role: ctx.actor.role,
-      status: "in_progress",
-    }) as unknown as TaskRow;
-    const previous = t.owner_id && t.owner_id !== ctx.actor.id ? ` (previous owner: ${staffName(ctx, t.owner_id)})` : "";
+    // owner_role is the role the task is meant for; claiming never changes it, so releasing returns it to the right queue.
+    const updated = updateVersioned(ctx.db, "task", t.id, input.expectedVersion, { owner_id: ctx.actor.id, status: "in_progress" }) as unknown as TaskRow;
+    const previous = pre.takeover ? ` (taken over from ${staffName(ctx, t.owner_id)})` : "";
     audit(ctx, {
-      action: "task.claimed",
+      action: pre.takeover ? "task.reassigned" : "task.claimed",
       entityType: "task",
       entityId: t.id,
       accessionId: t.accession_id,
       intakeItemId: t.intake_item_id,
-      summary: `${ctx.actor.name} claimed "${t.title}"${previous}`,
+      summary: `${ctx.actor.name} ${pre.takeover ? "took over" : "claimed"} "${t.title}"${previous}`,
+      reason,
       before: { ownerId: t.owner_id, ownerRole: t.owner_role, status: t.status },
-      after: { ownerId: ctx.actor.id, ownerRole: ctx.actor.role, status: "in_progress" },
+      after: { ownerId: ctx.actor.id, ownerRole: t.owner_role, status: "in_progress" },
     });
-    noteTaskChange(ctx, t, `Task owner: ${ctx.actor.name} claimed "${t.title}"`);
-    return { taskId: t.id, ownerId: ctx.actor.id, version: updated.version, unchanged: false };
+    noteTaskChange(ctx, t, `Task owner: ${ctx.actor.name} ${pre.takeover ? "took over" : "claimed"} "${t.title}"`);
+    return { taskId: t.id, ownerId: ctx.actor.id, version: updated.version, unchanged: false, takeover: pre.takeover };
   },
 });
 
 export const taskRelease = defineCommand({
   name: "task.release",
-  description: "Give a claimed task back to the queue (no owner). Only the current owner, an accessioning lead or the supervisor can release it.",
+  description:
+    "Give a claimed task back to the queue (no owner; the role it is meant for is kept). The current owner can release it; an accessioning lead or the supervisor can release anyone's task with a reason.",
   permission: "worklist.ack",
-  input: z.object({ taskId: z.string().min(1).max(64), reason: z.string().trim().max(200).optional() }),
+  input: z.object({
+    taskId: z.string().min(1).max(64),
+    reason: z.string().trim().max(200).optional(),
+    expectedVersion: z.number().int().min(1).optional(),
+  }),
   run: (ctx, input) => {
-    requireTaskRole(ctx, "release lab tasks");
     const t = loadTask(ctx, input.taskId);
-    if (t.status === "done" || t.status === "canceled") {
-      throw new DomainError("INVARIANT", `This task is already ${t.status === "done" ? "done" : "canceled"}; it cannot be released.`);
+    const check = checkRelease(ctx.actor, rulesView(ctx, t));
+    if (!check.ok) throw new DomainError(check.code, check.reason, { role: ctx.actor.role });
+    if (check.unchanged) return { taskId: t.id, ownerId: null, version: t.version, unchanged: true };
+    const reason = input.reason?.trim() || null;
+    if (check.othersTask && (!reason || reason.length < 3)) {
+      throw new DomainError("VALIDATION", `Releasing ${staffName(ctx, t.owner_id)}'s task needs a reason (recorded in the audit log).`);
     }
-    if (!t.owner_id) return { taskId: t.id, ownerId: null, version: t.version, unchanged: true };
-    if (t.owner_id !== ctx.actor.id && !TASK_RELEASE_ANY.includes(ctx.actor.role)) {
-      throw new DomainError(
-        "FORBIDDEN",
-        `Only the current owner (${staffName(ctx, t.owner_id)}), an accessioning lead or the supervisor can release this task.`,
-      );
-    }
-    const updated = updateVersioned(ctx.db, "task", t.id, t.version, { owner_id: null, status: "open" }) as unknown as TaskRow;
+    const updated = updateVersioned(ctx.db, "task", t.id, input.expectedVersion ?? t.version, { owner_id: null, status: "open" }) as unknown as TaskRow;
     audit(ctx, {
       action: "task.released",
       entityType: "task",
       entityId: t.id,
       accessionId: t.accession_id,
       intakeItemId: t.intake_item_id,
-      summary: `${ctx.actor.name} released "${t.title}" back to the queue${t.owner_id !== ctx.actor.id ? ` (was owned by ${staffName(ctx, t.owner_id)})` : ""}`,
-      reason: input.reason ?? null,
-      before: { ownerId: t.owner_id, status: t.status },
-      after: { ownerId: null, status: "open" },
+      summary: `${ctx.actor.name} released "${t.title}" back to the ${t.owner_role ? `${roleLabel(t.owner_role).toLowerCase()} ` : ""}queue${check.othersTask ? ` (was owned by ${staffName(ctx, t.owner_id)})` : ""}`,
+      reason,
+      before: { ownerId: t.owner_id, ownerRole: t.owner_role, status: t.status },
+      after: { ownerId: null, ownerRole: t.owner_role, status: "open" },
     });
     noteTaskChange(ctx, t, `Task released to the queue: "${t.title}"`);
     return { taskId: t.id, ownerId: null, version: updated.version, unchanged: false };

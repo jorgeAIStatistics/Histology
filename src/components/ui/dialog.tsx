@@ -90,7 +90,9 @@ export function Dialog({
         onClose();
       }}
       className={cn(
-        "hlo-dialog m-auto max-h-[calc(100vh-4rem)] overflow-visible rounded-lg border border-line bg-surface p-0 text-ink shadow-3 open:animate-fade-in",
+        // A dialog is often rendered inside a table cell or a right-aligned toolbar (top layer, but CSS still
+        // inherits from the DOM parent): reset the inherited text settings so it always reads like a page.
+        "hlo-dialog m-auto max-h-[calc(100vh-4rem)] overflow-visible rounded-lg border border-line bg-surface p-0 text-left text-base font-normal whitespace-normal normal-case tracking-normal text-ink shadow-3 open:animate-fade-in",
         SIZES[size],
         className,
       )}

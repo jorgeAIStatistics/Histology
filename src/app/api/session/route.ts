@@ -3,7 +3,6 @@ import { getDb } from "@/server/db/db";
 import { loadActor } from "@/server/core/context";
 import { ACTOR_COOKIE, getActor, rejectCrossOrigin } from "@/server/session";
 
-
 /**
  * DEMO role switch, not authentication. The "Acting as" selector posts a
  * staff id here and we remember it in a cookie. Anyone using this local demo

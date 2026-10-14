@@ -1,6 +1,6 @@
 import type { DB } from "../db/db";
 import { Rng, ins, addMinutes, pad } from "./util";
-import { at, DEMO_DAY, PRIOR_DAY, OFFICES, ROUTING_V3, CLINICIANS_BY_OFFICE, TENANT, ensureStorageSlot } from "./reference";
+import { at, DEMO_DAY, PRIOR_DAY, OFFICES, ROUTING_V3, CLINICIANS_BY_OFFICE, TENANT, ensureStorageSlot, STAFF } from "./reference";
 import {
   upsertPatient, createEncounter, createOrder, orderPayload, createIntake, createRoutingDecision, createAccession,
   createPart, createBlock, createSlide, createWorkOrder, createPrintedLabel, confirmedGrossFields, grossNarrative,
@@ -8,6 +8,8 @@ import {
 } from "./builders";
 import { emptyGrossFields } from "@/lib/gross";
 import type { GrossFields } from "@/lib/gross";
+
+const STAFF_NAME: Record<string, string> = Object.fromEntries(STAFF.map((x) => [x.id, x.name]));
 
 const GIVEN = [
   "Alma", "Bennett", "Carla", "Desmond", "Elise", "Felipe", "Gloria", "Harlan", "Ines", "Joel", "Kendra", "Lionel", "Mirela", "Nolan",
@@ -181,7 +183,7 @@ export function seedHistory(db: DB): HistoryResult {
         verified: { by: "stf_maya", at: addMinutes(receivedAt, 3) },
       })),
     });
-    const rd = createRoutingDecision(db, { intakeId, officeId, pathologistId: pathologist, status: "confirmed", by: "stf_maya", at: addMinutes(receivedAt, 4), explanation: `Rule set v3: ${office.name} → assigned dermatopathologist` });
+    const rd = createRoutingDecision(db, { intakeId, officeId, pathologistId: pathologist, status: "confirmed", by: "stf_maya", at: addMinutes(receivedAt, 4), explanation: `From rule: ${office.name} → ${STAFF_NAME[pathologist]} (rule set v3, effective Sep 1)` });
     const accId = createAccession(db, { number, issuedAt: issued, patientId, officeId, clinicianId: clinician, pathologistId: pathologist, routingDecisionId: rd, day: PRIOR_DAY, priority: rng.chance(0.08) ? "rush" : "routine" });
     db.prepare("UPDATE intake_item SET accession_id = ? WHERE id = ?").run(accId, intakeId);
     seedAudit(db, { at: issued, actor: "system", role: "supervisor", origin: "simulator", action: "accession.issued", entityType: "accession", entityId: accId, accessionId: accId, intakeItemId: intakeId, summary: `Accession ${number} issued by authoritative source simulator` });
@@ -320,13 +322,13 @@ export function seedHistory(db: DB): HistoryResult {
       const [y, mo, d] = pat.dob.split("-");
       const swapped = Number(d) <= 12 && d !== mo ? `${y}-${d}-${mo}` : `${y}-${mo}-${pad(Math.min(28, Number(d) + 1), 2)}`;
       db.prepare("UPDATE container SET observed_label = json_set(observed_label, '$.birth_date', ?), verification_state = 'discrepancy' WHERE intake_item_id = ?").run(swapped, intakeId);
-      createRoutingDecision(db, { intakeId, officeId, pathologistId: pathologist, status: "suggested", by: null, at: addMinutes(receivedAt, 1), explanation: `Rule set v3: ${office.name} → assigned dermatopathologist` });
+      createRoutingDecision(db, { intakeId, officeId, pathologistId: pathologist, status: "suggested", by: null, at: addMinutes(receivedAt, 1), explanation: `From rule: ${office.name} → ${STAFF_NAME[pathologist]} (rule set v3, effective Sep 1)` });
       db.prepare("INSERT INTO app_setting(key,value,updated_at) VALUES ('seed_identity_intake', ?, ?)").run(intakeId, receivedAt);
       continue;
     }
     accNo += 1;
     const number = `D26-0${accNo}`;
-    const rd = createRoutingDecision(db, { intakeId, officeId, pathologistId: pathologist, status: "confirmed", by: accessioner, at: addMinutes(receivedAt, 3), explanation: `Rule set v3: ${office.name} → assigned dermatopathologist` });
+    const rd = createRoutingDecision(db, { intakeId, officeId, pathologistId: pathologist, status: "confirmed", by: accessioner, at: addMinutes(receivedAt, 3), explanation: `From rule: ${office.name} → ${STAFF_NAME[pathologist]} (rule set v3, effective Sep 1)` });
     const issued = addMinutes(receivedAt, rng.int(8, 30));
     const accId = createAccession(db, { number, issuedAt: issued, patientId, officeId, clinicianId: clinician, pathologistId: pathologist, routingDecisionId: rd, day: DEMO_DAY });
     db.prepare("UPDATE intake_item SET accession_id = ? WHERE id = ?").run(accId, intakeId);

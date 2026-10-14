@@ -205,7 +205,7 @@ export function useCommand<R = unknown, I = unknown>(name: string, options: UseC
               ...(o.conflict || {}),
             });
           } else if (o.errorToast !== false) {
-            toast.show({ tone: "warning", title: ERROR_TITLE[out.error.code] ?? "Action failed", body: out.error.message });
+            toast.show({ tone: "warning", title: ERROR_TITLE[out.error.code] ?? "Action failed", body: failureMessage(out.error) });
           }
           o.onError?.(out.error, input);
         }
@@ -231,7 +231,18 @@ export function useCommand<R = unknown, I = unknown>(name: string, options: UseC
   return { run, pending, error, result, reset };
 }
 
+/**
+ * The server message without a leading copy of its title, so the screen reads
+ * "Not allowed: Director … cannot …" rather than "Not allowed: Not allowed: …"
+ * (server role refusals already start with "Not allowed:").
+ */
+export function failureMessage(error: CommandFailure): string {
+  const title = ERROR_TITLE[error.code] ?? "Action failed";
+  const message = error.message ?? "";
+  return message.toLowerCase().startsWith(`${title.toLowerCase()}:`) ? message.slice(title.length + 1).trimStart() : message;
+}
+
 /** Plain-text summary of a failure for inline display: "Not allowed: <message>". */
 export function describeFailure(error: CommandFailure): { title: string; message: ReactNode } {
-  return { title: ERROR_TITLE[error.code] ?? "Action failed", message: error.message };
+  return { title: ERROR_TITLE[error.code] ?? "Action failed", message: failureMessage(error) };
 }

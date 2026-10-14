@@ -19,7 +19,7 @@
 
 ## 1. Summary
 
-**What I have observed.** At several handoffs, information about each specimen is re-copied by hand (stickers, memory, a printed daily report, retyping), and questions to offices wait without a clear owner or follow-up. These are my observations as an employee, not measured rates.
+**What I have observed.** At several handoffs, information about each specimen is re-copied by hand (stickers, memory, a printed daily report, retyping). Replies to office clarification messages can be delayed; we don't yet know why. Unclear follow-up ownership is one hypothesis to check. These are my observations as an employee, not measured rates.
 
 **What I propose.** Treat each burden as a separate gap and check, in this order:
 
@@ -37,8 +37,9 @@ These come from about four months as a histology assistant at our lab, plus earl
 
 | ID | What I observed (our lab unless stated) | Why it may matter | Still unknown |
 |---|---|---|---|
-| O2 | Three accessioners remember which submitting office routes to which of three dermatopathologists. | No written rule or effective date is visible at the bench; risk rises when someone is new or covering. | Whether an approved mapping and coverage rule exists; whether EMA can store or apply it. |
-| O3 | Accessioning compares patient information, bottle, biopsy site and requisition/order. Questions arise about shave vs punch, orientation, marks, laterality and exact site. | Each question becomes a clarification and a held specimen. | How often, from which offices, in which categories. |
+| O1 | Couriers usually arrive around 11 a.m. with specimens from several dermatology offices. | Arrival is likely a peak for reconciliation and routing work (not measured). | Whether any list of expected containers (a manifest) exists. |
+| O2 | Three accessioners remember which submitting office routes to which of three dermatopathologists. | I have not seen a written rule at the bench; whether one exists is unknown. Relying on memory may be a risk when someone is new or covering. | Whether an approved mapping and coverage rule exists; whether EMA can store or apply it. |
+| O3 | Accessioning compares patient information, bottle, biopsy site and requisition/order. Questions arise about shave vs punch, orientation, marks, laterality and exact site. | A question may require a clarification and may hold the specimen; how often is unknown. | How often, from which offices, in which categories. |
 | O4 | Offices sometimes enter parts A and B as separate orders ("two patients"). Correction after accession assignment is difficult. | Extra reconciliation; risk of a split case. | Whether the cause is separate orders, encounters, accession records or duplicate patient records. |
 | O5 | Clarification messages through EMA can get delayed responses. | Held work waits; follow-up depends on memory. | Whether notifications are unsupported, disabled, ignored or reaching the wrong person. |
 | O6 | Case-number stickers go on paper requisitions for doctors; cassettes/blocks are marked by hand with case numbers. | Identifiers are copied by hand. | The exact object marked and the sequence (to confirm locally). |
@@ -54,26 +55,26 @@ These come from about four months as a histology assistant at our lab, plus earl
 - **[R6]** A 2016 single-center improvement series reported labeling errors falling from 1.03% to 0.28% after a barcode-enabled LIS intervention, then to 0.22% after further workflow changes; manual slide printing and microtomy were major error sources. *A historical result elsewhere, not a promised effect.*
 - **[R7]** A University of Florida before/after study found fewer wrong-tissue-in-block incidents after barcode confirmation was reinforced with a workflow hard stop. *A barcode feature without an enforced process is not enough.*
 - **[R8]** A biopsy grossing study found voice recognition had negligible effect on the prosector's specimen time while reducing transcription needs. *Source capture is worth exploring; it does not automatically speed grossing or prevent every error.*
-- **[R9]** Observational work at UPMC documented manual work and communication burdens and stressed integration with the pathology information system. *Observe the real work before choosing screens.*
+- **[R9]** A 2012 UPMC contextual-inquiry study of six pathologists found anatomic pathology workflow labor-intensive and concluded that a digital slide system should integrate with the AP information system. *Its subjects were pathologists, not histology staff; the transferable lesson is to observe real work before designing screens.*
 - **[R5]** The CAP/NSH practical specimen-handling guide (version 12.0, March 2025) covers identification, discrepancy handling, traceability and validation of barcode materials and equipment. *Guidance to review with lab leadership, not an exhaustive accreditation checklist.*
 
-Figures above are as summarized in the project brief (research checked 2026-10-14). They should be re-read in the original papers before being quoted outside this discussion.
+The figures above were checked against the sources on 2026-10-14; details, retrieval methods and limits are in `research-notes.md` (for example, only abstracts were read for R7–R9). They should be re-read in the original papers before being quoted outside this discussion.
 
 ---
 
 ## 3. The specific demonstration (5 minutes, synthetic)
 
-The guided demo lives at `/demo` in the local app. It also includes a before/proposed-after workflow map and short speaker notes. Demo day: **Wednesday 2026-10-14**, Eastern time, demo clock starting about **10:52**, courier about **11:00**. The seeded day has about 60 cases and more than 300 synthetic slides; these numbers are illustrative and do not model our case mix.
+The guided demo lives at `/demo` in the local app. It also includes a before/proposed-after workflow map, short speaker notes and a "real vs simulated" summary. Demo day: **Wednesday 2026-10-14**, Eastern time, demo clock starting at **10:52**, courier at **11:00**. The seeded day has about 60 cases and more than 300 synthetic slides; these numbers are illustrative and do not model our case mix. Steps 1–5 follow one multipart case; steps 6 and 7 use earlier synthetic cases, because the new case has no slides or stored blocks yet on its first morning.
 
 | Step | What you see | Burden addressed | What it does *not* show |
 |---|---|---|---|
-| 1. Courier arrival | Expected vs received containers. Known offices are routed by an approved, versioned rule (rule set v3, effective 2026-09-01). A new office with no rule (Seagrape Skin Studio) becomes a **routing exception**, never a guessed doctor. | O2, O3 | Real courier manifests; whether EMA can already do this. |
-| 2. Two orders, one patient | Synthetic patient Avery Quinlan (Harbor Point Dermatology; ordering clinician Dr. Hannah Cole; assigned dermatopathologist Dr. Elena Marsh). Part A (ORD-77120, left upper back, shave) and Part B (ORD-77121, punch) arrive as separate orders from the same encounter. The system **proposes** a related-order candidate with its reasons; both source records are kept; a staff reviewer decides. Nothing is merged. | O4 | What EMA actually creates in this situation. |
-| 3. Site mismatch | Part B's order says **right** dorsal forearm; the bottle label says **left** dorsal forearm. A targeted clarification (CLR-0457) is created and **only Part B** is held. A simulated office answer is reviewed by lab staff before the task is resolved. | O3, O5 | Real office behavior or real notification delivery. |
-| 4. Official accession | The simulated source system issues accession D26-04817. The provisional intake ID (INT-1014-031) looks visibly different. The case view shows A and B, blocks, source documents, tasks and history. | O4, O6 | Any live EMA accession or correction. |
-| 5. Incremental grossing | Grosser Dana Whitfield completes a reviewed record for Part A. Downstream tasks appear immediately (source-system entry for Sam Ortiz; cassette A1 eligible for processing) and the doctor/PAS worklist updates. Part B stays visibly incomplete. | O7, O9 | Writing to EMA; whether local policy allows incremental entry. |
-| 6. Materials | Tray TRY-M-03 is missing an expected slide and cannot be marked complete. Print job PJ-8841 timed out and shows **unknown outcome**, which must be reconciled before any reprint. | O8 | Real printer status reporting; label durability or scanner validation. |
-| 7. Retrieval | Request RR-0192 shows the block's **last confirmed** slot and checkout history. Scanning the wrong block is rejected. | O10, O11 | Continuous real-time location tracking. |
+| 1. Courier arrival | Expected vs received containers per office (for example, Coral Lane Dermatology: expected 3, received 2; Mangrove Bay Dermatology sent no manifest, so expected is "Unknown"). Known offices are routed by an approved, versioned rule (rule set v3, effective 2026-09-01). A new office with no rule (Seagrape Skin Studio) becomes a **routing exception**, never a guessed doctor. | O1, O2, O3 | Real courier manifests; whether EMA can already do this. |
+| 2. Two orders, one patient | Synthetic patient Avery Quinlan (Harbor Point Dermatology; ordering clinician Dr. Hannah Cole; assigned dermatopathologist Dr. Elena Marsh). Part A (ORD-77120, left upper back, shave) and Part B (ORD-77121, punch) arrive as separate orders from the same encounter. The system **proposes** a related-order candidate (REL-0112) with its reasons; both source records are kept; the accessioning lead decides. Nothing is merged. | O4 | What EMA actually creates in this situation. |
+| 3. Site mismatch | Part B's order says **right** dorsal forearm; the bottle label says **left** dorsal forearm. A targeted clarification (CLR-0457) is created and **only Part B** is held (hold H-0090). A simulated office answer is reviewed by the accessioning lead before the clarification is resolved. Resolving does not release the hold: it stays until the amended order (ORD-77121 v2) arrives from the simulated source, and then the lead releases it as a separate, audited action with a reason. | O3, O5 | Real office behavior or real notification delivery. |
+| 4. Official accession | The simulated source system issues accession D26-04817. The provisional intake IDs (INT-1014-031 and INT-1014-032) look visibly different. The case view shows A and B, blocks, source documents, tasks and history. | O4, O6 | Any live EMA accession or correction. |
+| 5. Incremental grossing | Grosser Dana Whitfield completes a reviewed record for Part A. Downstream tasks appear immediately (source-system entry for Sam Ortiz; block A1 eligible for processing) and the doctor/PAS worklist updates. Part B stays visibly "Awaiting grossing" and the case is not complete. | O7, O9 | Writing to EMA; whether local policy allows incremental entry. |
+| 6. Materials (earlier cases) | Tray TRY-M-03 (Dr. Marsh) is missing an expected slide and has an unexpected slide from another doctor's case, so it cannot be marked complete. Print job PJ-8841 (a deeper-level label on an earlier case) timed out and shows **unknown outcome**, which must be reconciled before any reprint. | O8 | Real printer status reporting; label durability or scanner validation. |
+| 7. Retrieval (earlier cases) | Request RR-0192 (Dr. Okafor) for blocks of D26-03990 and D26-03912 shows each block's **last confirmed** slot and checkout history. Scanning the wrong block (D26-03909 A1) is rejected. | O10, O11 | Continuous real-time location tracking. |
 | 8. Operations view | What is blocked, who owns the next step, and the underlying evidence. Demo numbers are labeled separately from real-world outcomes. | All | Any measured result. |
 
 ---
@@ -84,7 +85,7 @@ The three options are not mutually exclusive. The recommended order is to **conf
 
 ### Option 1: Configure current EMA capabilities
 
-ModMed advertises pathology gross defaults, configurable stains, reporting/tracking, multiple accession sequences and slide/cassette label printing "in many cases" [R1]. We do not yet know what our lab licenses, has enabled, or uses.
+ModMed advertises pathology gross defaults, configurable stains, reporting/tracking and multiple accession sequences; in its FAQ, ModMed says the module handles slide/cassette label printing "in most cases" [R1]. We do not yet know what our lab licenses, has enabled, or uses.
 
 - **Pros:** Stays inside the authoritative system; no second place to enter data; no new interface; staff already know the system; may be the lowest-risk change. Direct structured gross entry inside EMA may be a better first step than a second grossing editor.
 - **Cons:** Limited to what the product supports and what our license includes; may not address cross-office coordination (clarification ownership, courier reconciliation) or physical handoffs.
@@ -101,7 +102,7 @@ Vendor descriptions (not independent evidence, and not confirmed to work with ou
 | Integrated grossing documentation | Milestone MacroPATH [R11] |
 | Direct slide printing | Epredia slide printers [R12] |
 
-- **Pros:** Mature products with vendor support; may include validated hardware and materials; other labs' experience can be checked.
+- **Pros:** Commercially available products with vendor support (per vendor descriptions); may include hardware and materials that the vendor has validated. Maturity, validation status and other labs' experience must be checked through references; the vendor pages give no outcome data (see `research-notes.md`).
 - **Cons:** Requires purchase, interfaces with EMA, local validation and training; may solve more (or less) than our specific gaps; adds another vendor relationship.
 - **Unknowns:** Interoperability with our EMA tenant; which features fit a dermatopathology lab of our size; hardware and consumable requirements; implementation time.
 - **Cost items (require vendor quotes):** software license/subscription, hardware (printers, scanners, workstations), consumables (labels, ribbons, compatible slides/cassettes), interface work (vendor, ModMed and internal IT), validation, training, maintenance/support contracts.
@@ -166,7 +167,7 @@ A documented rollback/downtime method (Section 12) applies from stage 4 onward a
 ### 6.1 Rules that apply to every metric
 
 - **Same method before and after.** Baseline and pilot periods use the same definitions, observers and data sources.
-- **Median plus a tail.** Report the median (the middle value) and the 90th percentile (the value 9 in 10 items beat). Proposed convention, for the lab to agree: report the 90th percentile only when a group has at least 30 completed observations; below that, report the count, median and range.
+- **Median plus a tail.** Report the median (the middle value) and the 90th percentile (the value 9 in 10 items beat). Proposed convention, for the lab to agree: report the 90th percentile only when a group has at least 30 completed observations; below that, report the count, median and range. (The demo's `/insights` page uses a lower cut-off of 10 on its illustrative synthetic data and says so on screen; that cut-off is for the demo only.)
 - **Still-open items are shown separately.** Items not finished by the end of the measurement window have no final time. They are listed separately (count and current age) so unfinished work does not disappear and make results look faster than they are.
 - **Missing events are reported, never treated as fast.** If a start or end time is missing, the item is excluded from the timing statistics and counted in a "missing" line (number and percent). It is never recorded as zero.
 - **No staff rankings.** Results are reported by team, role, station or office category, not as individual rankings from raw counts. Individual data is used only with that person's agreement.
@@ -371,6 +372,8 @@ To find the real constraint, these are measured **separately** alongside M4: han
 
 All inputs start **blank**. They are filled only with measured values or values the lab agrees on. This worksheet can be copied into a spreadsheet.
 
+**Editable version in the demo app.** `/insights` has a scenario calculator that applies the formulas below to one activity at a time. All inputs start blank. It takes B − P as a low / central / high range, V + A as one "added minutes per unit" input, N and D, and optional R and C; it shows the inputs next to each result, labels results "potential labor value, not cash", reports a zero or negative net as it is, and computes money only when a rate (and costs) are entered. "Load illustrative example" fills only clearly labeled example minutes and volumes, never a labor rate or a cost.
+
 | Input | Symbol | Where it comes from | Value |
 |---|---|---|---|
 | Baseline hands-on minutes per unit (per activity: case, part, 100 labels, block) | B | Baseline (M1, M6, M9, M10) | ____ |
@@ -493,6 +496,12 @@ Real use with patient data needs review and sign-off by the organization's respo
 - `product-brief.md`: product scope and observations O1–O12.
 - `director-pitch.md`: one-page spoken version of this proposal.
 - `discovery-checklist.md`: questions for the Director and the ModMed account/integration team, with the demo's default assumptions.
+- `research-notes.md`: what each reference (R1–R12) does and does not establish, checked 2026-10-14.
+- `integration-capability-matrix.md`: field-by-field capability matrix, rollout modes and data-sync rules.
+- `workflow-map.md`: before and proposed-after workflow, with hypotheses H1–H12.
+- `roadmap.md`: deferred ideas and deployment dependencies.
+- `ai-assistants.md`: the bounded assistants and their limits.
+- `data-model.md` and `design-spec.md`: the data model and screen design behind the demo.
 
 ---
 

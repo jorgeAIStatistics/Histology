@@ -168,9 +168,11 @@ export function PartChip({ part, description, warning, className }: PartChipProp
       )}
     >
       {warning ? <TriangleAlert className="size-3.5 shrink-0 text-warning-solid" aria-hidden /> : null}
-      <span className="whitespace-nowrap font-semibold">Part {part}</span>
-      {description ? <span className="truncate text-ink-secondary">: {description}</span> : null}
-      {warning ? <span className="text-warning-fg">. {warning}</span> : null}
+      <span className="min-w-0">
+        <span className="whitespace-nowrap font-semibold">Part {part}</span>
+        {description ? <span className="text-ink-secondary">: {description}</span> : null}
+        {warning ? <span className="text-warning-fg">. {warning}</span> : null}
+      </span>
     </span>
   );
 }

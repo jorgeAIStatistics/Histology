@@ -107,12 +107,13 @@ These are not product ideas; they are dependencies for any real deployment, owne
 | Item | Why it is not in the demo | Prerequisite |
 |---|---|---|
 | Reading real EMA data | No access, and no confirmed interface for internal histology data | Confirmed, approved interface; ModMed review process [R2]; data agreement |
-| Writing back to EMA | Only after the actual interface and workflow are reviewed and tested (stage D) | Supported write interface; acknowledgement handling; validation |
+| Writing back to EMA | Only after the actual interface and workflow are reviewed and tested (stage D). Until then staff enter gross text in EMA by hand and the companion records a staff attestation, which is never shown as a source acknowledgment | Supported write interface; acknowledgement handling; validation |
 | Real printer control | Printer capabilities unknown; materials must be validated | Inventory of printers/drivers; vendor support; local validation |
 | Real office notifications | Must not contact real offices; notifications should carry no patient information by default | Approved channel; office agreement on ownership and escalation |
 | Microphone / voice capture at the grossing bench | Optional; needs an approved provider and identity linkage | Approved provider; privacy review; bench testing |
 | Hardware-supported batch tray verification | The demo verifies slide by slide on purpose | Validated hardware and procedure |
 | Production login, hosting, backup, audit | A demo role selector is not authentication; a local audit log is not proof of tamper resistance | Organization's identity management, hosting, backup/restore and security review |
-| Real AI model | Demo uses a deterministic, labeled extractor/drafter | Approved provider; privacy/security review before any non-synthetic data |
+| Real AI model | Demo uses a deterministic, labeled extractor and drafter, and computed (not AI) summaries | Approved provider; privacy/security review before any non-synthetic data |
+| Real office notification channel and contact directory | The demo directory (Settings → Office contacts) is fictional and every send is simulated | Office agreement on contacts, coverage and escalation; approved channel |
 
 Reference: **[R2]** ModMed API Portal, Getting Started (proprietary vs certified API, sandbox and production review). https://portal.api.modmed.com/docs/getting-started

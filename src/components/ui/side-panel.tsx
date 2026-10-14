@@ -66,7 +66,14 @@ export function SidePanel({
 
   // Remember who opened us; give focus back on unmount.
   useEffect(() => {
-    returnTo.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    // Capture once (React dev mode runs effects twice). When the panel was
+    // opened by navigation, focus may already be on <body>: fall back to the
+    // selected row that opened it.
+    if (!returnTo.current) {
+      const active = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+      returnTo.current =
+        active ?? (document.querySelector<HTMLElement>('[aria-selected="true"], [data-panel-opener="true"]') ?? null);
+    }
     return () => {
       const back = returnTo.current;
       const active = document.activeElement;
@@ -142,7 +149,7 @@ export function SidePanel({
           </button>
         )}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 text-sm">{children}</div>
+      <div className="relative min-h-0 flex-1 overflow-y-auto px-4 py-3 text-sm">{children}</div>
       {footer ? <div className="border-t border-line bg-surface-subtle px-4 py-3">{footer}</div> : null}
     </aside>
   );

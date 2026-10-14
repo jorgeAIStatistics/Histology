@@ -2,7 +2,12 @@
 
 Histology Lab OS uses **four small, bounded assistants**. Each one reads a limited set of data and produces a **proposal, draft or summary for a person to review**. None of them can change a record, send a message, print a label or make a clinical or identity decision.
 
-> **In the demonstration, no AI model is used.** Each assistant runs a **deterministic demonstration engine** (fixed rules and templates that give the same output for the same input). The screen labels it plainly, for example: **"Demonstration extractor: deterministic rules, not a live AI model."** A real model is used only if one is deliberately configured later, after approval (Section 8). Hardcoded or rule-based output is never presented as live reasoning.
+> **In the demonstration, no AI model is used.** Each assistant runs a **deterministic demonstration engine** (fixed rules and templates that give the same output for the same input). The screen labels it plainly. The label strings used in the app are:
+> - drafter: **"Draft text: deterministic demo output, not live AI. Edit before sending."**
+> - extractor: **"deterministic-demo-extractor v1 (deterministic demo output, not live AI)"**, and the transcript panel says "Synthetic transcript. Extraction is a deterministic demo."
+> - summaries: **"Computed summary (deterministic demo) — not AI"**
+>
+> A real model is used only if one is deliberately configured later, after approval (Section 8). Hardcoded or rule-based output is never presented as live reasoning.
 
 These runtime assistants are part of the product. They are different from the development subagents that may have helped build the software.
 
@@ -33,23 +38,41 @@ Explicit rules and database constraints, not AI, handle: identity relationships,
 | A3. Case history summarizer | `/cases/[id]` | Person opens **Summarize history** | Short summary where every statement links to recorded events, plus a list of gaps | Informational; reader checks linked events |
 | A4. Pending handoff summarizer | `/operations` | Person clicks **Summarize pending handoffs** | What is blocked, waiting on whom, since when, with links and data age | Operations supervisor |
 
+### 2.1 What was actually built (demo, rollout mode A)
+
+The definitions in Section 4 describe the intended design. The local demo implements a smaller, fully deterministic version:
+
+| Assistant | Status in the build | How it works in the demo |
+|---|---|---|
+| A1. Field extractor, **grossing mode** | Built (deterministic) | `deterministic-demo-extractor v1` (`src/server/assist/extractor.ts`). Loading a synthetic dictation transcript on `/grossing` runs it. Each field gets a status: *proposed* (with the exact transcript span), *needs review* (with a reason such as unit missing or possible missed decimal) or *missing*. A person confirms each value; nothing is confirmed automatically. |
+| A1. Field extractor, **requisition mode** | **Not built** | At `/intake`, staff type the bottle-label observation and the requisition fields are seeded as synthetic data. No extraction runs on requisitions. |
+| A2. Clarification drafter | Built (deterministic) | `deterministic-demo-drafter v1` (`src/server/assist/drafter.ts`). "Draft message" proposes a question from the recorded evidence and a generic notification. Identity values (name, date of birth, MRN) are never quoted. A clarification started from a draft is marked as such (`draft_source = assistant_proposal`). |
+| A3. Case history summary | Built as a **computed summary, not an assistant** | `/cases/[id]` shows an operational summary computed by fixed queries from the case's records, each line linked to its evidence, labeled "Computed summary (deterministic demo) — not AI". It appears automatically; there is no "Summarize history" button. |
+| A4. Pending handoff summary | Built as a **computed summary, not an assistant** | `/operations` shows "Pending handoffs" computed from open tasks and holds, labeled the same way. It appears automatically. |
+
+Other differences from Sections 3–6:
+- There is no separate stored "proposal set" record. Extractor proposals are stored on the gross record itself (each field keeps its proposed value, status, evidence and, once confirmed, who confirmed it and when). The review states actually used are, per field: **proposed → needs review → confirmed**, or **missing**. A gross record version that is replaced becomes *superseded*.
+- Because the engines are deterministic and local, there are no timeouts or automatic retries. Failure is demonstrated with the demo control "Make assistant unavailable" (Settings → Demo scenarios): drafting and extraction then report that the assistant is unavailable and every manual path keeps working.
+- Engine identifiers: `deterministic-demo-extractor v1`, `deterministic-demo-drafter v1`; the simulated connector row is named "Drafting/extraction assistant (deterministic demo)".
+- The seeded order note for one synthetic patient contains instruction-like text on purpose (a prompt-injection test fixture for acceptance check 15). It is stored and shown only as data.
+
 ---
 
 ## 3. Common proposal format
 
-This is the conceptual shape of a stored proposal. The exact field names in the code may differ; the data-model documentation is authoritative for names.
+This is the conceptual shape of a proposal in the full design. The demo stores a simpler version (Section 2.1); the schema in `src/server/db/` and the "As built" section of `data-model.md` are authoritative for names.
 
 | Part | Meaning |
 |---|---|
 | Proposal ID | Unique ID of this proposal set |
-| Assistant and engine | Which assistant, and which engine ran it: `demo-deterministic` (with rules version) or a named, configured model |
-| Display label | The visible label, e.g. "Demonstration extractor: deterministic rules, not a live AI model" |
+| Assistant and engine | Which assistant, and which engine ran it: `deterministic-demo-extractor v1`, `deterministic-demo-drafter v1`, or a named, configured model |
+| Display label | The visible label, e.g. "Draft text: deterministic demo output, not live AI. Edit before sending." |
 | Source | The exact document or record version it read (ID, version, content fingerprint) |
 | Target | The exact item it is for, e.g. intake item `INT-1014-031` or accession `D26-04817` Part A |
 | Proposed values | For each field: value, unit if any, evidence span(s) (start, end and the quoted text), flags such as *needs confirmation* |
 | Unresolved fields | Each field it could not fill, with a reason: *not found*, *ambiguous*, *conflicting*, *unit missing*, *identity mismatch* |
 | Instruction-like text | Whether the source contained text that looks like commands (Section 5), with its location |
-| Review state | proposed → partly reviewed → reviewed; or **superseded** if the source changed |
+| Review state | Per field: **proposed → needs review → confirmed**, or **missing** (the states used in the demo). A rejected value is replaced by what the person types. A gross record version that is replaced becomes **superseded** |
 | Times | Created and reviewed times, stored in UTC, shown in America/New_York |
 
 The application checks every proposal before saving it: fields must belong to the allowed list for that screen, and every quoted evidence text must exactly match the source at the stated position. Anything that fails the check is discarded and logged.
@@ -68,7 +91,7 @@ The application checks every proposal before saving it: fields must belong to th
 | **Inputs** | One document version (text, or the text that accompanies a synthetic image); the allowed field list for that screen; the identity of the open item or part (used only to check for mismatch). Nothing else about the patient. |
 | **Allowed tools** | Read that document version (read-only). Read the field list/template definition (read-only). |
 | **Outputs** | A proposal set (Section 3). Numbers, units and counts are always flagged *needs confirmation*. Unresolved fields are listed. |
-| **Owner** | Reviewer: the accessioner on the item (requisition mode); the grosser or histology assistant as the local SOP decides (grossing mode). Configuration owner: operations supervisor (Tanya Brooks in the demo). |
+| **Owner** | Reviewer: the accessioner on the item (requisition mode, not built in the demo); for grossing mode, the demo permission matrix (`src/lib/roles.ts`) lets the grosser, the histology assistant or the supervisor confirm values and mark a record reviewed, and the grosser, supervisor or dermatopathologist approve it. The real assignment is a local SOP decision. Configuration owner: operations supervisor (Tanya Brooks in the demo). |
 | **Timeout** | 20 seconds (the deterministic engine normally finishes immediately). |
 | **Retry** | One automatic retry after a temporary failure (e.g. provider not reachable), only if the document version has not changed. No automatic retry when output fails validation. A person may click again; a repeat request for the same document version and field list returns the existing proposal instead of creating a duplicate. |
 | **Review requirement** | Each value is accepted, edited or rejected individually. There is **no "accept all"** for numbers, units or counts. A grossing draft with a missing required piece count, a missing unit or an ambiguous decimal **cannot be finalized** until a person resolves it. |
@@ -81,7 +104,7 @@ The application checks every proposal before saving it: fields must belong to th
 - It never invents a missing value, never fills in a template default as if it had been observed, and never converts an ambiguous measurement (for example "0.4" with no unit stays *unit missing*, not "0.4 cm").
 - If the document mentions a value twice in conflicting ways, both are shown and the field is *conflicting*; the person decides.
 - If the document names a different part or site from the one that is open, it reports *identity mismatch* and proposes nothing for that part. It does not decide which is correct.
-- For the hero case, requisition mode reports what the paperwork says about Part B (left dorsal forearm). The **rules-based comparison**, not the extractor, detects that the order says right. Neither decides which is correct; that goes to clarification `CLR-0457`.
+- For the hero case, the **rules-based comparison** on `/intake`, not an assistant, detects that the order says right dorsal forearm while the bottle (typed observation) says left. It does not decide which is correct; that goes to clarification `CLR-0457`. (Requisition mode, if built later, would only fill the observed-requisition column.)
 
 **Illustrative example (grossing mode).** This example is illustrative and may differ from the seeded demo fixture.
 
@@ -107,8 +130,8 @@ The application checks every proposal before saving it: fields must belong to th
 | **Trigger** | A person clicks **Draft message** on a clarification task in the *drafted* state. |
 | **Inputs** | The discrepancy record: affected order and part, the field in question, the value in the order, the observed value and its evidence references. The clarification type (site, laterality, orientation/marking, biopsy method, identity conflict, missing container, possible related orders). The office's contact **role** and channel from the directory. The lab's message template. |
 | **Allowed tools** | Read the discrepancy record, the template and the office directory entry (all read-only). No send tool. |
-| **Outputs** | (1) A draft question for the secure case view, which may contain case identifiers. (2) A **generic notification text with no patient information**, pointing an authorized recipient to the secure case view (for example: "A specimen question from Lumen Bay Dermatopathology Laboratory is waiting. Reference CLR-0457."). (3) The list of facts it used, each linked to evidence. (4) Unresolved items, e.g. *office contact role unknown*. |
-| **Owner** | Reviewer: the clarification's lab owner (an accessioner in the demo). Escalation and configuration: accessioning lead (Kim Nguyen in the demo). |
+| **Outputs** | (1) A draft question for the secure case view, which may contain case identifiers. (2) A **generic notification text with no patient information**, pointing an authorized recipient to the secure case view (the demo's text: "Lumen Bay Dermatopathology has a specimen question (CLR-0457). Please open the secure case view to respond. [SIMULATED — not sent]"). (3) The list of facts it used, each linked to evidence. (4) Unresolved items, e.g. *office contact role unknown*. |
+| **Owner** | Reviewer of the draft: the clarification's lab owner (an accessioner in the demo). Reviewing the office's answer and resolving the clarification: accessioning lead or supervisor. Escalation and configuration: accessioning lead (Kim Nguyen in the demo). |
 | **Timeout** | 15 seconds. |
 | **Retry** | One automatic retry after a temporary failure if the discrepancy record has not changed. Repeat clicks return the existing draft for the same record version. |
 | **Review requirement** | A person edits and approves the text. **Sending is a separate human action** and, in the demo, is simulated and labeled "Simulated: no real message sent." A drafted message does not change the task to *sent*, and a sent message does not make the task *answered* or *resolved*. |

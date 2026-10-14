@@ -245,3 +245,12 @@ export function useScanTarget(label: string | null, handler: ScanHandler, opts: 
     });
   }, [register, label, placeholder, uid]);
 }
+
+/** Focus the scan field when a bench page mounts (spec: "Scan field focused on load"). */
+export function useFocusScanOnMount(enabled = true): void {
+  const ctx = useContext(ScanContext);
+  const focus = ctx?.focus;
+  useEffect(() => {
+    if (enabled && focus) focus();
+  }, [enabled, focus]);
+}

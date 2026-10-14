@@ -57,6 +57,8 @@ export const SimulatedOrderSchema = z.object({
   }),
   encounter_id: nullableString,
   office_id: z.string().trim().min(1).max(40),
+  /** Optional display name the source sends with the office id (used only to label a new, unreviewed office). */
+  office_name: z.string().trim().min(1).max(120).nullable().optional(),
   ordering_provider_id: nullableString,
   clinical_note: nullableString,
   amendment_note: nullableString,
@@ -90,10 +92,38 @@ export interface ReconciliationNote {
     | "part_added"
     | "part_canceled"
     | "order_canceled_review"
-    | "patient_conflict";
+    | "patient_conflict"
+    | "order_level_review"
+    | "order_values_updated"
+    | "correction_review_updated"
+    | "new_office_review"
+    | "content_conflict_review";
   summary: string;
   ref?: string;
 }
+
+/** Notes that only describe what changed; every other kind opened (or is) a review item. */
+const INFO_ONLY: ReadonlySet<ReconciliationNote["kind"]> = new Set([
+  "working_values_updated",
+  "order_values_updated",
+  "part_added",
+  "clarification_linked",
+  "correction_review_updated",
+  "order_created",
+]);
+/** Notes that opened a task or review for a person. */
+const OPENS_REVIEW: ReadonlySet<ReconciliationNote["kind"]> = new Set([
+  "work_order_cancel_review",
+  "work_order_added",
+  "correction_review_opened",
+  "lead_review_task",
+  "receipt_recheck_task",
+  "order_canceled_review",
+  "patient_conflict",
+  "order_level_review",
+  "new_office_review",
+  "content_conflict_review",
+]);
 
 export interface ImportResult {
   outcome: ImportOutcome;
@@ -137,6 +167,8 @@ interface OrderRow {
   source_order_id: string;
   patient_ref_id: string;
   office_id: string;
+  encounter_id: string | null;
+  ordering_clinician_id: string | null;
   source_status: string;
   source_version: number;
   source_updated_at: string;
@@ -184,20 +216,21 @@ export function importSourceMessage(ctx: Ctx, sourceId: string, message: SourceM
   if (existing && existing.outcome !== "failed") {
     db.prepare("UPDATE integration_event SET receipt_count = receipt_count + 1 WHERE id = ?").run(existing.id);
     const count = existing.receipt_count + 1;
-    const detail = `Duplicate of message ${messageId} (first received ${fmtTime(existing.received_at)} ET, outcome ${existing.outcome}). Receipt #${count} ignored; nothing changed.`;
-    writeReceipt(ctx, { eventId: existing.id, sourceId, messageId, messageType, outcome: "duplicate_ignored", detail, via });
+    const detail = `Duplicate of message ${messageId} (first received ${fmtTime(existing.received_at)} ET, outcome ${existing.outcome.replace(/_/g, " ")}). Receipt #${count} ignored; nothing changed.`;
     audit(ctx, {
       action: "integration.duplicate_ignored",
       entityType: "integration_event",
       entityId: existing.id,
       summary: `${source.name}: duplicate message ${messageId} ignored (receipt #${count})`,
     });
+    logReceipt(ctx, { eventId: existing.id, sourceId, messageId, messageType, outcome: "duplicate_ignored", detail, via });
     return { outcome: "duplicate_ignored", eventId: existing.id, messageId, detail, receiptCount: count, reconciliation: [] };
   }
 
   const eventId = existing?.id ?? newId(db, "ie");
   const isRetry = Boolean(existing);
 
+  let result: ImportResult;
   try {
     if (!messageId) throw new ImportFailure("Message has no message id; it cannot be de-duplicated, so it was not applied.");
     // Demo fault injection: "simulate a processing failure on the next message".
@@ -206,38 +239,50 @@ export function importSourceMessage(ctx: Ctx, sourceId: string, message: SourceM
       setSetting(db, failKey, "0", ctx.now);
       throw new ImportFailure("Simulated processing error (demo control: fail next message). The message was received but not applied. Retry it from the failure queue.");
     }
-    // Nested transaction = savepoint: a failure rolls back every partial change.
-    const result = db.transaction(() => processMessage(ctx, source, { eventId, messageId, messageType, payloadText, isRetry, existing }))();
-    writeReceipt(ctx, { eventId, sourceId, messageId, messageType, outcome: result.outcome, detail: result.detail, via });
-    return result;
+    // Nested transaction = savepoint: a failure rolls back every partial change
+    // (including the integration_event row), so the failure path below never collides with it.
+    result = db.transaction(() => processMessage(ctx, source, { eventId, messageId, messageType, payloadText, isRetry, existing }))();
   } catch (e) {
-    const detail =
-      e instanceof ImportFailure || e instanceof DomainError
-        ? e.message
-        : `Unexpected processing error: ${e instanceof Error ? e.message : String(e)}`;
-    if (!(e instanceof ImportFailure) && !(e instanceof DomainError)) console.error("[sourceImport] unexpected", e);
-    const entityKey = guessEntityKey(source, payloadText);
-    if (existing) {
-      db.prepare("UPDATE integration_event SET detail = ?, receipt_count = receipt_count + 1 WHERE id = ?").run(
-        `${detail} (retry at ${fmtTime(ctx.now)} ET failed)`,
-        existing.id,
-      );
-    } else {
-      db.prepare(
-        `INSERT INTO integration_event (id, source_id, message_id, message_type, entity_key, source_version, source_updated_at, received_at, outcome, detail, payload, receipt_count)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'failed', ?, ?, 1)`,
-      ).run(eventId, sourceId, messageId || `missing-id:${eventId}`, messageType, entityKey.key, entityKey.version, entityKey.updatedAt, ctx.now, detail, payloadText);
-    }
-    writeReceipt(ctx, { eventId, sourceId, messageId: messageId || `missing-id:${eventId}`, messageType, outcome: "failed", detail, via });
-    audit(ctx, {
-      action: "integration.import_failed",
-      entityType: "integration_event",
-      entityId: eventId,
-      summary: `${source.name}: message ${messageId || "(no id)"} could not be applied — kept in the failure queue`,
-      reason: detail,
-    });
-    return { outcome: "failed", eventId, messageId, detail, reconciliation: [] };
+    result = recordFailure(ctx, source, { eventId, messageId, messageType, payloadText, existing }, e);
   }
+  // The receipt is a log line written after the outcome is settled; logging can never undo or fail the import.
+  logReceipt(ctx, { eventId, sourceId, messageId: result.messageId || `missing-id:${eventId}`, messageType, outcome: result.outcome, detail: result.detail, via });
+  return result;
+}
+
+function recordFailure(
+  ctx: Ctx,
+  source: SourceRow,
+  m: { eventId: string; messageId: string; messageType: string; payloadText: string; existing?: EventRow },
+  e: unknown,
+): ImportResult {
+  const db = ctx.db;
+  const detail =
+    e instanceof ImportFailure || e instanceof DomainError ? e.message : `Unexpected processing error: ${e instanceof Error ? e.message : String(e)}`;
+  if (!(e instanceof ImportFailure) && !(e instanceof DomainError)) console.error("[sourceImport] unexpected", e);
+  const entityKey = guessEntityKey(source, m.payloadText);
+  const storedMessageId = m.messageId || `missing-id:${m.eventId}`;
+  if (m.existing) {
+    db.prepare("UPDATE integration_event SET detail = ?, receipt_count = receipt_count + 1 WHERE id = ?").run(
+      `${detail} (retry at ${fmtTime(ctx.now)} ET failed)`,
+      m.existing.id,
+    );
+  } else {
+    // Upsert: even if a row with this id somehow exists, the failure is recorded instead of throwing.
+    db.prepare(
+      `INSERT INTO integration_event (id, source_id, message_id, message_type, entity_key, source_version, source_updated_at, received_at, outcome, detail, payload, receipt_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'failed', ?, ?, 1)
+       ON CONFLICT(source_id, message_id) DO UPDATE SET outcome = 'failed', detail = excluded.detail, receipt_count = receipt_count + 1`,
+    ).run(m.eventId, source.id, storedMessageId, m.messageType, entityKey.key, entityKey.version, entityKey.updatedAt, ctx.now, detail, m.payloadText);
+  }
+  audit(ctx, {
+    action: "integration.import_failed",
+    entityType: "integration_event",
+    entityId: m.eventId,
+    summary: `${source.name}: message ${m.messageId || "(no id)"} could not be applied — kept in the failure queue`,
+    reason: detail,
+  });
+  return { outcome: "failed", eventId: m.eventId, messageId: m.messageId, detail, reconciliation: [] };
 }
 
 // ------------------------------------------------------------------ processing
@@ -279,7 +324,7 @@ function processMessage(ctx: Ctx, source: SourceRow, m: ProcessInput): ImportRes
     if (m.existing) {
       db.prepare(
         `UPDATE integration_event SET outcome = ?, detail = ?, entity_key = ?, source_version = ?, source_updated_at = ?, receipt_count = receipt_count + 1 WHERE id = ?`,
-      ).run(outcome, `${detail} (applied on retry at ${fmtTime(ctx.now)} ET)`, entityKey, p.version, p.updated_at, m.eventId);
+      ).run(outcome, `${detail} (${outcome === "applied" ? "applied" : "processed"} on retry at ${fmtTime(ctx.now)} ET)`, entityKey, p.version, p.updated_at, m.eventId);
     } else {
       db.prepare(
         `INSERT INTO integration_event (id, source_id, message_id, message_type, entity_key, source_version, source_updated_at, received_at, outcome, detail, payload, receipt_count)
@@ -295,36 +340,51 @@ function processMessage(ctx: Ctx, source: SourceRow, m: ProcessInput): ImportRes
       | { payload: string }
       | undefined;
     const sameContent = stored ? canonical(stored.payload) === canonical(m.payloadText) : null;
-    const contentNote =
-      p.version === order.source_version && stored && sameContent === false
-        ? " Same version number with DIFFERENT content — logged for review; stored data unchanged."
-        : "";
+    const contentConflict = p.version === order.source_version && Boolean(stored) && sameContent === false;
+    const notes: ReconciliationNote[] = [];
+    if (contentConflict) {
+      // Contract: an equal version is stale_ignored. A person still has to look at why the source re-sent
+      // the same version number with different content, so the stored version is kept and a review task opened.
+      const taskId = openTask(ctx, {
+        kind: "source_conflict",
+        entityType: "integration_event",
+        entityId: m.eventId,
+        title: `${p.order_id} v${p.version} was re-sent by ${source.name} with different content — review (stored v${p.version} kept)`,
+        ownerId: firstStaff(db, "supervisor"),
+        ownerRole: "supervisor",
+        priority: "high",
+        detail: `Message ${m.messageId} carries version ${p.version}, which is already stored, but its content differs. The stored version was not overwritten. Compare both payloads in the integration log and confirm with the source which one is current.`,
+      });
+      notes.push({ kind: "content_conflict_review", summary: `Same version, different content: review task opened.`, ref: taskId });
+    }
+    const contentNote = contentConflict ? " Same version number with DIFFERENT content — stored data unchanged; a review task was opened." : "";
     const detail = `${p.order_id} v${p.version} is not newer than the stored v${order.source_version} (updated ${fmtTime(order.source_updated_at)} ET). Ignored; the newer version was kept.${contentNote}`;
     audit(ctx, {
       action: "integration.stale_ignored",
       entityType: "source_order",
       entityId: order.id,
-      summary: `${source.name}: ${p.order_id} v${p.version} ignored as stale (stored v${order.source_version})`,
+      summary: `${source.name}: ${p.order_id} v${p.version} ignored as stale (stored v${order.source_version})${contentConflict ? "; same version with different content sent for review" : ""}`,
     });
-    return finish("stale_ignored", detail, { orderId: order.id, previousVersion: order.source_version });
+    return finish("stale_ignored", detail, { orderId: order.id, previousVersion: order.source_version, reconciliation: notes });
   }
 
   // 4. Unknown order for a known tenant → new import.
   if (!order) {
     const created = createOrderFromPayload(ctx, source, p, m, isCancel);
-    const detail = `New order ${p.order_id} v${p.version} imported (${p.specimens.length} part${p.specimens.length === 1 ? "" : "s"}${isCancel ? ", canceled at source" : ""}).`;
+    const base = `New order ${p.order_id} v${p.version} imported (${p.specimens.length} part${p.specimens.length === 1 ? "" : "s"}${isCancel ? ", canceled at source" : ""}).`;
+    const detail = created.notes.length ? `${base} ${created.notes.map((n) => n.summary).join(" ")}` : base;
     audit(ctx, {
       action: "integration.order_imported",
       entityType: "source_order",
-      entityId: created,
+      entityId: created.orderId,
       summary: `${source.name}: new order ${p.order_id} v${p.version} imported (simulated source)`,
     });
-    return finish("applied", detail, { orderId: created, reconciliation: [{ kind: "order_created", summary: detail, ref: p.order_id }] });
+    return finish("applied", detail, { orderId: created.orderId, reconciliation: [{ kind: "order_created", summary: base, ref: p.order_id }, ...created.notes] });
   }
 
   // 5. Newer version → store, update working values, reconcile local work.
   const notes = applyNewerVersion(ctx, source, order, p, m, isCancel);
-  const reviewCount = notes.filter((n) => n.kind !== "working_values_updated" && n.kind !== "part_added").length;
+  const reviewCount = notes.filter((n) => OPENS_REVIEW.has(n.kind)).length;
   const detail =
     `${p.order_id} v${order.source_version} → v${p.version} applied.` +
     (notes.length ? ` ${notes.map((n) => n.summary).join(" ")}` : " No specimen or stain changes.") +
@@ -334,19 +394,90 @@ function processMessage(ctx: Ctx, source: SourceRow, m: ProcessInput): ImportRes
 
 // ------------------------------------------------------------------ new order
 
-function createOrderFromPayload(ctx: Ctx, source: SourceRow, p: SimulatedOrder, m: ProcessInput, isCancel: boolean): string {
+interface PatientRow {
+  id: string;
+  source_mrn: string;
+  family_name: string;
+  given_name: string;
+  birth_date: string;
+}
+
+/**
+ * An office id this tenant has not sent before is recorded as a NEW, UNREVIEWED office in that
+ * tenant's namespace (never matched to another tenant's office or guessed by name). With no approved
+ * routing rule, its items go to the routing exception lane, and a supervisor gets a review task.
+ */
+function ensureOffice(ctx: Ctx, source: SourceRow, p: SimulatedOrder, notes: ReconciliationNote[]): { id: string; name: string } {
   const db = ctx.db;
   const tenant = source.tenant_id!;
-  const office = db.prepare("SELECT id, name FROM office WHERE tenant_id = ? AND source_office_id = ?").get(tenant, p.office_id) as
+  const known = db.prepare("SELECT id, name FROM office WHERE tenant_id = ? AND source_office_id = ?").get(tenant, p.office_id) as
     | { id: string; name: string }
     | undefined;
-  if (!office) {
-    throw new ImportFailure(
-      `Office ${p.office_id} is not in the office directory for this tenant. Add the office in Settings, then retry. Nothing was applied.`,
-    );
-  }
+  if (known) return known;
+  const id = newId(db, "off");
+  const stem = `NEW-${p.office_id.toUpperCase().replace(/[^A-Z0-9]+/g, "")}`.slice(0, 24) || "NEW";
+  let code = stem;
+  for (let i = 2; db.prepare("SELECT 1 FROM office WHERE code = ?").get(code); i++) code = `${stem}-${i}`;
+  const name = p.office_name?.trim() ? `${p.office_name.trim()} (new, not reviewed)` : `Office ${p.office_id} (new, not reviewed)`;
+  // Working hours are not known for a new office: JSON null is shown as "Unknown", never as closed.
+  db.prepare(
+    `INSERT INTO office (id, practice_id, tenant_id, source_office_id, code, name, working_hours, status)
+     VALUES (?, NULL, ?, ?, ?, ?, 'null', 'new_unreviewed')`,
+  ).run(id, tenant, p.office_id, code, name);
+  const taskId = openTask(ctx, {
+    kind: "source_conflict",
+    entityType: "office",
+    entityId: id,
+    title: `New office ${p.office_id} received from ${source.name} on ${p.order_id} — review the directory entry and routing rule`,
+    ownerId: firstStaff(db, "supervisor"),
+    ownerRole: "supervisor",
+    priority: "high",
+    detail: `The office is listed under Settings → Routing → Unknown offices. Until an approved rule exists, its items go to the routing exception lane; no dermatopathologist is guessed. Contacts and working hours are Unknown until someone adds them.`,
+  });
+  audit(ctx, {
+    action: "office.created_from_source",
+    entityType: "office",
+    entityId: id,
+    summary: `${source.name}: office ${p.office_id} was not in the directory for this tenant; recorded as new and unreviewed (${code}). Items route to the exception lane until a rule is approved.`,
+  });
+  notes.push({ kind: "new_office_review", summary: `Office ${p.office_id} was new for this tenant: recorded as unreviewed (${code}); supervisor review task opened; items go to the routing exception lane.`, ref: taskId });
+  return { id, name };
+}
+
+function samePerson(row: PatientRow, p: SimulatedOrder["patient"]): { same: boolean; what: string[] } {
+  const [family, given] = splitName(p.name);
+  const what: string[] = [];
+  const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
+  if (norm(row.family_name) !== norm(family) || norm(row.given_name) !== norm(given)) what.push(`name ${row.family_name}, ${row.given_name} → ${p.name}`);
+  if (row.birth_date.trim() !== p.birth_date.trim()) what.push(`date of birth ${row.birth_date} → ${p.birth_date}`);
+  return { same: what.length === 0, what };
+}
+
+function createOrderFromPayload(ctx: Ctx, source: SourceRow, p: SimulatedOrder, m: ProcessInput, isCancel: boolean): { orderId: string; notes: ReconciliationNote[] } {
+  const db = ctx.db;
+  const tenant = source.tenant_id!;
+  const notes: ReconciliationNote[] = [];
+  const office = ensureOffice(ctx, source, p, notes);
   // Patient reference: (tenant, MRN) is the key. A name is never a key.
-  let patient = db.prepare("SELECT id FROM patient_ref WHERE tenant_id = ? AND source_mrn = ?").get(tenant, p.patient.mrn) as { id: string } | undefined;
+  const existingPatient = db.prepare("SELECT * FROM patient_ref WHERE tenant_id = ? AND source_mrn = ?").get(tenant, p.patient.mrn) as PatientRow | undefined;
+  let patient: { id: string } | undefined = existingPatient;
+  if (existingPatient) {
+    const cmp = samePerson(existingPatient, p.patient);
+    if (!cmp.same) {
+      // Linked by MRN (the key), but the demographics differ: never merged or overwritten silently.
+      const taskId = openTask(ctx, {
+        kind: "source_conflict",
+        entityType: "patient_ref",
+        entityId: existingPatient.id,
+        title: `New order ${p.order_id} gives different details for MRN ${p.patient.mrn} (${cmp.what.join("; ")}) — review; patient record not changed`,
+        ownerId: firstStaff(db, "accessioning_lead"),
+        ownerRole: "accessioning_lead",
+        priority: "urgent",
+        detail: `The order was linked to the patient reference on file by MRN within this tenant. The details on file were kept. Check the container and requisition identifiers before accession.`,
+      });
+      notes.push({ kind: "patient_conflict", summary: `MRN ${p.patient.mrn} is on file with different details (${cmp.what.join("; ")}); review task opened, nothing merged.`, ref: taskId });
+    }
+  }
   if (!patient) {
     const [family, given] = splitName(p.patient.name);
     const id = newId(db, "pt");
@@ -377,7 +508,7 @@ function createOrderFromPayload(ctx: Ctx, source: SourceRow, p: SimulatedOrder, 
   ).run(orderId, tenant, p.order_id, patient.id, encounterId, office.id, clinicianId, isCancel ? "canceled" : "active", p.version, p.updated_at, ctx.now, m.eventId, p.clinical_note ?? null);
   insertVersion(ctx, orderId, p, m.payloadText, "Initial version received");
   for (const s of p.specimens) insertPart(db, orderId, s, isCancel ? "canceled" : "active");
-  return orderId;
+  return { orderId, notes };
 }
 
 // ------------------------------------------------------------------ newer version
@@ -388,21 +519,8 @@ function applyNewerVersion(ctx: Ctx, source: SourceRow, order: OrderRow, p: Simu
   const versionLabel = `${p.order_id} v${p.version}`;
   const amendNote = p.amendment_note ? ` (${p.amendment_note})` : "";
 
-  // Patient on the order changed at source? Never move an order to another patient silently.
-  const currentPatient = db.prepare("SELECT source_mrn FROM patient_ref WHERE id = ?").get(order.patient_ref_id) as { source_mrn: string } | undefined;
-  if (currentPatient && currentPatient.source_mrn !== p.patient.mrn) {
-    const taskId = openTask(ctx, {
-      kind: "source_conflict",
-      entityType: "source_order",
-      entityId: order.id,
-      title: `Source changed the patient on ${p.order_id} (MRN ${currentPatient.source_mrn} → ${p.patient.mrn}) — review; nothing was moved`,
-      ownerId: firstStaff(db, "accessioning_lead"),
-      ownerRole: "accessioning_lead",
-      priority: "urgent",
-      detail: `Version ${p.version} names a different patient reference. The order stays linked to the original patient until an authorized review.`,
-    });
-    notes.push({ kind: "patient_conflict", summary: `Patient reference changed at source; review task opened (order not moved).`, ref: taskId });
-  }
+  const orderLevel = reconcileOrderLevel(ctx, source, order, p, versionLabel);
+  notes.push(...orderLevel.notes);
 
   const changeSummary = isCancel ? `Order canceled at source${amendNote}` : `Amended at source${amendNote}`;
   insertVersion(ctx, order.id, p, m.payloadText, changeSummary);
@@ -455,8 +573,9 @@ function applyNewerVersion(ctx: Ctx, source: SourceRow, order: OrderRow, p: Simu
     }
   }
 
-  const needsReview = notes.some((n) => !["working_values_updated", "part_added"].includes(n.kind));
+  const needsReview = notes.some((n) => !INFO_ONLY.has(n.kind));
   updateVersioned(db, "source_order", order.id, undefined, {
+    ...orderLevel.patch,
     source_version: p.version,
     source_updated_at: p.updated_at,
     imported_at: ctx.now,
@@ -474,6 +593,114 @@ function applyNewerVersion(ctx: Ctx, source: SourceRow, order: OrderRow, p: Simu
     after: { source_version: p.version, source_status: isCancel ? "canceled" : "amended", reconciliation: notes.map((n) => n.kind) },
   });
   return notes;
+}
+
+// ------------------------------------------------------------------ order-level changes
+
+/**
+ * Order-level fields that identify or route the work (patient, office, encounter) are never changed
+ * silently: a newer version that differs opens ONE source_conflict review task for the accessioning lead,
+ * and the working values stay as they were until a person decides. The ordering provider is a plain
+ * working value and is updated when the provider is in the directory.
+ */
+function reconcileOrderLevel(
+  ctx: Ctx,
+  source: SourceRow,
+  order: OrderRow,
+  p: SimulatedOrder,
+  versionLabel: string,
+): { notes: ReconciliationNote[]; patch: Record<string, unknown> } {
+  const db = ctx.db;
+  const tenant = source.tenant_id!;
+  const notes: ReconciliationNote[] = [];
+  const patch: Record<string, unknown> = {};
+  const cur = db
+    .prepare(
+      `SELECT pr.source_mrn, pr.family_name, pr.given_name, pr.birth_date, pr.id patient_id,
+              o.source_office_id, o.name office_name, e.source_encounter_id, c.source_provider_id, c.display_name provider_name
+         FROM source_order so JOIN patient_ref pr ON pr.id = so.patient_ref_id JOIN office o ON o.id = so.office_id
+         LEFT JOIN encounter e ON e.id = so.encounter_id LEFT JOIN clinician c ON c.id = so.ordering_clinician_id
+        WHERE so.id = ?`,
+    )
+    .get(order.id) as
+    | {
+        source_mrn: string;
+        family_name: string;
+        given_name: string;
+        birth_date: string;
+        patient_id: string;
+        source_office_id: string;
+        office_name: string;
+        source_encounter_id: string | null;
+        source_provider_id: string | null;
+        provider_name: string | null;
+      }
+    | undefined;
+  if (!cur) return { notes, patch };
+
+  const review: string[] = [];
+  let urgent = false;
+  if (cur.source_mrn !== p.patient.mrn) {
+    review.push(`patient MRN ${cur.source_mrn} → ${p.patient.mrn} (order stays linked to the original patient)`);
+    urgent = true;
+  } else {
+    const cmp = samePerson(
+      { id: cur.patient_id, source_mrn: cur.source_mrn, family_name: cur.family_name, given_name: cur.given_name, birth_date: cur.birth_date },
+      p.patient,
+    );
+    if (!cmp.same) {
+      review.push(`patient ${cmp.what.join(", ")} (patient record not changed)`);
+      urgent = true;
+    }
+  }
+  if (cur.source_office_id !== p.office_id) {
+    const target = db.prepare("SELECT name FROM office WHERE tenant_id = ? AND source_office_id = ?").get(tenant, p.office_id) as { name: string } | undefined;
+    review.push(`office ${cur.office_name} → ${target?.name ?? `${p.office_id} (not in the directory)`} (routing not changed; nothing re-routed)`);
+  }
+  if ((cur.source_encounter_id ?? null) !== (p.encounter_id ?? null)) {
+    review.push(`encounter ${cur.source_encounter_id ?? "Unknown"} → ${p.encounter_id ?? "Unknown"} (related-order decisions may need a second look)`);
+  }
+  const provider = p.ordering_provider_id ?? null;
+  const resolvedProvider = resolveClinician(db, tenant, provider);
+  if (resolvedProvider !== (order.ordering_clinician_id ?? null)) {
+    if (resolvedProvider) {
+      patch.ordering_clinician_id = resolvedProvider;
+      const name = (db.prepare("SELECT display_name FROM clinician WHERE id = ?").get(resolvedProvider) as { display_name: string }).display_name;
+      notes.push({ kind: "order_values_updated", summary: `Ordering provider ${cur.provider_name ?? "Unknown"} → ${name}.`, ref: order.id });
+    } else {
+      review.push(
+        `ordering provider ${cur.provider_name ?? "Unknown"} → ${provider ? `${provider} (not in the directory; previous provider kept)` : "not given (previous provider kept)"}`,
+      );
+    }
+  }
+
+  if (review.length) {
+    const taskId = openTask(ctx, {
+      kind: "source_conflict",
+      entityType: "source_order",
+      entityId: order.id,
+      title:
+        review.length === 1
+          ? `${versionLabel} changed the ${review[0].split(" (")[0]} — review; nothing was changed locally`
+          : `${versionLabel} changed ${review.length} order-level details at source — review; nothing was changed locally`,
+      ownerId: firstStaff(db, "accessioning_lead"),
+      ownerRole: "accessioning_lead",
+      priority: urgent ? "urgent" : "high",
+      detail: `Changes in ${versionLabel}: ${review.join("; ")}. The previous values stay in effect until an authorized person reviews them. Both versions are kept.`,
+    });
+    audit(ctx, {
+      action: "integration.order_level_change_review",
+      entityType: "source_order",
+      entityId: order.id,
+      summary: `${source.name}: ${versionLabel} changed ${review.join("; ")} — sent for review, not applied`,
+    });
+    notes.push({
+      kind: urgent ? "patient_conflict" : "order_level_review",
+      summary: `Order-level change${review.length === 1 ? "" : "s"} sent for review, not applied: ${review.join("; ")}.`,
+      ref: taskId,
+    });
+  }
+  return { notes, patch };
 }
 
 interface AccessionedPart {
@@ -546,14 +773,84 @@ function reconcilePartChanges(
 
   if (accessioned) {
     // (b) Identity change on an issued part → correction review. The part's site is immutable.
-    if (identityChanges.length) notes.push(openCorrectionReview(ctx, order, part, accessioned, identityChanges, versionLabel));
+    // The comparison is against the ISSUED part (not the previous order version): a later version
+    // that matches the issued part again needs no new review.
+    if (identityChanges.length) {
+      const vsIssued = diffIssued(accessioned, spec);
+      const open = openImportReviewFor(db, accessioned);
+      if (vsIssued.length && !open) {
+        notes.push(openCorrectionReview(ctx, order, part, accessioned, vsIssued, versionLabel));
+      } else if (open) {
+        notes.push(noteOnOpenReview(ctx, accessioned, open, vsIssued, versionLabel));
+      }
+      notes.push(...reviewHoldsAndClarifications(ctx, order, part, changes, versionLabel, { checkReceipt: false }));
+    }
     // (a) Stain reconciliation against existing work orders from this source order.
-    notes.push(...reconcileStains(ctx, order, accessioned, newStains, p, versionLabel));
-  } else if (identityChanges.length || stainsChanged) {
-    // (c) Not yet accessioned: working values updated above. Route to the lead if a hold or a receipt depends on it.
-    notes.push(...reviewPreAccessionAmendment(ctx, order, part, changes, versionLabel));
+    const added = newStains.filter((s) => !oldStains.includes(s));
+    notes.push(...reconcileStains(ctx, order, accessioned, newStains, added, p, versionLabel));
+  } else if (changes.length || stainsChanged) {
+    // (c) Not yet accessioned: working values updated above. Any change (site, laterality, procedure, collection
+    // time, orientation, expected containers or stains) goes to the lead if a hold or an already-received container depends on it.
+    notes.push(...reviewHoldsAndClarifications(ctx, order, part, changes, versionLabel, { checkReceipt: true }));
   }
   return notes;
+}
+
+const IDENTITY_FIELDS = ["site", "laterality", "procedure"] as const;
+
+/** Site / laterality / procedure of the incoming specimen line vs the issued specimen part. */
+function diffIssued(sp: AccessionedPart, s: Specimen): FieldChange[] {
+  const norm = (v: string | null | undefined) => (v ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+  const incoming: Record<(typeof IDENTITY_FIELDS)[number], string | null> = { site: s.site, laterality: s.laterality ?? null, procedure: s.procedure ?? null };
+  const labels = { site: "Site", laterality: "Laterality", procedure: "Procedure" } as const;
+  const out: FieldChange[] = [];
+  for (const f of IDENTITY_FIELDS) {
+    const issued = fieldOnPart(sp, f);
+    if (norm(issued) !== norm(incoming[f])) out.push({ field: f, label: labels[f], from: issued, to: incoming[f] });
+  }
+  return out;
+}
+
+interface OpenReview {
+  id: string;
+  display_id: string;
+}
+
+/** An open correction review this importer already opened for the same issued part (one per part at a time). */
+function openImportReviewFor(db: DB, sp: AccessionedPart): OpenReview | undefined {
+  const rows = db
+    .prepare("SELECT id, display_id, original_refs FROM correction_review WHERE accession_id = ? AND kind = 'site_discrepancy' AND status = 'open' ORDER BY requested_at")
+    .all(sp.accession_id) as { id: string; display_id: string; original_refs: string }[];
+  for (const r of rows) {
+    try {
+      const refs = JSON.parse(r.original_refs) as { part_designation?: string; opened_by?: string };
+      if (refs.part_designation === sp.designation && refs.opened_by === IMPORT_OPENER) return { id: r.id, display_id: r.display_id };
+    } catch {
+      /* not ours */
+    }
+  }
+  return undefined;
+}
+
+/** A later version for a part that already has an open import review: no second review, the change is recorded against it. */
+function noteOnOpenReview(ctx: Ctx, sp: AccessionedPart, open: OpenReview, vsIssued: FieldChange[], versionLabel: string): ReconciliationNote {
+  const text = vsIssued.length
+    ? `${versionLabel} still differs from the issued part (${vsIssued.map((c) => `${c.label.toLowerCase()}: issued ${fmtVal(c.from)}, order ${fmtVal(c.to)}`).join("; ")})`
+    : `${versionLabel} now matches the issued part again`;
+  recordWorklistChange(ctx, {
+    accessionId: sp.accession_id,
+    pathologistId: sp.assigned_pathologist_id,
+    type: "changed",
+    summary: `${sp.accession_number} part ${sp.designation}: ${text} — see open correction review ${open.display_id}`,
+  });
+  audit(ctx, {
+    action: "correction.source_update_noted",
+    entityType: "correction_review",
+    entityId: open.id,
+    accessionId: sp.accession_id,
+    summary: `${open.display_id}: ${text}. No second review opened; the issued part is unchanged.`,
+  });
+  return { kind: "correction_review_updated", summary: `${sp.accession_number} part ${sp.designation}: ${text}; recorded on open review ${open.display_id} (no second review).`, ref: open.id };
 }
 
 function reconcilePartCanceled(
@@ -567,19 +864,20 @@ function reconcilePartCanceled(
 ): ReconciliationNote[] {
   const db = ctx.db;
   const notes: ReconciliationNote[] = [];
-  if (part.status !== "canceled") {
-    db.prepare("UPDATE source_order_part SET status = 'canceled' WHERE id = ?").run(part.id);
-    notes.push({ kind: "part_canceled", summary: `Part ${part.designation} ${wholeOrder ? "canceled with the order" : "removed"} at source.`, ref: part.id });
-    audit(ctx, {
-      action: "source_order_part.canceled_at_source",
-      entityType: "source_order_part",
-      entityId: part.id,
-      accessionId: accessioned?.accession_id ?? null,
-      summary: `${versionLabel}: part ${part.designation} ${wholeOrder ? "canceled with the order" : "removed from the order"} at source. Nothing was erased.`,
-    });
-  }
+  // Already canceled by an earlier version: that version opened the reviews and recorded the
+  // worklist change. Re-running it would repeat "canceled" entries and reopen closed reviews.
+  if (part.status === "canceled") return notes;
+  db.prepare("UPDATE source_order_part SET status = 'canceled' WHERE id = ?").run(part.id);
+  notes.push({ kind: "part_canceled", summary: `Part ${part.designation} ${wholeOrder ? "canceled with the order" : "removed"} at source.`, ref: part.id });
+  audit(ctx, {
+    action: "source_order_part.canceled_at_source",
+    entityType: "source_order_part",
+    entityId: part.id,
+    accessionId: accessioned?.accession_id ?? null,
+    summary: `${versionLabel}: part ${part.designation} ${wholeOrder ? "canceled with the order" : "removed from the order"} at source. Nothing was erased.`,
+  });
   if (accessioned) {
-    notes.push(...reconcileStains(ctx, order, accessioned, [], p, versionLabel));
+    notes.push(...reconcileStains(ctx, order, accessioned, [], [], p, versionLabel));
     const counts = db
       .prepare(
         `SELECT (SELECT COUNT(*) FROM block WHERE part_id = ? AND status = 'active') blocks,
@@ -605,7 +903,7 @@ function reconcilePartCanceled(
       summary: `${accessioned.accession_number} part ${accessioned.designation}: ${p.order_id} ${wholeOrder ? "canceled" : "part removed"} at source — prepared material kept for review`,
     });
   } else {
-    notes.push(...reviewPreAccessionAmendment(ctx, order, part, [], versionLabel, wholeOrder ? "canceled" : "removed"));
+    notes.push(...reviewHoldsAndClarifications(ctx, order, part, [], versionLabel, { checkReceipt: true, canceled: wholeOrder ? "canceled" : "removed" }));
   }
   return notes;
 }
@@ -625,7 +923,15 @@ interface WorkOrderRow {
   target_block_id: string | null;
 }
 
-function reconcileStains(ctx: Ctx, order: OrderRow, part: AccessionedPart, newStains: string[], p: SimulatedOrder, versionLabel: string): ReconciliationNote[] {
+function reconcileStains(
+  ctx: Ctx,
+  order: OrderRow,
+  part: AccessionedPart,
+  newStains: string[],
+  addedStains: string[],
+  p: SimulatedOrder,
+  versionLabel: string,
+): ReconciliationNote[] {
   const db = ctx.db;
   const notes: ReconciliationNote[] = [];
   const wos = db
@@ -645,7 +951,7 @@ function reconcileStains(ctx: Ctx, order: OrderRow, part: AccessionedPart, newSt
   }
 
   // Stains newly requested by the amended order → a new authorized work order (no slide is invented).
-  for (const stain of newStains) {
+  for (const stain of addedStains) {
     const covered = db
       .prepare(
         `SELECT display_id FROM work_order WHERE accession_id = ? AND UPPER(COALESCE(stain,'')) = ? AND status NOT IN ('canceled','cancel_review')
@@ -693,26 +999,52 @@ function cancelWorkOrder(ctx: Ctx, wo: WorkOrderRow, part: AccessionedPart, p: S
          FROM slide s JOIN block b ON b.id = s.block_id WHERE s.work_order_id = ? AND s.status = 'active' ORDER BY b.block_seq, s.slide_seq`,
     )
     .all(wo.id) as { id: string; slide_seq: number; stain: string; physical_state: string; label_state: string; block_label: string }[];
-  const prepared = slides.filter((s) => s.label_state !== "none" || s.physical_state !== "planned");
-  const unprepared = slides.filter((s) => !prepared.includes(s));
+  // A label may exist even when the slide shows no label yet: a job that reached the printer
+  // (submitted / acknowledged / completed) or whose outcome is UNKNOWN (timeout) counts as possibly printed.
+  // Unknown is never treated as "nothing printed".
+  const sentJobs = (slideId: string) =>
+    db
+      .prepare(
+        `SELECT display_id, state FROM print_job WHERE target_type = 'slide' AND target_id = ?
+            AND state IN ('submitted', 'acknowledged', 'completion_confirmed', 'unknown_outcome') ORDER BY created_at`,
+      )
+      .all(slideId) as { display_id: string; state: string }[];
+  const withJobs = slides.map((s) => ({ ...s, jobs: sentJobs(s.id) }));
+  const prepared = withJobs.filter((s) => s.label_state !== "none" || s.physical_state !== "planned" || s.jobs.length > 0);
+  const unprepared = withJobs.filter((s) => !prepared.includes(s));
+  const unknownJobs = prepared.flatMap((s) => s.jobs.filter((j) => j.state === "unknown_outcome").map((j) => j.display_id));
   const stain = wo.stain ?? wo.kind;
   const why = p.amendment_note ? ` — "${p.amendment_note}"` : "";
-  const label = (s: { block_label: string; slide_seq: number; stain: string }) => `${part.accession_number} ${s.block_label}-${s.slide_seq} ${s.stain}`;
+  const label = (s: { block_label: string; slide_seq: number; stain: string; label_state: string; physical_state: string; jobs: { display_id: string; state: string }[] }) => {
+    const base = `${part.accession_number} ${s.block_label}-${s.slide_seq} ${s.stain}`;
+    const onlyUnknown = s.label_state === "none" && s.physical_state === "planned" && s.jobs.length > 0 && s.jobs.every((j) => j.state === "unknown_outcome");
+    return onlyUnknown ? `${base} (print outcome unknown, ${s.jobs.map((j) => j.display_id).join(", ")})` : base;
+  };
 
   for (const s of prepared) updateVersioned(db, "slide", s.id, undefined, { status: "canceled_needs_review" });
   for (const s of unprepared) {
     updateVersioned(db, "slide", s.id, undefined, { status: "void" });
-    // A label not yet sent to a printer is withdrawn; anything already submitted stays for reconciliation.
-    db.prepare(
-      `UPDATE print_job SET state = 'canceled', failure_detail = ?, version = version + 1
-        WHERE target_type = 'slide' AND target_id = ? AND state IN ('planned', 'queued')`,
-    ).run(`Withdrawn: ${stain} canceled at source (${versionLabel}) before printing`, s.id);
+    // A label not yet sent to a printer is withdrawn (and audited); anything already submitted stays for reconciliation.
+    const queued = db
+      .prepare("SELECT id, display_id, accession_id FROM print_job WHERE target_type = 'slide' AND target_id = ? AND state IN ('planned', 'queued')")
+      .all(s.id) as { id: string; display_id: string; accession_id: string | null }[];
+    for (const j of queued) {
+      updateVersioned(db, "print_job", j.id, undefined, { state: "canceled", failure_detail: `Withdrawn: ${stain} canceled at source (${versionLabel}) before printing` });
+      audit(ctx, {
+        action: "print.withdrawn_by_source_change",
+        entityType: "print_job",
+        entityId: j.id,
+        accessionId: j.accession_id ?? wo.accession_id,
+        summary: `${j.display_id} for ${label(s)} withdrawn before printing: ${stain} canceled at source (${versionLabel})`,
+        reason: `Source amendment ${versionLabel}`,
+      });
+    }
   }
 
   const reviewNeeded = prepared.length > 0;
   updateVersioned(db, "work_order", wo.id, undefined, {
     status: reviewNeeded ? "cancel_review" : "canceled",
-    status_reason: `${stain} removed at source by ${versionLabel}${why}.${reviewNeeded ? ` Prepared/printed: ${prepared.map(label).join(", ")} — kept for review.` : " Nothing had been printed or prepared."}`,
+    status_reason: `${stain} removed at source by ${versionLabel}${why}.${reviewNeeded ? ` Prepared/printed or possibly printed: ${prepared.map(label).join(", ")} — kept for review.` : " Nothing had been sent to a printer or prepared."}`,
   });
 
   let taskId: string | undefined;
@@ -721,11 +1053,11 @@ function cancelWorkOrder(ctx: Ctx, wo: WorkOrderRow, part: AccessionedPart, p: S
       kind: "order_change_review",
       entityType: "work_order",
       entityId: wo.id,
-      title: `${stain} canceled at source after material was prepared — review ${prepared.map(label).join(", ")} (${wo.display_id})`,
+      title: `${stain} canceled at source after material was prepared${unknownJobs.length ? " or possibly printed" : ""} — review ${prepared.map(label).join(", ")} (${wo.display_id})`,
       ownerRole: "histotech",
       priority: "high",
       accessionId: wo.accession_id,
-      detail: `${versionLabel}${why}. The slide${prepared.length === 1 ? " is" : "s are"} not deleted; record a disposition (retain, file with note, or void the label) through the work-order review.`,
+      detail: `${versionLabel}${why}. The slide${prepared.length === 1 ? " is" : "s are"} not deleted; record a disposition (retain, file with note, or void the label) through the work-order review.${unknownJobs.length ? ` Print outcome unknown for ${unknownJobs.join(", ")}: reconcile the print job as well (check the printer output).` : ""}`,
     });
   }
   recordWorklistChange(ctx, {
@@ -733,8 +1065,8 @@ function cancelWorkOrder(ctx: Ctx, wo: WorkOrderRow, part: AccessionedPart, p: S
     pathologistId: part.assigned_pathologist_id,
     type: "canceled",
     summary: reviewNeeded
-      ? `${part.accession_number}: ${stain} (${wo.display_id}) canceled at source — ${prepared.map(label).join(", ")} already prepared; review needed`
-      : `${part.accession_number}: ${stain} (${wo.display_id}) canceled at source — nothing had been prepared`,
+      ? `${part.accession_number}: ${stain} (${wo.display_id}) canceled at source — ${prepared.map(label).join(", ")} already prepared or possibly printed; review needed`
+      : `${part.accession_number}: ${stain} (${wo.display_id}) canceled at source — nothing had been sent to a printer or prepared`,
   });
   audit(ctx, {
     action: reviewNeeded ? "workorder.source_cancel_review" : "workorder.source_canceled",
@@ -754,6 +1086,8 @@ function cancelWorkOrder(ctx: Ctx, wo: WorkOrderRow, part: AccessionedPart, p: S
 
 // ------------------------------------------------------------------ (b) accessioned identity change
 
+const IMPORT_OPENER = "source import (system)";
+
 function openCorrectionReview(ctx: Ctx, order: OrderRow, part: OrderPartRow, sp: AccessionedPart, changes: FieldChange[], versionLabel: string): ReconciliationNote {
   const db = ctx.db;
   const lead = firstStaff(db, "accessioning_lead") ?? firstStaff(db, "supervisor");
@@ -772,7 +1106,7 @@ function openCorrectionReview(ctx: Ctx, order: OrderRow, part: OrderPartRow, sp:
     previous_order_values: { site: part.site_text, laterality: part.laterality, procedure: part.procedure },
     amended_order_version: versionLabel,
     changes,
-    opened_by: "source import (system)",
+    opened_by: IMPORT_OPENER,
   };
   // correction_review.requested_by must reference a staff row; the import is a system actor, so the
   // review is recorded against its owner (the accessioning lead) and the description says it was automatic.
@@ -811,16 +1145,17 @@ function openCorrectionReview(ctx: Ctx, order: OrderRow, part: OrderPartRow, sp:
   return { kind: "correction_review_opened", summary: `${sp.accession_number} part ${sp.designation}: correction review ${display} opened (issued part not changed).`, ref: id };
 }
 
-// ------------------------------------------------------------------ (c)/(d) pre-accession
+// ------------------------------------------------------------------ (c)/(d) holds, clarifications, receipts
 
-function reviewPreAccessionAmendment(
+function reviewHoldsAndClarifications(
   ctx: Ctx,
   order: OrderRow,
   part: OrderPartRow,
   changes: FieldChange[],
   versionLabel: string,
-  canceled?: "canceled" | "removed",
+  opts: { checkReceipt: boolean; canceled?: "canceled" | "removed" },
 ): ReconciliationNote[] {
+  const canceled = opts.canceled;
   const db = ctx.db;
   const notes: ReconciliationNote[] = [];
   const lead = firstStaff(db, "accessioning_lead");
@@ -842,17 +1177,19 @@ function reviewPreAccessionAmendment(
   }
   const clarList = clars.length ? ` Linked: ${clars.map((c) => `${c.display_id} (${c.state})`).join(", ")}.` : "";
 
-  // Active holds that reference this order part (directly, through its containers, or through a linked clarification).
+  // Active holds that reference this order part: directly, through its containers, through the intake item
+  // those containers arrived in, or through a linked clarification.
   const containerIds = (db.prepare("SELECT id FROM container WHERE order_part_id = ?").all(part.id) as { id: string }[]).map((r) => r.id);
   const holds = db
     .prepare(
       `SELECT * FROM hold WHERE status = 'active' AND (
           (scope_type = 'order_part' AND scope_id = ?)
           ${containerIds.length ? `OR (scope_type = 'container' AND scope_id IN (${containerIds.map(() => "?").join(",")}))` : ""}
+          OR (scope_type = 'intake_item' AND scope_id IN (SELECT intake_item_id FROM container WHERE order_part_id = ? AND intake_item_id IS NOT NULL))
           OR clarification_id IN (SELECT id FROM clarification WHERE order_part_id = ?)
         ) ORDER BY placed_at`,
     )
-    .all(part.id, ...containerIds, part.id) as { id: string; display_id: string; scope_label: string; intake_item_id: string | null; accession_id: string | null; clarification_id: string | null }[];
+    .all(part.id, ...containerIds, part.id, part.id) as { id: string; display_id: string; scope_label: string; intake_item_id: string | null; accession_id: string | null; clarification_id: string | null }[];
 
   for (const h of holds) {
     const taskId = openTask(ctx, {
@@ -879,7 +1216,7 @@ function reviewPreAccessionAmendment(
   }
 
   // No hold, but the container already arrived and may have been checked against the old values.
-  if (!holds.length) {
+  if (!holds.length && opts.checkReceipt) {
     const received = db
       .prepare(
         `SELECT DISTINCT ii.id, ii.display_id FROM container c JOIN intake_item ii ON ii.id = c.intake_item_id
@@ -1055,14 +1392,24 @@ function guessEntityKey(source: SourceRow, payloadText: string): { key: string; 
   }
 }
 
-function writeReceipt(
+/**
+ * Append one line to the receipt log (every delivery, duplicate and retry). It is written after the
+ * import outcome is settled and can never fail or undo the import: a logging error is reported and skipped.
+ */
+function logReceipt(
   ctx: Ctx,
   r: { eventId: string; sourceId: string; messageId: string; messageType: string; outcome: string; detail: string; via: ReceiptVia },
 ): void {
-  ctx.db
-    .prepare(
-      `INSERT INTO integration_receipt (id, event_id, source_id, message_id, message_type, received_at, outcome, detail, via)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(newId(ctx.db, "irc"), r.eventId, r.sourceId, r.messageId, r.messageType, ctx.now, r.outcome, r.detail, r.via);
+  try {
+    ctx.db.transaction(() => {
+      ctx.db
+        .prepare(
+          `INSERT INTO integration_receipt (id, event_id, source_id, message_id, message_type, received_at, outcome, detail, via)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(newId(ctx.db, "irc"), r.eventId, r.sourceId, r.messageId, r.messageType, ctx.now, r.outcome, r.detail, r.via);
+    })();
+  } catch (e) {
+    console.error("[sourceImport] receipt log not written (import outcome unaffected)", e);
+  }
 }

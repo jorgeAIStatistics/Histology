@@ -76,6 +76,48 @@ export const PERMISSIONS = {
 
 export type Permission = keyof typeof PERMISSIONS;
 
+
+/** Plain-language names for permissions, used in "not allowed" messages. */
+export const PERMISSION_LABEL: Record<Permission, string> = {
+  "intake.receive": "receive deliveries and intake items",
+  "intake.edit": "edit intake items",
+  "intake.verifyContainer": "verify containers against the physical bottle",
+  "routing.confirm": "accept a routing suggestion",
+  "routing.override": "override routing",
+  "routing.resolveException": "assign a dermatopathologist for a routing exception",
+  "related.review": "decide on related orders",
+  "accession.request": "request an accession",
+  "correction.open": "open a correction review",
+  "correction.close": "close a correction review",
+  "clarification.create": "raise clarifications",
+  "clarification.send": "send clarifications",
+  "clarification.record": "record clarification outcomes and answers",
+  "clarification.review": "review office answers",
+  "clarification.resolve": "resolve clarifications",
+  "hold.place": "place holds",
+  "hold.release": "release holds",
+  "gross.edit": "edit gross records",
+  "gross.review": "mark gross records reviewed",
+  "gross.approve": "approve gross records for downstream use",
+  "gross.recordSourceEntry": "attest source-system entry of gross descriptions",
+  "gross.confirmCassettes": "confirm cassette allocation",
+  "material.advance": "record bench progress on blocks and slides",
+  "print.request": "request label printing",
+  "print.reconcile": "reconcile print outcomes",
+  "label.apply": "record label application",
+  "label.retire": "retire labels",
+  "tray.assemble": "assemble trays",
+  "tray.releaseWithExceptions": "release a tray with documented exceptions",
+  "retrieval.request": "request block retrieval",
+  "retrieval.pick": "pick and scan blocks for retrieval",
+  "workorder.review": "review work orders changed at the source",
+  "worklist.ack": "acknowledge worklist changes",
+  "worklist.snapshot": "print or export worklist snapshots",
+  "routing.editRules": "draft routing rule versions",
+  "routing.approveRules": "approve routing rule versions",
+  "integration.manage": "manage simulated integrations",
+};
+
 export function roleCan(role: Role, permission: Permission): boolean {
   return (PERMISSIONS[permission] as readonly Role[]).includes(role);
 }

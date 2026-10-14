@@ -269,13 +269,15 @@ Also checked: the Proprietary FHIR API page (https://portal.api.modmed.com/docs/
 
 | # | Item | Action |
 |---|---|---|
-| 1 | R1 says label printing works "in most cases"; the brief says "in many cases." | Use the source wording in the pitch and proposal. |
+| 1 | R1 says label printing works "in most cases"; the brief says "in many cases." | Use the source wording in the pitch and proposal. **Done 2026-10-14:** all project documents now say "in most cases," attributed to ModMed's FAQ, or paraphrase without quotation marks. |
 | 2 | R1 and R3 could only be read through a reader proxy. | A person should recheck both in a normal browser before presenting. |
 | 3 | R4, S5 and S6 list different ServiceRequest status values. R4's category list omits Pathology, but S5's example shows it. R4 describes `subject` as an Encounter reference. | Ask ModMed. Confirm in a sandbox if access is ever approved. |
 | 4 | Rate limit: 1,250/min on S11 vs. 1000/min in 429 text on S5 and S7. | Design for the lower number. Ask ModMed. |
-| 5 | R9 studied pathologists for digital-pathology design. | Describe it that way in the proposal. |
+| 5 | R9 studied pathologists for digital-pathology design. | Describe it that way in the proposal. **Done 2026-10-14** in `product-brief.md` and `pilot-proposal.md`: six pathologists; the integration conclusion concerned digital slide systems and the AP information system. |
 | 6 | R11's URL redirects to a `/us/` path. | Cite the final URL. |
 | 7 | R5 is revised roughly every two years. | Check cap.org for a newer version before the director meeting. |
+| 8 | `integration-capability-matrix.md` had cited API details that these notes do not record: a ServiceRequest `occurrenceDateTime` field, Patient create/update in the proprietary API, and CareTeam being readable. What these notes do record: S5 lists an `authored` search filter (it does not name an `authoredOn` field); S6 lists PractitionerRole among the readable resources; S9 says Task assignees can be CareTeams; §4 item 6 mentions Patient among resources with documented writes, but no S-row records the page. | **To verify** on the specific ModMed pages before any of these is quoted. The matrix now marks them "to verify". |
+| 9 | R6's author attribution ("Heher et al.") comes from the publisher page; the master specification names no author. | Recheck on the publisher page before citing externally. |
 
 ---
 
@@ -287,7 +289,7 @@ Also checked: the Proprietary FHIR API page (https://portal.api.modmed.com/docs/
    - clarification records, holds, routing suggestions, print-job and tray simulations, and storage and custody records are **companion-owned operational records**.
 3. **The A/B "two patients" question cannot be answered from documentation.** R4 has no part-designation or laterality field. How multi-part biopsies appear (separate ServiceRequests, a RequestGroup, or separate accession records) must be observed in our tenant. The companion proposes related-order candidates and never merges.
 4. **Freshness must be visible.** Without push events and with date-granularity polling, any live view needs "last successful sync," data age, and a distinct "source unavailable" state.
-5. **No writeback in early modes.** Gross descriptions continue to be entered in EMA by staff. The companion records "entered in EMA (attested by …)" and never shows a local draft as entered.
+5. **No writeback in early modes.** Gross descriptions continue to be entered in EMA by staff. The companion records a staff attestation ("Entered in source system (staff attested)", with who and when). That is not a source acknowledgment: "Source system acknowledged" requires a confirmation from the source itself, which only a supported interface could provide (simulated in the demo). A local draft is never shown as entered.
 6. **Clarifications:** EMA Tasks (S9) are a documented create/update resource that might carry lab-to-office clarifications inside EMA. Whether that works across offices, who is notified, and whether the current EMA message channel is the underlying problem are all unknown. Agreement with the offices on ownership and escalation matters more than the channel.
 7. **The evidence supports process design, not promised results.**
    - R6 and R7 show that barcodes work alongside workflow changes and hard stops.

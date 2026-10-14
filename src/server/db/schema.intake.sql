@@ -33,7 +33,7 @@ BEGIN SELECT RAISE(ABORT, 'container_verification is append-only'); END;
 CREATE TABLE intake_discrepancy (
   id              TEXT PRIMARY KEY,
   intake_item_id  TEXT NOT NULL REFERENCES intake_item(id),
-  kind            TEXT NOT NULL CHECK (kind IN ('field_mismatch','missing_container','unmatched_container','order_not_linked')),
+  kind            TEXT NOT NULL CHECK (kind IN ('field_mismatch','missing_container','extra_container','unmatched_container','order_not_linked')),
   field           TEXT,                        -- field_mismatch only: patient_name | birth_date | mrn | site | laterality | procedure | part_designation | collection_date
   container_id    TEXT REFERENCES container(id),
   order_part_id   TEXT REFERENCES source_order_part(id),
@@ -44,6 +44,10 @@ CREATE TABLE intake_discrepancy (
   resolved_at     TEXT,
   resolved_by     TEXT,
   resolution_note TEXT,
+  -- How it was closed: order_amended (source amended, values now agree, re-verified by staff) | lead_accepted
+  -- (accessioning lead / supervisor accepted it with a reason) | relinked (container linked to another part;
+  -- the comparison no longer applies) | count_reconciled | staff_linked. Values are never edited.
+  resolution_kind TEXT CHECK (resolution_kind IS NULL OR resolution_kind IN ('order_amended','lead_accepted','relinked','count_reconciled','staff_linked')),
   version         INTEGER NOT NULL DEFAULT 1
 );
 CREATE UNIQUE INDEX intake_discrepancy_open_unique
@@ -56,6 +60,11 @@ CREATE TRIGGER intake_discrepancy_values_frozen BEFORE UPDATE OF values_json, ki
 WHEN OLD.values_json IS NOT NEW.values_json OR OLD.kind IS NOT NEW.kind OR OLD.field IS NOT NEW.field
   OR OLD.container_id IS NOT NEW.container_id OR OLD.order_part_id IS NOT NEW.order_part_id
 BEGIN SELECT RAISE(ABORT, 'INVARIANT: discrepancy evidence is kept as found; record a resolution instead'); END;
+
+-- A closed discrepancy stays closed (a new finding is a new row), and its resolution is never rewritten.
+CREATE TRIGGER intake_discrepancy_closed_final BEFORE UPDATE ON intake_discrepancy
+WHEN OLD.status <> 'open'
+BEGIN SELECT RAISE(ABORT, 'INVARIANT: a closed discrepancy is final; record a new finding instead'); END;
 
 -- One accession per accession request (a request is never issued twice).
 CREATE UNIQUE INDEX accession_request_one_accession ON accession_request(accession_id) WHERE accession_id IS NOT NULL;

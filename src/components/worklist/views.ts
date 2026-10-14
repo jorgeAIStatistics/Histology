@@ -18,10 +18,10 @@ export const VIEW_LABEL: Record<WorklistView, string> = {
 };
 
 export const VIEW_SCOPE_TEXT: Record<WorklistView, string> = {
-  accessioning: "Cases received today, anything on hold, and routing exceptions",
-  grossing: "Parts awaiting grossing, gross records in progress, and approved records awaiting source-system entry",
-  histotech: "Cases in processing through tray assembly, additional work orders (PAS, levels) and material needing review",
-  operations: "Every active case on today's worklist",
+  accessioning: "cases received today, anything on hold, and routing exceptions",
+  grossing: "parts awaiting grossing, gross records in progress, and approved records awaiting source-system entry",
+  histotech: "cases from processing to tray assembly, extra work orders (PAS, levels) and material needing review",
+  operations: "every active case on today's worklist",
 };
 
 export const COLUMN_KEYS = [
@@ -73,7 +73,7 @@ export const COLUMN_PRIORITY: Record<ColumnKey, 1 | 2 | 3> = {
 
 export const VIEW_COLUMNS: Record<WorklistView, ColumnKey[]> = {
   accessioning: ["accession", "parts", "stage", "stains", "holds", "readiness", "owner", "lastUpdate", "office", "clinician"],
-  grossing: ["accession", "parts", "stage", "stains", "holds", "readiness", "blocks", "sourceEntry", "owner", "lastUpdate"],
+  grossing: ["accession", "parts", "stage", "stains", "holds", "readiness", "sourceEntry", "blocks", "owner", "lastUpdate"],
   histotech: ["accession", "parts", "stage", "stains", "holds", "readiness", "blocks", "owner", "lastUpdate"],
   operations: ["accession", "parts", "stage", "stains", "holds", "readiness", "blocks", "sourceEntry", "owner", "lastUpdate", "office"],
 };
@@ -94,7 +94,7 @@ export const FILTER_STAGES: Stage[] = [
 
 export const worklistFiltersSchema = z
   .object({
-    /** Assigned dermatopathologist staff id, or "unassigned" for routing exceptions. */
+    /** Assigned dermatopathologist staff id, or "unassigned" for rows outside every active doctor's group. */
     doctor: z.string().max(64).optional(),
     stage: z.string().max(40).optional(),
     pasOnly: z.boolean().optional(),
@@ -105,8 +105,11 @@ export const worklistFiltersSchema = z
     changedOnly: z.boolean().optional(),
     /** "view" = the view's default scope; "all" = every case on today's worklist. */
     scope: z.enum(["view", "all"]).optional(),
-    /** Grossing view only: Sam's source-system entry queue. */
-    queue: z.enum(["source_entry"]).optional(),
+    /**
+     * Grossing view only: parts with no approved gross record yet (what the Operations tile counts), Sam's
+     * source-system entry queue, or records entered (staff attested) and awaiting the simulated source's acknowledgment.
+     */
+    queue: z.enum(["gross_pending", "source_entry", "source_attested"]).optional(),
     /** Free-text search on accession / provisional id / office / clinician. */
     q: z.string().max(80).optional(),
   })
@@ -134,7 +137,7 @@ export function filtersFromSearchParams(sp: Record<string, string | string[] | u
     mine: bool("mine"),
     changedOnly: bool("changed"),
     scope: one("scope") === "all" ? "all" : undefined,
-    queue: one("queue") === "source_entry" ? "source_entry" : undefined,
+    queue: (["gross_pending", "source_entry", "source_attested"] as const).find((q) => q === one("queue")),
     q: one("q")?.slice(0, 80) || undefined,
   };
   const parsed = worklistFiltersSchema.safeParse(stripUndefined(raw));
@@ -167,10 +170,12 @@ export function stripUndefined<T extends Record<string, unknown>>(o: T): T {
 export function describeFilters(f: WorklistFilters, doctorName?: (id: string) => string | undefined): string {
   const parts: string[] = [];
   if (f.scope === "all") parts.push("all cases");
+  if (f.queue === "gross_pending") parts.push("parts with no approved gross record yet");
   if (f.queue === "source_entry") parts.push("source-entry queue");
-  if (f.doctor) parts.push(f.doctor === "unassigned" ? "unassigned (routing exception)" : `dermatopathologist ${doctorName?.(f.doctor) ?? f.doctor}`);
+  if (f.queue === "source_attested") parts.push("entered (staff attested), awaiting source acknowledgment");
+  if (f.doctor) parts.push(f.doctor === "unassigned" ? "no active assigned dermatopathologist (routing exceptions and cases without one)" : `dermatopathologist ${doctorName?.(f.doctor) ?? f.doctor}`);
   if (f.stage) parts.push(`stage ${f.stage.replace(/_/g, " ")}`);
-  if (f.pasOnly) parts.push("PAS only");
+  if (f.pasOnly) parts.push("PAS only (incl. canceled PAS awaiting review)");
   if (f.onHold) parts.push("on hold");
   if (f.mine) parts.push("my work");
   if (f.changedOnly) parts.push("changed since acknowledgment");

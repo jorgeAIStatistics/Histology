@@ -12,7 +12,7 @@ import { currentWorklistSeq } from "@/server/core/feed";
 import { computeReadiness, STAGE_SHORT, type CaseReadiness, type PartReadiness } from "@/server/domain/readiness";
 import { activeHolds, blockedTransitions, scopesForIntake } from "@/server/domain/holds";
 import { AUTHORIZATION_SOURCE, ROUTING_STATUS, type Stage } from "@/lib/domain";
-import { fmtTime, fmtSmart, labDay, minutesBetween, fmtAge } from "@/lib/time";
+import { fmtTime, fmtSmart, fmtFull, labDay, minutesBetween, fmtAge } from "@/lib/time";
 import {
   FRESHNESS_DELAYED_AFTER_MIN,
   FRESHNESS_STALE_AFTER_MIN,
@@ -22,6 +22,7 @@ import {
   type WorklistFilters,
   type WorklistView,
 } from "@/components/worklist/views";
+import { partsText, tidyPlurals } from "@/components/worklist/format";
 
 // ---------------------------------------------------------------- types
 
@@ -77,6 +78,8 @@ export interface HoldEntry {
   reasonText: string;
   blocks: string[];
   clarificationId: string | null;
+  /** Display id of the linked clarification (CLR-0457), used in links. */
+  clarificationDisplayId?: string | null;
   placedAt: string;
 }
 
@@ -135,8 +138,12 @@ export interface WorklistRow {
   parts: PartTrackView[];
   holds: HoldEntry[];
   stains: StainEntry[];
+  /** Every PAS entry (active and canceled), for display. */
   pas: StainEntry[];
+  /** At least one PAS that is still to be done (requested, in progress or on the order). Canceled PAS never counts. */
   hasPas: boolean;
+  /** A PAS was canceled or amended at source and prepared/printed material needs review. Shown separately, never as an active PAS. */
+  pasNeedsReview: boolean;
   readinessText: string;
   eligibleShort: string[];
   blockedShort: string[];
@@ -147,7 +154,10 @@ export interface WorklistRow {
   owner: TaskEntry | null;
   ownerText: string;
   lastUpdate: { at: string | null; origin: UpdateOrigin | null; by: string | null; summary: string | null; text: string };
+  /** Primary tag (used for counts): canceled, then new, then changed. */
   change: ChangeTag | null;
+  /** Every tag that applies, so a new row with a canceled stain shows both "New" and "Canceled". */
+  changeTags: ChangeTag[];
   changeSummaries: string[];
   routing: { status: string; explanation: string } | null;
   openClarifications: number;
@@ -155,12 +165,16 @@ export interface WorklistRow {
 
 export interface WorklistGroup {
   key: string;
+  /** doctor = an active assigned dermatopathologist; routing_exception = intake items with no approved rule; no_doctor = a case whose assigned doctor is missing or inactive. */
+  kind: "doctor" | "routing_exception" | "no_doctor";
   pathologistId: string | null;
   name: string;
   colorToken: string | null;
   colorName: string | null;
+  /** True for the two groups without a doctor color. */
   isException: boolean;
-  counts: { rows: number; pas: number; onHold: number };
+  /** pas = rows with a PAS still to do; pasReview = rows with a canceled/amended PAS whose material needs review. */
+  counts: { rows: number; pas: number; pasReview: number; onHold: number };
   rows: WorklistRow[];
 }
 
@@ -247,7 +261,7 @@ export function loadSourceFreshness(db: DB, now: string = demoNow(db)): Freshnes
 
 const PART_WORD_STAGE: Partial<Record<Stage, string>> = {
   awaiting_gross: "awaiting gross",
-  gross_in_progress: "gross record",
+  gross_in_progress: "gross in progress",
   processing: "processing",
   embedding: "embedding",
   sectioning: "sectioning",
@@ -275,10 +289,40 @@ export function shortEligible(s: string): string {
   m = s.match(/^Sectioning: (.+)$/);
   if (m) return `${m[1].replace(/ \(\d+ planned\)/g, "")} for sectioning`;
   m = s.match(/^(\d+) slide\(s\) ready for tray$/);
-  if (m) return `${m[1]} slide(s) for tray`;
+  if (m) return `${m[1]} ${m[1] === "1" ? "slide" : "slides"} for tray`;
   m = s.match(/^Part (\w+): enter approved gross description in source system \(pending\)$/);
   if (m) return `Part ${m[1]} source-system entry`;
   return s;
+}
+
+/**
+ * Group short eligible phrases by what they are eligible for, so a row reads "Parts A, B, C for grossing"
+ * instead of repeating the action per part. Phrases without a " for " action are kept as they are.
+ */
+export function groupEligible(items: string[]): string[] {
+  const order: string[] = [];
+  const by = new Map<string, string[]>();
+  for (const s of items) {
+    const m = /^(.+?) for (.+)$/.exec(s);
+    const key = m ? `for ${m[2]}` : `\u0000${s}`;
+    if (!by.has(key)) {
+      by.set(key, []);
+      order.push(key);
+    }
+    by.get(key)!.push(m ? m[1] : s);
+  }
+  return order.map((key) => {
+    const subjects = by.get(key)!;
+    if (key.startsWith("\u0000")) return subjects[0];
+    const letters = subjects.map((x) => /^Part (\w+)$/.exec(x)?.[1]);
+    const who = letters.every(Boolean) ? (letters.length > 1 ? `Parts ${letters.join(", ")}` : `Part ${letters[0]}`) : subjects.join(", ");
+    return `${who} ${key}`;
+  });
+}
+
+/** Letters of parts whose approved gross description still has to be entered in the source system. */
+function sourceEntryLetters(documentation: string[]): string[] {
+  return documentation.map((d) => /^Part (\w+) source-system entry$/.exec(d)?.[1] ?? d);
 }
 
 function isDocumentationEligible(s: string): boolean {
@@ -424,8 +468,22 @@ export function worklistVersion(db: DB): number {
   return currentWorklistSeq({ db });
 }
 
-/** Every case on today's worklist (plus open older cases) with derived readiness, before view/filters. */
-export function loadWorklistRows(db: DB, staffId: string, ackedSeq: number, now: string): WorklistRow[] {
+/** Options for loadWorklistRows: restrict to one accession (case page), or skip routing-exception intake rows. */
+export interface LoadRowsOptions {
+  /** One accession (any status, on today's list or not). Change tags still come from ackedSeq. */
+  accessionId?: string;
+  /** Include intake items in routing exception (default true; ignored when accessionId is set). */
+  includeIntake?: boolean;
+}
+
+/**
+ * Every case on today's worklist with derived readiness, before view/filters:
+ * cases received today, open older cases, older cases with open work orders,
+ * and older cases whose approved gross record still awaits source-system entry
+ * (Sam's late-entry queue). Plus intake items in routing exception.
+ */
+export function loadWorklistRows(db: DB, ackedSeq: number, now: string, opts: LoadRowsOptions = {}): WorklistRow[] {
+  const one = opts.accessionId ?? null;
   const accessions = db
     .prepare(
       `SELECT a.id, a.accession_number, a.assigned_pathologist_id, a.priority, a.received_day, a.case_status, a.issued_at, a.updated_at,
@@ -436,13 +494,21 @@ export function loadWorklistRows(db: DB, staffId: string, ackedSeq: number, now:
          JOIN patient_ref p ON p.id = a.patient_ref_id
          JOIN source_tenant t ON t.id = p.tenant_id
          LEFT JOIN clinician c ON c.id = a.ordering_clinician_id
-        WHERE a.case_status <> 'canceled' AND (a.is_prior_day = 0 OR a.case_status = 'open'
-           OR EXISTS (SELECT 1 FROM work_order wo WHERE wo.accession_id = a.id AND wo.status IN ('requested','in_progress','cancel_review','amended_review')))
+        WHERE ${
+          one
+            ? "a.id = @one"
+            : `a.case_status <> 'canceled' AND (a.is_prior_day = 0 OR a.case_status = 'open'
+           OR EXISTS (SELECT 1 FROM work_order wo WHERE wo.accession_id = a.id AND wo.status IN ('requested','in_progress','cancel_review','amended_review'))
+           OR EXISTS (SELECT 1 FROM gross_record gr JOIN specimen_part sp ON sp.id = gr.specimen_part_id
+                       WHERE sp.accession_id = a.id AND sp.status = 'active' AND gr.state = 'approved_for_downstream' AND gr.source_update_state IN ('pending_entry','failed')))`
+        }
         ORDER BY a.accession_number`,
     )
-    .all() as AccRow[];
+    .all(one ? { one } : {}) as AccRow[];
   const ids = accessions.map((a) => a.id);
   const readiness = computeReadiness(db, ids);
+  const accClause = one ? "AND accession_id = @one" : "";
+  const accParams = one ? { one } : {};
 
   // Open tasks (owner = who holds the next step).
   const openTasks = db
@@ -450,9 +516,9 @@ export function loadWorklistRows(db: DB, staffId: string, ackedSeq: number, now:
       `SELECT t.id, t.kind, t.title, t.status, t.owner_id, s.display_name AS owner_name, t.owner_role, t.priority, t.due_at, t.created_at, t.version,
               t.accession_id, t.intake_item_id
          FROM task t LEFT JOIN staff s ON s.id = t.owner_id
-        WHERE t.status IN ('open','in_progress')`,
+        WHERE t.status IN ('open','in_progress') ${one ? "AND t.accession_id = @one" : ""}`,
     )
-    .all() as TaskRow[];
+    .all(accParams) as TaskRow[];
   const tasksByAcc = new Map<string, TaskEntry[]>();
   const tasksByIntake = new Map<string, TaskEntry[]>();
   for (const t of openTasks) {
@@ -462,53 +528,62 @@ export function loadWorklistRows(db: DB, staffId: string, ackedSeq: number, now:
 
   // Change feed since the user's acknowledgment.
   const changes = db
-    .prepare("SELECT seq, accession_id, intake_item_id, change_type, summary FROM worklist_change WHERE seq > ? ORDER BY seq")
-    .all(ackedSeq) as { seq: number; accession_id: string | null; intake_item_id: string | null; change_type: ChangeTag; summary: string }[];
+    .prepare(`SELECT seq, accession_id, intake_item_id, change_type, summary FROM worklist_change WHERE seq > @acked ${accClause} ORDER BY seq`)
+    .all({ acked: ackedSeq, ...accParams }) as { seq: number; accession_id: string | null; intake_item_id: string | null; change_type: ChangeTag; summary: string }[];
   const changeByKey = new Map<string, { types: Set<ChangeTag>; summaries: string[] }>();
   for (const c of changes) {
     const key = c.accession_id ? `a:${c.accession_id}` : c.intake_item_id ? `i:${c.intake_item_id}` : null;
     if (!key) continue;
     const entry = changeByKey.get(key) ?? { types: new Set<ChangeTag>(), summaries: [] };
     entry.types.add(c.change_type);
-    entry.summaries.push(c.summary);
+    entry.summaries.push(tidyPlurals(c.summary));
     changeByKey.set(key, entry);
   }
-  const tagFor = (key: string): { change: ChangeTag | null; summaries: string[] } => {
+  const tagFor = (key: string): RowTag => {
     const e = changeByKey.get(key);
-    if (!e) return { change: null, summaries: [] };
-    const change: ChangeTag = e.types.has("new") ? "new" : e.types.has("canceled") ? "canceled" : "changed";
-    return { change, summaries: e.summaries };
+    if (!e) return { change: null, tags: [], summaries: [] };
+    // Canceled work outranks "new" so it can never be hidden behind it; every applicable tag is still listed.
+    const change: ChangeTag = e.types.has("canceled") ? "canceled" : e.types.has("new") ? "new" : "changed";
+    const tags: ChangeTag[] = [];
+    if (e.types.has("new")) tags.push("new");
+    if (e.types.has("canceled")) tags.push("canceled");
+    if (!tags.length) tags.push("changed");
+    return { change, tags, summaries: e.summaries };
   };
 
   // Last confirmed update candidates.
   const staffNames = new Map(
     (db.prepare("SELECT id, display_name FROM staff").all() as { id: string; display_name: string }[]).map((s) => [s.id, s.display_name]),
   );
-  const lastByAcc = new Map<string, { at: string; origin: UpdateOrigin; by: string | null; summary: string }>();
-  const consider = (accId: string, at: string | null, origin: UpdateOrigin, by: string | null, summary: string) => {
+  const lastByAcc = new Map<string, LastUpdate>();
+  // `laterWinsTie`: audit rows arrive in log order (seq), so with the demo clock paused (several events at
+  // one timestamp) the LATER logged event is the last update, not the first (e.g. "approved", not "draft started").
+  const consider = (accId: string, at: string | null, origin: UpdateOrigin, by: string | null, summary: string, laterWinsTie = false) => {
     if (!at) return;
     const cur = lastByAcc.get(accId);
-    if (!cur || Date.parse(at) > Date.parse(cur.at)) lastByAcc.set(accId, { at, origin, by, summary });
+    const t = Date.parse(at);
+    const c = cur ? Date.parse(cur.at) : -Infinity;
+    if (!cur || t > c || (laterWinsTie && t === c)) lastByAcc.set(accId, { at, origin, by, summary: tidyPlurals(summary) });
   };
   if (ids.length) {
     const auditRows = db
       .prepare(
         `SELECT accession_id, at, origin, actor_id, action, summary FROM audit_event
-          WHERE accession_id IS NOT NULL AND action NOT LIKE 'task.%' AND action NOT LIKE 'worklist.%' AND action NOT LIKE 'command.%'
+          WHERE accession_id IS NOT NULL AND action NOT LIKE 'task.%' AND action NOT LIKE 'worklist.%' AND action NOT LIKE 'command.%' ${accClause}
           ORDER BY seq`,
       )
-      .all() as { accession_id: string; at: string; origin: string; actor_id: string | null; action: string; summary: string }[];
+      .all(accParams) as { accession_id: string; at: string; origin: string; actor_id: string | null; action: string; summary: string }[];
     for (const r of auditRows) {
       if (NON_CONFIRMING_ACTIONS.test(r.action)) continue;
       const origin: UpdateOrigin = r.origin === "import" || r.origin === "simulator" ? "Source (simulated)" : "Local";
-      consider(r.accession_id, r.at, origin, r.actor_id && r.actor_id !== "system" ? staffNames.get(r.actor_id) ?? null : null, r.summary);
+      consider(r.accession_id, r.at, origin, r.actor_id && staffNames.has(r.actor_id) ? staffNames.get(r.actor_id)! : null, r.summary, true);
     }
     const grossRows = db
       .prepare(
         `SELECT sp.accession_id, sp.designation, gr.updated_at, gr.approved_at, gr.source_entry_at, gr.source_ack_at, gr.approved_by, gr.source_entry_by, gr.grosser_id, gr.state
-           FROM gross_record gr JOIN specimen_part sp ON sp.id = gr.specimen_part_id WHERE gr.state <> 'superseded'`,
+           FROM gross_record gr JOIN specimen_part sp ON sp.id = gr.specimen_part_id WHERE gr.state <> 'superseded' ${one ? "AND sp.accession_id = @one" : ""}`,
       )
-      .all() as { accession_id: string; designation: string; updated_at: string; approved_at: string | null; source_entry_at: string | null; source_ack_at: string | null; approved_by: string | null; source_entry_by: string | null; grosser_id: string | null; state: string }[];
+      .all(accParams) as { accession_id: string; designation: string; updated_at: string; approved_at: string | null; source_entry_at: string | null; source_ack_at: string | null; approved_by: string | null; source_entry_by: string | null; grosser_id: string | null; state: string }[];
     for (const g of grossRows) {
       consider(g.accession_id, g.updated_at, "Local", g.grosser_id ? staffNames.get(g.grosser_id) ?? null : null, `Gross record part ${g.designation} updated (${g.state.replace(/_/g, " ")})`);
       consider(g.accession_id, g.approved_at, "Local", g.approved_by ? staffNames.get(g.approved_by) ?? null : null, `Gross record part ${g.designation} approved for downstream use`);
@@ -516,41 +591,55 @@ export function loadWorklistRows(db: DB, staffId: string, ackedSeq: number, now:
       consider(g.accession_id, g.source_ack_at, "Source (simulated)", null, `Part ${g.designation} source-system entry acknowledged (simulated)`);
     }
     const blockRows = db
-      .prepare("SELECT accession_id, label_text, location_confirmed_at, location_confirmed_by FROM block WHERE location_confirmed_at IS NOT NULL AND status = 'active'")
-      .all() as { accession_id: string; label_text: string; location_confirmed_at: string; location_confirmed_by: string | null }[];
+      .prepare(`SELECT accession_id, label_text, location_confirmed_at, location_confirmed_by FROM block WHERE location_confirmed_at IS NOT NULL AND status = 'active' ${accClause}`)
+      .all(accParams) as { accession_id: string; label_text: string; location_confirmed_at: string; location_confirmed_by: string | null }[];
     for (const b of blockRows) consider(b.accession_id, b.location_confirmed_at, "Local", b.location_confirmed_by ? staffNames.get(b.location_confirmed_by) ?? null : null, `Block ${b.label_text} location confirmed`);
+    // A source version counts from when the lab RECEIVED it (imported_at), not the source's own timestamp:
+    // after an outage the late import is what the lab actually saw.
     const srcRows = db
       .prepare(
-        `SELECT DISTINCT sp.accession_id, so.source_order_id, so.source_version, so.source_updated_at FROM specimen_part sp JOIN source_order so ON so.id = sp.source_order_id`,
+        `SELECT DISTINCT sp.accession_id, so.source_order_id, so.source_version, so.source_updated_at, so.imported_at
+           FROM specimen_part sp JOIN source_order so ON so.id = sp.source_order_id ${one ? "WHERE sp.accession_id = @one" : ""}`,
       )
-      .all() as { accession_id: string; source_order_id: string; source_version: number; source_updated_at: string }[];
-    for (const s of srcRows) consider(s.accession_id, s.source_updated_at, "Source (simulated)", null, `Order ${s.source_order_id} v${s.source_version} updated at source`);
+      .all(accParams) as { accession_id: string; source_order_id: string; source_version: number; source_updated_at: string; imported_at: string }[];
+    for (const s of srcRows) {
+      consider(
+        s.accession_id, s.imported_at, "Source (simulated)", null,
+        `Order ${s.source_order_id} v${s.source_version} received from the source (simulated; source time ${fmtTime(s.source_updated_at)} ET)`,
+      );
+    }
   }
 
   // Stains requested on order lines (to show PAS requested on the order before a work order exists).
   const orderLines = db
     .prepare(
       `SELECT sp.id AS part_id, sop.designation, sop.requested_stains, so.source_order_id AS src_order, so.source_version
-         FROM specimen_part sp JOIN source_order_part sop ON sop.id = sp.source_order_part_id JOIN source_order so ON so.id = sp.source_order_id`,
+         FROM specimen_part sp JOIN source_order_part sop ON sop.id = sp.source_order_part_id JOIN source_order so ON so.id = sp.source_order_id
+        ${one ? "WHERE sp.accession_id = @one" : ""}`,
     )
-    .all() as PartStainSourceRow[];
+    .all(accParams) as PartStainSourceRow[];
   const orderLineByPart = new Map(orderLines.map((r) => [r.part_id, r]));
+
+  const clrDisplay = new Map((db.prepare("SELECT id, display_id FROM clarification").all() as { id: string; display_id: string }[]).map((r) => [r.id, r.display_id]));
 
   // Open clarifications per accession.
   const clarCounts = new Map(
     (db
       .prepare(
-        `SELECT accession_id, COUNT(*) AS n FROM clarification WHERE accession_id IS NOT NULL AND state NOT IN ('resolved','canceled') GROUP BY accession_id`,
+        `SELECT accession_id, COUNT(*) AS n FROM clarification WHERE accession_id IS NOT NULL AND state NOT IN ('resolved','canceled') ${accClause} GROUP BY accession_id`,
       )
-      .all() as { accession_id: string; n: number }[]).map((r) => [r.accession_id, r.n]),
+      .all(accParams) as { accession_id: string; n: number }[]).map((r) => [r.accession_id, r.n]),
   );
 
   const rows: WorklistRow[] = [];
   for (const a of accessions) {
     const r = readiness.get(a.id);
     if (!r) continue;
-    rows.push(buildCaseRow(a, r, tasksByAcc.get(a.id) ?? [], tagFor(`a:${a.id}`), lastByAcc.get(a.id) ?? null, orderLineByPart, clarCounts.get(a.id) ?? 0, now));
+    const row = buildCaseRow(a, r, tasksByAcc.get(a.id) ?? [], tagFor(`a:${a.id}`), lastByAcc.get(a.id) ?? null, orderLineByPart, clarCounts.get(a.id) ?? 0, now);
+    for (const h of [...row.holds, ...row.parts.flatMap((p) => p.holds)]) h.clarificationDisplayId = h.clarificationId ? clrDisplay.get(h.clarificationId) ?? null : null;
+    rows.push(row);
   }
+  if (one || opts.includeIntake === false) return rows;
 
   // Intake items in routing exception (no approved rule): their own group, never a guessed doctor.
   const exceptions = db
@@ -566,7 +655,8 @@ export function loadWorklistRows(db: DB, staffId: string, ackedSeq: number, now:
     .all() as { id: string; display_id: string; office_id: string | null; observed_office_text: string | null; received_at: string; status: string; updated_at: string; office_name: string | null; routing_status: string; explanation: string }[];
   for (const e of exceptions) {
     const holds = activeHolds(db, scopesForIntake(db, e.id)).map((h) => ({
-      id: h.id, displayId: h.display_id, scopeLabel: h.scope_label, reasonText: h.reason_text, blocks: blockedTransitions(h), clarificationId: h.clarification_id, placedAt: h.placed_at,
+      id: h.id, displayId: h.display_id, scopeLabel: h.scope_label, reasonText: h.reason_text, blocks: blockedTransitions(h), clarificationId: h.clarification_id,
+      clarificationDisplayId: h.clarification_id ? clrDisplay.get(h.clarification_id) ?? null : null, placedAt: h.placed_at,
     }));
     const tasks = tasksByIntake.get(e.id) ?? [];
     const owner = pickOwnerTask(tasks);
@@ -575,8 +665,9 @@ export function loadWorklistRows(db: DB, staffId: string, ackedSeq: number, now:
         `SELECT at, origin, actor_id, summary FROM audit_event WHERE intake_item_id = ? AND action NOT LIKE 'task.%' AND action NOT LIKE 'worklist.%' ORDER BY at DESC, seq DESC LIMIT 1`,
       )
       .get(e.id) as { at: string; origin: string; actor_id: string | null; summary: string } | undefined;
+    // No audit evidence: the receipt time is known, but who/what made the last change is not.
     const lastAt = last?.at ?? e.updated_at ?? e.received_at;
-    const lastOrigin: UpdateOrigin = last && (last.origin === "import" || last.origin === "simulator") ? "Source (simulated)" : "Local";
+    const lastOrigin: UpdateOrigin | null = !last ? null : last.origin === "import" || last.origin === "simulator" ? "Source (simulated)" : "Local";
     const lastBy = last?.actor_id ? staffNames.get(last.actor_id) ?? null : null;
     const order = db
       .prepare(
@@ -589,32 +680,64 @@ export function loadWorklistRows(db: DB, staffId: string, ackedSeq: number, now:
     const tag = tagFor(`i:${e.id}`);
     const office = e.office_name ?? e.observed_office_text ?? "Unknown office";
     rows.push({
-      kind: "intake", id: e.id, accessionNumber: null, provisionalId: e.display_id, href: `/intake?item=${encodeURIComponent(e.id)}`, pathologistId: null,
+      kind: "intake", id: e.id, accessionNumber: null, provisionalId: e.display_id, href: `/intake?item=${encodeURIComponent(e.display_id)}`, pathologistId: null,
       patientLabel: order ? `${order.family_name}, ${order.given_name}` : "Unknown (no linked order)", mrnLabel: order ? mrnLabel(order.source_mrn, order.tenant_name) : "MRN Unknown",
       office, clinician: order?.clinician_name ?? null, priority: "routine", receivedDay: labDay(e.received_at),
       stage: "intake", stageLabel: "Intake: routing exception", partsSummary: "Not accessioned", parts: [], holds,
-      stains: [], pas: [], hasPas: false,
+      stains: [], pas: [], hasPas: false, pasNeedsReview: false,
       readinessText: `Not ready: no approved routing rule for ${office}. A lead must assign a dermatopathologist with a reason.`,
       eligibleShort: [], blockedShort: [`Routing exception: ${office}`], isComplete: false,
       blocks: { prepared: 0, expected: null, expectedLowerBound: null, text: "Unknown (not accessioned)" },
       sourceEntry: { text: "Not applicable (not accessioned)", pendingParts: [], attestedParts: [] },
       tasks, owner, ownerText: ownerText(owner, tasks.length),
-      lastUpdate: { at: lastAt, origin: lastOrigin, by: lastBy, summary: last?.summary ?? "Received", text: `${fmtSmart(lastAt, now)} ET · ${lastOrigin}` },
-      change: tag.change, changeSummaries: tag.summaries,
+      lastUpdate: {
+        at: lastAt, origin: lastOrigin, by: lastBy, summary: last?.summary ?? "Received (no later recorded change)",
+        text: `${fmtSmart(lastAt, now)} ET · ${lastOrigin ?? "origin Unknown"}`,
+      },
+      change: tag.change, changeTags: tag.tags, changeSummaries: tag.summaries,
       routing: { status: ROUTING_STATUS.exception, explanation: e.explanation },
       openClarifications: (db.prepare("SELECT COUNT(*) n FROM clarification WHERE intake_item_id = ? AND state NOT IN ('resolved','canceled')").get(e.id) as { n: number }).n,
     });
   }
-  void staffId;
   return rows;
+}
+
+/** One case as a worklist row (no change tags), whether or not it is on today's list. Used by the case page. */
+export function loadCaseRow(db: DB, accessionId: string, now: string = demoNow(db)): WorklistRow | null {
+  return loadWorklistRows(db, Number.MAX_SAFE_INTEGER, now, { accessionId })[0] ?? null;
+}
+
+interface RowTag {
+  change: ChangeTag | null;
+  tags: ChangeTag[];
+  summaries: string[];
+}
+
+interface LastUpdate {
+  at: string;
+  origin: UpdateOrigin;
+  by: string | null;
+  summary: string;
+}
+
+/** Work-order statuses that keep a case open: still to do, or canceled/amended at source and awaiting review. */
+const OPEN_WO_STATUSES = new Set(["requested", "in_progress", "cancel_review", "amended_review"]);
+
+/**
+ * A case is complete only when every active part is delivered AND no work
+ * order is still open (including canceled/amended work awaiting review).
+ * computeReadiness() alone looks at parts only.
+ */
+export function caseIsComplete(r: CaseReadiness): boolean {
+  return r.isComplete && !r.parts.some((p) => p.workOrders.some((w) => OPEN_WO_STATUSES.has(w.status)));
 }
 
 function buildCaseRow(
   a: AccRow,
   r: CaseReadiness,
   tasks: TaskEntry[],
-  tag: { change: ChangeTag | null; summaries: string[] },
-  last: { at: string; origin: UpdateOrigin; by: string | null; summary: string } | null,
+  tag: RowTag,
+  last: LastUpdate | null,
   orderLineByPart: Map<string, PartStainSourceRow>,
   openClarifications: number,
   now: string,
@@ -645,22 +768,28 @@ function buildCaseRow(
   const holds = holdEntries(parts.flatMap((p) => p.holds));
   const stains = parts.flatMap((p) => p.stains);
   const pas = stains.filter((s) => s.isPas);
+  const hasPas = pas.some((s) => !s.canceled);
+  const pasNeedsReview = pas.some((s) => s.needsReview);
 
-  // Readiness (derived, explained). One finished part never completes the case.
+  // Readiness (derived, explained). One finished part never completes the case, and neither does open extra work.
   const eligibleAll = r.parts.flatMap((p) => p.eligible);
   const physical = eligibleAll.filter((e) => !isDocumentationEligible(e)).map(shortEligible);
   const documentation = eligibleAll.filter(isDocumentationEligible).map(shortEligible);
   const blockedShort = r.parts.flatMap(shortBlocked);
-  const openWos = stains.filter((s) => s.workOrder && ["requested", "in_progress"].includes(s.status));
+  const openWos = stains.filter((s) => s.workOrder && OPEN_WO_STATUSES.has(s.status));
+  const isComplete = caseIsComplete(r);
   const eligibleShort = [...physical, ...documentation];
   let readinessText: string;
-  if (r.isComplete && !openWos.length && !blockedShort.length) readinessText = "All parts delivered";
-  else {
+  const grouped = groupEligible(physical);
+  const entryText = documentation.length ? `source entry pending: ${sourceEntryLetters(documentation).join(", ")}` : "";
+  if (isComplete && !blockedShort.length) {
+    readinessText = entryText ? `All parts delivered; ${entryText}` : "All parts delivered";
+  } else {
     const bits: string[] = [];
-    if (physical.length) bits.push(`Eligible: ${physical.slice(0, 2).join(", ")}${physical.length > 2 ? ` (+${physical.length - 2} more)` : ""}`);
+    if (grouped.length) bits.push(`Eligible: ${grouped.slice(0, 2).join("; ")}${grouped.length > 2 ? ` (+${grouped.length - 2} more)` : ""}`);
     if (blockedShort.length) bits.push(`${bits.length ? "not ready" : "Not ready"}: ${blockedShort[0]}${blockedShort.length > 1 ? ` (+${blockedShort.length - 1} more)` : ""}`);
-    if (!bits.length && documentation.length) bits.push(`Eligible: ${documentation[0]}`);
-    if (!bits.length && r.isComplete && openWos.length) bits.push(`Additional work open: ${openWos.map((w) => w.workOrder).join(", ")}`);
+    if (!bits.length && entryText) bits.push(entryText.charAt(0).toUpperCase() + entryText.slice(1));
+    if (!bits.length && r.isComplete && openWos.length) bits.push(`Parts delivered; additional work open: ${openWos.map((w) => w.workOrder).join(", ")}`);
     readinessText = bits.length ? bits.join("; ") : "No eligible work right now";
   }
 
@@ -670,10 +799,12 @@ function buildCaseRow(
   const knownExpected = activeParts.filter((p) => p.blocksExpected !== null);
   const expected = activeParts.length && knownExpected.length === activeParts.length ? knownExpected.reduce((n, p) => n + (p.blocksExpected ?? 0), 0) : null;
   const lower = knownExpected.length && expected === null ? knownExpected.reduce((n, p) => n + (p.blocksExpected ?? 0), 0) : null;
+  const anyGrossRecord = activeParts.some((p) => p.documentation.grossState !== "not_started");
   const blocksText =
     expected !== null ? `${prepared} of ${expected}`
     : lower !== null ? `${prepared} of at least ${lower} (some Unknown)`
     : prepared ? `${prepared} prepared, expected Unknown`
+    : anyGrossRecord ? "Unknown (gross record has no cassette count yet)"
     : "Unknown (no gross record yet)";
 
   const pendingParts = parts.filter((p) => p.documentation.grossState === "approved_for_downstream" && p.documentation.sourceUpdateState === "pending_entry").map((p) => p.designation);
@@ -683,8 +814,9 @@ function buildCaseRow(
     .join(" · ");
 
   const owner = pickOwnerTask(tasks);
+  // No recorded evidence for this case: the row's own update time is known, its origin is not.
   const lastAt = last?.at ?? a.updated_at;
-  const lastOrigin = last?.origin ?? "Source (simulated)";
+  const lastOrigin: UpdateOrigin | null = last?.origin ?? null;
   return {
     kind: "case",
     id: a.id,
@@ -700,26 +832,28 @@ function buildCaseRow(
     receivedDay: a.received_day,
     stage: r.stage,
     stageLabel: r.stageLabel,
-    partsSummary: parts.map((p) => `${p.designation} ${p.word}`).join(" · "),
+    partsSummary: partsText(parts),
     parts,
     holds,
     stains,
     pas,
-    hasPas: pas.length > 0,
+    hasPas,
+    pasNeedsReview,
     readinessText,
     eligibleShort,
     blockedShort,
-    isComplete: r.isComplete,
+    isComplete,
     blocks: { prepared, expected, expectedLowerBound: lower, text: blocksText },
     sourceEntry: { text: sourceEntryText, pendingParts, attestedParts },
     tasks,
     owner,
     ownerText: ownerText(owner, tasks.length),
     lastUpdate: {
-      at: lastAt, origin: lastOrigin, by: last?.by ?? null, summary: last?.summary ?? null,
-      text: `${fmtSmart(lastAt, now)} ET · ${lastOrigin}`,
+      at: lastAt, origin: lastOrigin, by: last?.by ?? null, summary: last?.summary ?? "No recorded change found for this case",
+      text: `${fmtSmart(lastAt, now)} ET · ${lastOrigin ?? "origin Unknown"}`,
     },
     change: tag.change,
+    changeTags: tag.tags,
     changeSummaries: tag.summaries,
     routing: null,
     openClarifications,
@@ -737,30 +871,44 @@ function inViewScope(view: WorklistView, row: WorklistRow, today: string, filter
     case "accessioning":
       return row.receivedDay === today || row.holds.length > 0 || row.openClarifications > 0;
     case "grossing":
+      if (filters.queue === "gross_pending") return hasGrossPending(row);
       if (filters.queue === "source_entry") return row.sourceEntry.pendingParts.length > 0;
+      if (filters.queue === "source_attested") return row.sourceEntry.attestedParts.length > 0;
       return stages.has("awaiting_gross") || stages.has("gross_in_progress") || row.sourceEntry.pendingParts.length > 0;
     case "histotech":
       return (
         ["processing", "embedding", "sectioning", "staining", "qc", "ready_for_tray"].some((s) => stages.has(s as Stage)) ||
-        row.stains.some((s) => s.workOrder && ["requested", "in_progress", "cancel_review", "amended_review"].includes(s.status)) ||
+        row.stains.some((s) => s.workOrder && OPEN_WO_STATUSES.has(s.status)) ||
         row.parts.some((p) => p.blockedBy.some((b) => /^Review needed/.test(b)))
       );
   }
   return true;
 }
 
-function matchesFilters(row: WorklistRow, f: WorklistFilters, staffId: string): boolean {
+/** A part awaiting grossing or with a gross record not yet approved (the Operations "awaiting an approved gross record" count). */
+export function isGrossPending(p: { status: string; stage: Stage; documentation: { grossState: string } }): boolean {
+  return p.status !== "canceled" && p.documentation.grossState !== "approved_for_downstream" && (p.stage === "awaiting_gross" || p.stage === "gross_in_progress");
+}
+function hasGrossPending(row: WorklistRow): boolean {
+  return row.parts.some(isGrossPending);
+}
+
+function matchesFilters(row: WorklistRow, f: WorklistFilters, staffId: string, activeDoctorIds: Set<string>): boolean {
   if (f.doctor) {
     if (f.doctor === "unassigned") {
-      if (row.pathologistId !== null) return false;
+      // Rows outside every active doctor's group: routing exceptions and cases whose doctor is missing or inactive.
+      if (row.pathologistId !== null && activeDoctorIds.has(row.pathologistId)) return false;
     } else if (row.pathologistId !== f.doctor) return false;
   }
   if (f.stage && !(row.stage === f.stage || row.parts.some((p) => p.stage === f.stage))) return false;
-  if (f.pasOnly && !row.hasPas) return false;
+  // PAS still to do, plus canceled/amended PAS whose prepared material needs review (shown as canceled, never as active PAS).
+  if (f.pasOnly && !row.hasPas && !row.pasNeedsReview) return false;
   if (f.onHold && !row.holds.length) return false;
   if (f.mine && !row.tasks.some((t) => t.ownerId === staffId)) return false;
   if (f.changedOnly && !row.change) return false;
+  if (f.queue === "gross_pending" && !hasGrossPending(row)) return false;
   if (f.queue === "source_entry" && !row.sourceEntry.pendingParts.length) return false;
+  if (f.queue === "source_attested" && !row.sourceEntry.attestedParts.length) return false;
   if (f.q) {
     const q = f.q.trim().toLowerCase();
     const hay = [row.accessionNumber, row.provisionalId, row.office, row.clinician, ...row.stains.map((s) => s.workOrder)].filter(Boolean).join(" ").toLowerCase();
@@ -795,10 +943,18 @@ export function getWorklist(db: DB, opts: GetWorklistOptions): WorklistData {
     | { acked_seq: number; acked_at: string }
     | undefined;
   const ackedSeq = ackRow?.acked_seq ?? 0;
-  const all = loadWorklistRows(db, opts.staffId, ackedSeq, now);
+  const all = loadWorklistRows(db, ackedSeq, now);
   const today = labDay(now);
+
+  const doctors = (db
+    .prepare("SELECT id, display_name AS name, color_token FROM staff WHERE role = 'pathologist' AND active = 1")
+    .all() as { id: string; name: string; color_token: string | null }[])
+    .map((d) => ({ id: d.id, name: d.name, colorToken: d.color_token }))
+    .sort((x, y) => COLOR_ORDER.indexOf(x.colorToken ?? "") - COLOR_ORDER.indexOf(y.colorToken ?? "") || x.name.localeCompare(y.name));
+  const activeDoctorIds = new Set(doctors.map((d) => d.id));
+
   const inScope = all.filter((r) => inViewScope(opts.view, r, today, filters));
-  const shown = inScope.filter((r) => matchesFilters(r, filters, opts.staffId)).sort(defaultSort);
+  const shown = inScope.filter((r) => matchesFilters(r, filters, opts.staffId, activeDoctorIds)).sort(defaultSort);
 
   const changes = { new: 0, changed: 0, canceled: 0, total: 0 };
   for (const r of inScope) {
@@ -807,25 +963,33 @@ export function getWorklist(db: DB, opts: GetWorklistOptions): WorklistData {
     changes.total += 1;
   }
 
-  const doctors = (db
-    .prepare("SELECT id, display_name AS name, color_token FROM staff WHERE role = 'pathologist' AND active = 1")
-    .all() as { id: string; name: string; color_token: string | null }[])
-    .map((d) => ({ id: d.id, name: d.name, colorToken: d.color_token }))
-    .sort((x, y) => COLOR_ORDER.indexOf(x.colorToken ?? "") - COLOR_ORDER.indexOf(y.colorToken ?? "") || x.name.localeCompare(y.name));
-
   const groups: WorklistGroup[] = [];
-  const counts = (rows: WorklistRow[]) => ({ rows: rows.length, pas: rows.filter((r) => r.hasPas).length, onHold: rows.filter((r) => r.holds.length > 0).length });
-  const unassigned = shown.filter((r) => r.pathologistId === null || !doctors.some((d) => d.id === r.pathologistId));
-  if (unassigned.length) {
+  const counts = (rows: WorklistRow[]) => ({
+    rows: rows.length,
+    pas: rows.filter((r) => r.hasPas).length,
+    pasReview: rows.filter((r) => r.pasNeedsReview).length,
+    onHold: rows.filter((r) => r.holds.length > 0).length,
+  });
+  // Routing exceptions: intake items with no approved rule. Never a guessed doctor, never a doctor color.
+  const exceptions = shown.filter((r) => r.kind === "intake");
+  if (exceptions.length) {
     groups.push({
-      key: "unassigned", pathologistId: null, name: "Unassigned: routing exception", colorToken: null, colorName: null, isException: true,
-      counts: counts(unassigned), rows: unassigned,
+      key: "unassigned", kind: "routing_exception", pathologistId: null, name: "Unassigned: routing exception", colorToken: null, colorName: null, isException: true,
+      counts: counts(exceptions), rows: exceptions,
+    });
+  }
+  // Accessioned cases whose assigned doctor is missing or no longer active: a data problem, not a routing exception.
+  const noDoctor = shown.filter((r) => r.kind === "case" && (r.pathologistId === null || !activeDoctorIds.has(r.pathologistId)));
+  if (noDoctor.length) {
+    groups.push({
+      key: "no_doctor", kind: "no_doctor", pathologistId: null, name: "No active assigned dermatopathologist", colorToken: null, colorName: null, isException: true,
+      counts: counts(noDoctor), rows: noDoctor,
     });
   }
   for (const d of doctors) {
-    const rows = shown.filter((r) => r.pathologistId === d.id);
+    const rows = shown.filter((r) => r.kind === "case" && r.pathologistId === d.id);
     if (!rows.length) continue;
-    groups.push({ key: d.id, pathologistId: d.id, name: d.name, colorToken: d.colorToken, colorName: d.colorToken, isException: false, counts: counts(rows), rows });
+    groups.push({ key: d.id, kind: "doctor", pathologistId: d.id, name: d.name, colorToken: d.colorToken, colorName: d.colorToken, isException: false, counts: counts(rows), rows });
   }
 
   return {
@@ -845,7 +1009,7 @@ export function getWorklist(db: DB, opts: GetWorklistOptions): WorklistData {
   };
 }
 
-/** Find one row (any view, unfiltered) — used by tests and the case side panel. */
+/** Find one row on today's worklist (any view, unfiltered), as one user sees it. */
 export function findWorklistRow(db: DB, staffId: string, key: string): WorklistRow | null {
   const data = getWorklist(db, { staffId, view: "operations", filters: { scope: "all" } });
   for (const g of data.groups) for (const r of g.rows) if (r.id === key || r.accessionNumber === key || r.provisionalId === key) return r;
@@ -920,4 +1084,65 @@ export function csvCell(value: unknown): string {
   let s = value === null || value === undefined ? "" : String(value);
   if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
   return `"${s.replace(/"/g, '""')}"`;
+}
+
+export interface SnapshotMeta {
+  displayId: string;
+  generatedAt: string;
+  generatedBy: string;
+  seq: number;
+  dataAsOf: string | null;
+  stale: boolean;
+}
+
+/**
+ * CSV downtime/transition fallback. Header lines state the generation time
+ * (ET, full), the worklist version, the source data age and that the data is
+ * synthetic. The file is a copy: it is not updated after download.
+ */
+export function buildWorklistCsv(data: WorklistData, meta: SnapshotMeta, describe: string): string {
+  const lines: string[] = [];
+  const asOf = meta.dataAsOf ? fmtFullEt(meta.dataAsOf) : "Unknown";
+  lines.push(`# Histology Lab OS worklist snapshot ${meta.displayId} (${data.viewLabel} view)`);
+  lines.push(`# Generated: ${fmtFullEt(meta.generatedAt)} by ${meta.generatedBy}`);
+  lines.push(`# Worklist version: v${meta.seq}`);
+  lines.push(`# Source data as of: ${asOf}${meta.stale ? " (STALE: a simulated source was unreachable or out of date at generation)" : ""}`);
+  lines.push(`# Filters: ${describe}. Rows: ${snapshotRows(data).length}`);
+  lines.push("# Synthetic demo data. Fictional people and offices. Not updated after download. Not a clinical record.");
+  const header = [
+    "Assigned dermatopathologist", "Color", "Case", "Provisional intake ID", "Change since acknowledgment", "Parts", "Stage", "Stains (work orders)",
+    "Holds", "Readiness", "Blocks prepared / expected", "Source-system entry", "Current task owner", "Last confirmed update", "Update origin",
+    "Submitting office", "Ordering clinician",
+  ];
+  lines.push(header.map(csvCell).join(","));
+  for (const { group, row } of snapshotRows(data)) {
+    lines.push(
+      [
+        group.name,
+        group.colorName ?? "none",
+        row.accessionNumber ?? "",
+        row.provisionalId ?? "",
+        row.changeTags.map((t) => t[0].toUpperCase() + t.slice(1)).join(", "),
+        row.partsSummary,
+        row.stageLabel,
+        row.stains.length ? row.stains.map((s) => `${s.canceled ? "CANCELED: " : ""}${s.text}${s.needsReview ? " (REVIEW NEEDED: material may already be printed or prepared)" : ""}`).join(" | ") : "None",
+        row.holds.length ? row.holds.map((h) => `${h.displayId} ${h.scopeLabel}: ${h.reasonText}`).join(" | ") : "None",
+        row.readinessText,
+        row.blocks.text,
+        row.sourceEntry.text,
+        row.ownerText,
+        row.lastUpdate.at ? fmtFullEt(row.lastUpdate.at) : "Unknown",
+        row.lastUpdate.origin ?? "Unknown",
+        row.office,
+        row.clinician ?? "Unknown",
+      ]
+        .map(csvCell)
+        .join(","),
+    );
+  }
+  return lines.join("\r\n") + "\r\n";
+}
+
+function fmtFullEt(iso: string): string {
+  return fmtFull(iso);
 }

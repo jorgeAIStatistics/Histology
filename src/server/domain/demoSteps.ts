@@ -5,8 +5,11 @@ import { executeCommand, listCommands, type CommandResult } from "../commands/re
 import { advanceClockTo, readClock } from "../core/clock";
 import { getSetting } from "../core/settings";
 import { audit } from "../core/audit";
+import { DomainError } from "../core/errors";
 import { labLocalToIso } from "@/lib/time";
-import { grossFinalizeBlockers, REQUIRED_FOR_APPROVAL, type GrossFields, type GrossValue } from "@/lib/gross";
+import { PRINT_STATE, RELATED_STATUS, ROUTING_STATUS } from "@/lib/domain";
+import { ROLE_LABEL, type Role } from "@/lib/roles";
+import { fmtDimensions, grossFinalizeBlockers, REQUIRED_FOR_APPROVAL, type GrossFields, type GrossValue } from "@/lib/gross";
 
 /**
  * Guided five-minute demonstration (master spec §12).
@@ -69,7 +72,7 @@ export const STEP_COMMANDS: Record<DemoStepNumber, { world: string[]; staff: str
     staff: ["intake.verifyContainer", "clarification.create", "clarification.draftMessage", "clarification.send", "clarification.review", "clarification.resolve", "hold.release"],
   },
   4: { world: [], staff: ["intake.verifyContainer", "accession.request"] },
-  5: { world: [], staff: ["gross.startDraft", "gross.loadTranscript", "gross.confirmField", "gross.markReviewed", "gross.approve"] },
+  5: { world: [], staff: ["gross.startDraft", "gross.loadTranscript", "gross.confirmField", "gross.updateFields", "gross.markReviewed", "gross.approve"] },
   6: { world: [], staff: ["tray.scan", "tray.complete", "tray.resolveScan", "print.reconcile", "print.reprint"] },
   7: { world: [], staff: ["retrieval.scan"] },
   8: { world: [], staff: [] },
@@ -84,6 +87,18 @@ export function missingCommandsFor(step: DemoStepNumber, autoStaffActions: boole
 
 export function registeredCommandNames(): Set<string> {
   return new Set(listCommands().map((c) => c.name));
+}
+
+/**
+ * Rehearsal performs actions AS other named staff (Maya, Kim, Dana, Priya,
+ * Marcus), so it is limited to the demo role that supervises all of them.
+ * World events (simulator) stay open to every demo role. The demo role
+ * selector is not authentication.
+ */
+export const REHEARSAL_ROLES: readonly Role[] = ["supervisor"];
+
+export function canRunRehearsal(role: Role): boolean {
+  return REHEARSAL_ROLES.includes(role);
 }
 
 // ---------------------------------------------------------------- result shape
@@ -132,8 +147,10 @@ export interface HeroIds {
   containerB: { id: string; version: number; state: string; orderPartId: string | null; observed: Record<string, unknown> } | null;
   candidate: { id: string; displayId: string; status: string; version: number } | null;
   clarification: { id: string; displayId: string; state: string; version: number; reviewedAt: string | null; resolvedAt: string | null } | null;
-  hold: { id: string; displayId: string; status: string; version: number } | null;
+  hold: { id: string; displayId: string; status: string; version: number; scopeType: string; scopeId: string; releasedAt: string | null } | null;
   amendedOrderImported: boolean;
+  /** When ORD-77121 v2 (the amendment) was imported, or null if it has not arrived. */
+  amendedOrderImportedAt: string | null;
   accession: { id: string; number: string } | null;
   partA: { id: string } | null;
   partB: { id: string } | null;
@@ -201,16 +218,19 @@ export function heroIds(db: DB): HeroIds {
     hold =
       (db
         .prepare(
-          `SELECT id, display_id AS displayId, status, version FROM hold
+          `SELECT id, display_id AS displayId, status, version, scope_type AS scopeType, scope_id AS scopeId, released_at AS releasedAt FROM hold
             WHERE (@clr IS NOT NULL AND clarification_id = @clr) OR (scope_type = 'order_part' AND scope_id = @part)
             ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, placed_at DESC LIMIT 1`,
         )
         .get({ clr: clarification?.id ?? null, part: orderB?.partId ?? null }) as HeroIds["hold"] | undefined) ?? null;
   }
 
-  const amendedOrderImported = orderB
-    ? !!db.prepare("SELECT 1 FROM source_order_version WHERE source_order_id = ? AND source_version >= 2").get(orderB.id)
-    : false;
+  const amendedOrderImportedAt = orderB
+    ? ((db
+        .prepare("SELECT MIN(imported_at) AS at FROM source_order_version WHERE source_order_id = ? AND source_version >= 2")
+        .get(orderB.id) as { at: string | null } | undefined)?.at ?? null)
+    : null;
+  const amendedOrderImported = amendedOrderImportedAt !== null;
 
   const accRow = (intakeA?.id
     ? db.prepare("SELECT a.id, a.accession_number AS number FROM intake_item ii JOIN accession a ON a.id = ii.accession_id WHERE ii.id = ?").get(intakeA.id)
@@ -241,6 +261,7 @@ export function heroIds(db: DB): HeroIds {
     clarification,
     hold,
     amendedOrderImported,
+    amendedOrderImportedAt,
     accession,
     partA: part(orderA?.id),
     partB: part(orderB?.id),
@@ -265,7 +286,7 @@ class StepRunner {
       kind: "clock",
       label: label ?? `Demo clock to ${hhmm} ET`,
       outcome: alreadyPast ? "already_done" : "done",
-      detail: alreadyPast ? "The clock was already at or past this time (the demo clock never moves backward)." : undefined,
+      detail: alreadyPast ? "The clock was already at or past this time (step runs never move the demo clock backward)." : undefined,
     });
   }
 
@@ -340,11 +361,28 @@ function rowVersion(db: DB, table: "container" | "clarification" | "related_orde
 
 // ---------------------------------------------------------------- the steps
 
-/** Run one guided-demo step. Called by the `demo.runStep` command (inside its transaction). */
-export function runDemoStep(ctx: Ctx, step: DemoStepNumber, autoStaffActions: boolean): DemoStepResult {
+/**
+ * Run one guided-demo step. Called by the `demo.runStep` command (inside its
+ * transaction). `registered` is injectable so the "not available yet" path can
+ * be tested without unregistering real commands.
+ */
+export function runDemoStep(
+  ctx: Ctx,
+  step: DemoStepNumber,
+  autoStaffActions: boolean,
+  registered: ReadonlySet<string> = registeredCommandNames(),
+): DemoStepResult {
   const db = ctx.db;
+  if (autoStaffActions && !canRunRehearsal(ctx.actor.role)) {
+    const allowed = REHEARSAL_ROLES.map((r) => ROLE_LABEL[r]).join(", ");
+    throw new DomainError(
+      "FORBIDDEN",
+      `Rehearsal performs staff actions as other named staff, so it needs the ${allowed} demo role. ${ROLE_LABEL[ctx.actor.role]} can run the simulator events, or do the staff actions on the real screens. The demo role selector is not authentication.`,
+      { role: ctx.actor.role, allowed: REHEARSAL_ROLES },
+    );
+  }
   const clockBefore = readClock(db).now;
-  const missing = missingCommandsFor(step, autoStaffActions, registeredCommandNames());
+  const missing = missingCommandsFor(step, autoStaffActions, registered);
   if (missing.length) {
     return {
       step,
@@ -391,23 +429,29 @@ export function runDemoStep(ctx: Ctx, step: DemoStepNumber, autoStaffActions: bo
 
   const clockAfter = readClock(db).now;
   const failed = r.actions.filter((a) => a.outcome === "failed" || a.outcome === "not_available").length;
+  const staffActs = r.actions.filter((a) => a.kind === "staff" && (a.outcome === "done" || a.outcome === "rejected_as_expected")).length;
   const dctx = makeCtx(db, ctx.actor, "demo", ctx.correlationId);
   audit(dctx, {
     action: "demo.step_run",
     entityType: "demo_step",
     entityId: String(step),
-    summary: `Demo step ${step} run${autoStaffActions ? " (simulator events and rehearsal staff actions)" : " (simulator events only)"}${failed ? `: ${failed} action(s) did not complete` : ""}`,
-    after: { status, actions: r.actions.map((a) => ({ label: a.label, outcome: a.outcome })) },
+    summary:
+      `Demo step ${step} run by ${ctx.actor.name}` +
+      (autoStaffActions
+        ? ` (simulator events and rehearsal: ${staffActs} staff action(s) performed as the named staff; linked by correlation id ${ctx.correlationId})`
+        : " (simulator events only)") +
+      (failed ? `: ${failed} action(s) did not complete` : ""),
+    after: { status, initiatedBy: ctx.actor.id, actions: r.actions.map((a) => ({ label: a.label, actor: a.actor ?? null, outcome: a.outcome })) },
   });
+  const result: DemoStepResult = { step, autoStaffActions, status, message, missingCommands: [], actions: r.actions, clockBefore, clockAfter };
   db.prepare("INSERT INTO demo_step_log (step, action, ran_at, ran_by, result) VALUES (?, ?, ?, ?, ?)").run(
     step,
     autoStaffActions ? "world+staff" : "world",
     dctx.now,
     ctx.actor.id,
-    JSON.stringify({ status, message, actions: r.actions }),
+    JSON.stringify(result),
   );
-
-  return { step, autoStaffActions, status, message, missingCommands: [], actions: r.actions, clockBefore, clockAfter };
+  return result;
 }
 
 type StepOutcome = { status: DemoStepResult["status"]; message: string };
@@ -559,6 +603,19 @@ function step3(r: StepRunner, auto: boolean): StepOutcome {
   const answered = ["answered", "reviewed", "resolved"].includes(h.clarification.state);
   if (answered) {
     r.note("world", `Simulated office answer for ${h.clarification.displayId}`, "already_done");
+  } else if (h.clarification.state === "drafted") {
+    r.note("world", "Simulated office answer", "skipped", `${h.clarification.displayId} has not been sent yet. The office can only answer a sent question.`);
+    return {
+      status: "needs_presenter",
+      message: `Send ${h.clarification.displayId} to the office first (simulated notification), then run this step again for the simulated office answer.`,
+    };
+  } else if (h.clarification.state === "delivery_failed") {
+    // The office never received the question, so it cannot answer it.
+    r.note("world", "Simulated office answer", "skipped", `Delivery of ${h.clarification.displayId} failed (simulated). The office never received it, so it cannot answer.`);
+    return {
+      status: "needs_presenter",
+      message: `Delivery of ${h.clarification.displayId} failed (simulated). Resend it on the Clarifications screen, then run this step again for the simulated office answer.`,
+    };
   } else {
     r.clock("11:12", "Demo clock to 11:12 ET (office replies)");
     r.call("world", `Simulated office answer for ${h.clarification.displayId}: the bottle (left) is correct; the office will amend the order`, "system", "clarification.simulateOfficeAnswer", {
@@ -626,8 +683,31 @@ function step3(r: StepRunner, auto: boolean): StepOutcome {
     status: "ran",
     message: auto
       ? "Clarification raised, answered (simulated), reviewed, resolved; hold released only after the amended order arrived."
-      : "The simulated office answer has arrived. It does not resolve the clarification or release the hold: review it on the Clarifications screen.",
+      : step3WorldMessage(heroIds(db)),
   };
+}
+
+/**
+ * What the presenter should do next after the step 3 simulator events, read
+ * from the records (the office answer may already have been reviewed and
+ * resolved on the Clarifications screen before the simulator was pressed).
+ */
+function step3WorldMessage(h: ReturnType<typeof heroIds>): string {
+  const clr = h.clarification;
+  const amended = h.amendedOrderImported
+    ? `Amended order ${DEMO_IDS.orderB} v2 has arrived from the simulated source.`
+    : `The amended order ${DEMO_IDS.orderB} v2 has not arrived from the simulated source yet.`;
+  if (!clr || clr.state === "answered") {
+    return `The simulated office answer has arrived. ${amended} Neither resolves the clarification or releases the hold: review the answer on the Clarifications screen.`;
+  }
+  const holdId = h.hold?.displayId ?? "the Part B hold";
+  if (clr.state === "reviewed") return `The office answer was already reviewed. ${amended} Next: resolve ${clr.displayId} on the Clarifications screen.`;
+  if (h.hold && h.hold.status === "active") {
+    return h.amendedOrderImported
+      ? `The office answer was already handled (${clr.displayId} is ${clr.state}). ${amended} ${holdId} stays active until a lead releases it with a reason on the Clarifications screen.`
+      : `The office answer was already handled (${clr.displayId} is ${clr.state}). ${amended} ${holdId} stays active until it arrives and a lead releases it.`;
+  }
+  return `The office answer was already handled (${clr.displayId} is ${clr.state}). ${amended}`;
 }
 
 // Step 4 — the simulated authoritative source issues the official accession.
@@ -639,6 +719,8 @@ function step4(r: StepRunner, auto: boolean): StepOutcome {
     r.note("staff", "Request accession", "skipped", "Run step 1 first.");
     return { status: "needs_presenter", message: "Run step 1 first: the hero containers have not been received yet." };
   }
+  const intakeA = h.intakeA;
+  const intakeB = h.intakeB;
   if (h.accession) {
     r.note("staff", "Request accession for both intake items", "already_done", `Issued: ${h.accession.number}`);
     return { status: "ran", message: `Accession ${h.accession.number} has been issued by the simulated source.` };
@@ -646,17 +728,8 @@ function step4(r: StepRunner, auto: boolean): StepOutcome {
   if (!auto) {
     return { status: "needs_presenter", message: "Nothing to simulate here: request the accession on the Intake screen. The simulated source issues the number immediately." };
   }
-  // Re-check container B against the amended order (now left on both). Non-fatal if the intake slice keeps the discrepancy.
-  if (h.containerB && h.containerB.state === "discrepancy" && h.amendedOrderImported) {
-    r.call("staff", `Re-verify ${h.intakeB.displayId} part B against amended order ${DEMO_IDS.orderB} v2`, "stf_maya", "intake.verifyContainer", {
-      containerId: h.containerB.id,
-      expectedVersion: rowVersion(db, "container", h.containerB.id),
-      orderPartId: h.containerB.orderPartId ?? h.orderB?.partId,
-    });
-    h = heroIds(db);
-  }
-  r.call("staff", `Request accession for ${h.intakeA.displayId} and ${h.intakeB.displayId} together (simulated source)`, "stf_maya", "accession.request", {
-    intakeItemIds: [h.intakeA.id, h.intakeB.id],
+  r.call("staff", `Request accession for ${intakeA.displayId} and ${intakeB.displayId} together (simulated source)`, "stf_maya", "accession.request", {
+    intakeItemIds: [intakeA.id, intakeB.id],
     relatedCandidateId: h.candidate?.id,
   });
   h = heroIds(db);
@@ -706,15 +779,22 @@ function step5(r: StepRunner, auto: boolean): StepOutcome {
   if (!g) return { status: "ran", message: "Gross record not found after loading the transcript." };
 
   if (g.state === "draft" || g.state === "needs_clarification") {
-    // Confirm every proposed value (numbers, units, counts each need an explicit confirmation).
+    // Confirm each clean PROPOSED value (numbers, units, counts each need an explicit confirmation).
+    // Values the extractor marked "needs_review" (ambiguous decimal, missing unit, conflicting
+    // counts...) are never confirmed by the rehearsal: they need the grosser's own judgement.
     const container = h.containerA;
     let fields = JSON.parse(g.fields) as GrossFields;
     const keys = Object.keys(fields).filter((k) => k !== "template_id") as (keyof GrossFields)[];
+    const needsReview: string[] = [];
     for (const key of keys) {
       const v = fields[key] as GrossValue<unknown>;
       if (!v || typeof v !== "object" || v.status === "confirmed") continue;
-      let value: unknown = v.value;
-      if ((v.status === "missing" || value === null || value === undefined) && key === "container_label_matches" && container?.state === "verified") {
+      if (v.status === "needs_review") {
+        needsReview.push(String(key).replace(/_/g, " "));
+        continue;
+      }
+      let value: unknown = v.status === "proposed" ? v.value : null;
+      if ((value === null || value === undefined) && key === "container_label_matches" && container?.state === "verified") {
         // Derived from the recorded "staff verified against physical container" event, not invented.
         value = true;
       }
@@ -727,6 +807,22 @@ function step5(r: StepRunner, auto: boolean): StepOutcome {
       });
       g = latest()!;
       fields = JSON.parse(g.fields) as GrossFields;
+    }
+    if (!(g.narrative ?? "").trim()) {
+      const narrative = narrativeFromConfirmed(fields, "A");
+      if (narrative) {
+        r.call("staff", "Write the gross narrative from the confirmed values (the grosser would type or dictate it)", "stf_dana", "gross.updateFields", {
+          grossRecordId: g.id,
+          expectedVersion: rowVersion(db, "gross_record", g.id),
+          patch: {},
+          narrative,
+        });
+        g = latest()!;
+        fields = JSON.parse(g.fields) as GrossFields;
+      }
+    }
+    if (needsReview.length) {
+      r.note("staff", "Values that need the grosser's review", "skipped", `Not confirmed by the rehearsal: ${needsReview.join(", ")}. Review them on the Grossing screen.`);
     }
     const blockers = grossFinalizeBlockers(fields, g.narrative ?? "");
     const requiredUnresolved = blockers.filter((b) => (REQUIRED_FOR_APPROVAL as string[]).includes(b.field) || b.field === "narrative");
@@ -741,6 +837,32 @@ function step5(r: StepRunner, auto: boolean): StepOutcome {
     r.call("staff", "Approve Part A for downstream use", "stf_dana", "gross.approve", { grossRecordId: g.id, expectedVersion: rowVersion(db, "gross_record", g.id) });
   }
   return { status: "ran", message: "Part A approved for downstream use: A1 becomes eligible for processing and a source-entry task opens for Sam Ortiz. Part B stays awaiting grossing." };
+}
+
+/**
+ * Plain narrative built ONLY from operator-confirmed values (rehearsal stand-in
+ * for the grosser typing it). Returns null if the required values are not all
+ * confirmed, so nothing is ever invented.
+ */
+export function narrativeFromConfirmed(fields: GrossFields, part: string): string | null {
+  const c = <T,>(v: GrossValue<T> | undefined): T | null => (v && v.status === "confirmed" && v.value !== null && v.value !== undefined ? v.value : null);
+  const type = c(fields.specimen_type);
+  const pieces = c(fields.piece_count);
+  const dims = c(fields.dimensions);
+  const cassettes = c(fields.cassettes);
+  if (!type || pieces === null || !dims || !cassettes) return null;
+  const receivedIn = c(fields.received_in);
+  const appearance = c(fields.appearance);
+  const ink = c(fields.ink_orientation);
+  const sectioning = c(fields.sectioning);
+  const sentences = [
+    `Part ${part} (${type}): received${receivedIn ? ` in ${receivedIn}` : ""}, ${pieces} ${pieces === 1 ? "piece" : "pieces"}, ${fmtDimensions(dims)}.`,
+    appearance ? `Appearance: ${appearance}.` : null,
+    ink ? `${ink}.` : null,
+    sectioning ? `${sectioning}.` : null,
+    `Cassettes: ${cassettes.map((x) => `${x.label}${x.pieces !== null ? ` (${x.pieces} ${x.pieces === 1 ? "piece" : "pieces"})` : ""}`).join(", ")}.`,
+  ];
+  return sentences.filter(Boolean).join(" ").replace(/\.\./g, ".");
 }
 
 // Step 6 — Tray with a missing slide; print job with unknown outcome (earlier case, not the hero).
@@ -854,8 +976,9 @@ function step7(r: StepRunner, auto: boolean): StepOutcome {
     const afterItems = db.prepare("SELECT id, status FROM retrieval_item WHERE request_id = ? ORDER BY bench_seq").all(DEMO_IDS.retrieval);
     const unchanged = JSON.stringify(before) === JSON.stringify(afterItems);
     const last = r.actions[r.actions.length - 1];
+    const loggedMismatch = !!db.prepare("SELECT 1 FROM custody_event WHERE event = 'scan_mismatch' AND request_id = ?").get(DEMO_IDS.retrieval);
     const mismatchReported =
-      !res.ok || /mismatch|reject|not_accepted|wrong/i.test(JSON.stringify(res.ok ? res.result ?? {} : res.error));
+      loggedMismatch || /mismatch|not accepted|not_accepted|does not match|wrong block|not (on|in|part of) (this )?request/i.test(JSON.stringify(res.ok ? res.result ?? {} : res.error));
     if (last && unchanged && mismatchReported) {
       last.outcome = "rejected_as_expected";
       last.detail = `Mismatch: scanned D26-03909 A1; ${DEMO_IDS.retrievalDisplay} needs D26-03990 B1, A1 and D26-03912 A1. Nothing changed.`;
@@ -894,13 +1017,6 @@ export interface DemoStepStatus {
   checks: DemoCheck[];
 }
 
-export interface RemainingBlocker {
-  item: string;
-  blockedBy: string;
-  owner: string;
-  since: string | null;
-}
-
 export interface DemoStatus {
   clockNow: string;
   steps: DemoStepStatus[];
@@ -913,9 +1029,11 @@ export interface DemoStatus {
     clarificationId: string | null;
     hold: string | null;
     accession: string | null;
+    /** Seagrape Skin Studio item (office with no approved routing rule). */
+    unknownOfficeIntake: string | null;
   };
-  remainingBlockers: RemainingBlocker[];
-  lastRuns: { step: number; action: string; ranAt: string; ranBy: string | null }[];
+  /** The most recent run of each step (from demo_step_log), so the action log survives a page reload. */
+  lastResults: Partial<Record<DemoStepNumber, DemoStepResult & { ranAt: string; ranBy: string | null }>>;
 }
 
 function stepState(checks: DemoCheck[]): DemoStepStatus["state"] {
@@ -945,7 +1063,7 @@ export function demoStatus(db: DB): DemoStatus {
     checks: [
       { label: "Courier arrival recorded (CR-1014-11)", done: !!delivery?.arrived_at },
       { label: "Containers unpacked", done: physTotal > 0 && physReceived === physTotal, detail: `${physReceived} of ${physTotal} physical items received` },
-      { label: "Routing suggested from the approved rule", done: !!routingA, detail: routingA ? `Part A routing: ${routingA}` : undefined },
+      { label: "Routing suggested from the approved rule", done: !!routingA, detail: routingA ? `Part A routing: ${(ROUTING_STATUS[routingA as keyof typeof ROUTING_STATUS] ?? routingA.replace(/_/g, " ")).toLowerCase()}` : undefined },
     ],
   });
   // 2
@@ -954,20 +1072,42 @@ export function demoStatus(db: DB): DemoStatus {
     state: "not_started",
     checks: [
       { label: "Related-order candidate proposed", done: !!h.candidate, detail: h.candidate?.displayId },
-      { label: "Candidate reviewed by staff (not merged)", done: !!h.candidate && h.candidate.status !== "pending_review", detail: h.candidate?.status },
+      { label: "Candidate reviewed by staff (not merged)", done: !!h.candidate && h.candidate.status !== "pending_review", detail: h.candidate ? (RELATED_STATUS[h.candidate.status as keyof typeof RELATED_STATUS] ?? h.candidate.status.replace(/_/g, " ")).toLowerCase() : undefined },
     ],
   });
   // 3
   const clr = h.clarification;
+  const hold = h.hold;
+  // "Part B only": the hold is scoped to order part B (or, after accession, specimen part B), not the case or the intake item.
+  const holdOnPartBOnly =
+    !!hold &&
+    ((hold.scopeType === "order_part" && !!h.orderB?.partId && hold.scopeId === h.orderB.partId) ||
+      (hold.scopeType === "specimen_part" && !!h.partB && hold.scopeId === h.partB.id));
+  // Released only AFTER the amendment was imported (an early release does not count, even if the amendment came later).
+  const releasedAfterAmendment =
+    !!hold && hold.status === "released" && !!hold.releasedAt && !!h.amendedOrderImportedAt && Date.parse(hold.releasedAt) >= Date.parse(h.amendedOrderImportedAt);
   steps.push({
     step: 3,
     state: "not_started",
     checks: [
       { label: "Laterality clarification raised for Part B", done: !!clr, detail: clr?.displayId },
-      { label: "Hold placed on Part B only", done: !!h.hold, detail: h.hold ? `${h.hold.displayId} (${h.hold.status})` : undefined },
+      {
+        label: "Hold placed on Part B only",
+        done: holdOnPartBOnly,
+        detail: hold ? `${hold.displayId}, ${hold.status === "active" ? "active" : "now released"}${holdOnPartBOnly ? "" : `; scope is ${hold.scopeType.replace(/_/g, " ")}, not Part B`}` : undefined,
+      },
       { label: "Simulated office answer received", done: !!clr && ["answered", "reviewed", "resolved"].includes(clr.state) },
-      { label: "Answer reviewed, then resolved", done: !!clr && clr.state === "resolved" },
-      { label: "Hold released after the amended order arrived", done: !!h.hold && h.hold.status === "released" && h.amendedOrderImported },
+      { label: "Answer reviewed, then resolved", done: !!clr && clr.state === "resolved" && !!clr.reviewedAt },
+      {
+        label: "Hold released after the amended order arrived",
+        done: releasedAfterAmendment,
+        detail:
+          hold?.status === "released" && !releasedAfterAmendment
+            ? h.amendedOrderImportedAt
+              ? "Released before the amended order arrived"
+              : "Released, but the amended order has not arrived"
+            : undefined,
+      },
     ],
   });
   // 4
@@ -1005,7 +1145,7 @@ export function demoStatus(db: DB): DemoStatus {
     checks: [
       { label: "9th expected slide scanned", done: ninthScanned },
       { label: "Unexpected slide flagged", done: unexpectedScanned },
-      { label: "PJ-8841 outcome reconciled", done: !!pj?.reconciled_at, detail: pj?.state },
+      { label: "PJ-8841 outcome reconciled", done: !!pj?.reconciled_at, detail: pj ? (PRINT_STATE[pj.state as keyof typeof PRINT_STATE] ?? pj.state.replace(/_/g, " ")) : undefined },
     ],
   });
   // 7
@@ -1019,18 +1159,48 @@ export function demoStatus(db: DB): DemoStatus {
       { label: "Requested block matched", done: anyPicked },
     ],
   });
-  // 8
-  const viewed = !!db.prepare("SELECT 1 FROM demo_step_log WHERE step = 8").get();
+  for (const s of steps) s.state = stepState(s.checks);
+  // 8: nothing changes in this step (it is a review of the Operations screen), so it is done when
+  // the earlier steps reached their outcomes in the records, not when a button was pressed.
+  const earlierDone = steps.filter((s) => s.state === "done").length;
   steps.push({
     step: 8,
     state: "not_started",
-    checks: [{ label: "Operations step reached", done: viewed, detail: "Nothing changes in this step; it is a review of the Operations screen." }],
+    checks: [
+      {
+        label: "Steps 1 to 7 reached their outcomes; Operations now shows what is still blocked",
+        done: earlierDone === steps.length,
+        detail: `${earlierDone} of ${steps.length} earlier steps done. Nothing changes in this step.`,
+      },
+    ],
   });
-  for (const s of steps) s.state = stepState(s.checks);
+  steps[steps.length - 1].state = stepState(steps[steps.length - 1].checks);
 
-  const lastRuns = (
-    db.prepare("SELECT step, action, ran_at AS ranAt, ran_by AS ranBy FROM demo_step_log ORDER BY id DESC LIMIT 8").all() as DemoStatus["lastRuns"]
-  ).reverse();
+  const lastResults: DemoStatus["lastResults"] = {};
+  const logRows = db
+    .prepare("SELECT l.step, l.ran_at AS ranAt, l.ran_by AS ranBy, l.result FROM demo_step_log l WHERE l.id IN (SELECT MAX(id) FROM demo_step_log GROUP BY step)")
+    .all() as { step: number; ranAt: string; ranBy: string | null; result: string }[];
+  for (const row of logRows) {
+    try {
+      const parsed = JSON.parse(row.result) as Partial<DemoStepResult>;
+      if (!Array.isArray(parsed.actions) || typeof parsed.status !== "string") continue;
+      const step = row.step as DemoStepNumber;
+      lastResults[step] = {
+        step,
+        autoStaffActions: parsed.autoStaffActions ?? false,
+        status: parsed.status,
+        message: parsed.message ?? "",
+        missingCommands: parsed.missingCommands ?? [],
+        actions: parsed.actions,
+        clockBefore: parsed.clockBefore ?? row.ranAt,
+        clockAfter: parsed.clockAfter ?? row.ranAt,
+        ranAt: row.ranAt,
+        ranBy: row.ranBy,
+      };
+    } catch {
+      /* an unreadable log row is skipped; the records still drive progress */
+    }
+  }
 
   return {
     clockNow: readClock(db).now,
@@ -1044,81 +1214,11 @@ export function demoStatus(db: DB): DemoStatus {
       clarificationId: clr?.id ?? null,
       hold: h.hold?.displayId ?? null,
       accession: h.accession?.number ?? null,
+      unknownOfficeIntake:
+        (db
+          .prepare("SELECT ii.display_id AS d FROM sim_physical_item p JOIN intake_item ii ON ii.id = p.received_intake_item_id WHERE p.id = 'phys_pratt'")
+          .get() as { d: string } | undefined)?.d ?? null,
     },
-    remainingBlockers: remainingBlockers(db),
-    lastRuns,
+    lastResults,
   };
 }
-
-const ROLE_OWNER: Record<string, string> = {
-  accessioning_lead: "Accessioning lead",
-  histotech: "Histotech",
-  histology_assistant: "Histology assistant",
-  grosser: "Grosser",
-  supervisor: "Supervisor",
-  accessioner: "Accessioner",
-};
-
-/**
- * What still blocks work right now, with owner and age — a compact summary for
- * the guide's step 8 (the full view is /operations). Computed from shared
- * tables only.
- */
-export function remainingBlockers(db: DB): RemainingBlocker[] {
-  const out: RemainingBlocker[] = [];
-  const staffName = (id: string | null) =>
-    id ? (db.prepare("SELECT display_name n FROM staff WHERE id = ?").get(id) as { n: string } | undefined)?.n ?? id : null;
-
-  const holds = db
-    .prepare("SELECT display_id, scope_label, reason_text, placed_at, clarification_id FROM hold WHERE status = 'active' ORDER BY placed_at")
-    .all() as { display_id: string; scope_label: string; reason_text: string; placed_at: string; clarification_id: string | null }[];
-  for (const hl of holds) {
-    const owner = hl.clarification_id
-      ? staffName((db.prepare("SELECT lab_owner_id o FROM clarification WHERE id = ?").get(hl.clarification_id) as { o: string } | undefined)?.o ?? null)
-      : null;
-    out.push({ item: `${hl.display_id} on ${hl.scope_label}`, blockedBy: hl.reason_text, owner: owner ?? "Accessioning lead", since: hl.placed_at });
-  }
-  const tasks = db
-    .prepare(
-      `SELECT t.title, t.kind, t.owner_id, t.owner_role, t.created_at FROM task t
-        WHERE t.status IN ('open','in_progress') AND t.kind IN ('source_entry','print_reconcile','tray_exception','order_change_review','correction_review','source_conflict','clarification_followup','retrieval')
-        ORDER BY t.created_at`,
-    )
-    .all() as { title: string; kind: string; owner_id: string | null; owner_role: string | null; created_at: string }[];
-  for (const t of tasks) {
-    out.push({
-      item: t.title,
-      blockedBy: TASK_KIND_LABEL[t.kind] ?? t.kind.replace(/_/g, " "),
-      owner: staffName(t.owner_id) ?? (t.owner_role ? ROLE_OWNER[t.owner_role] ?? t.owner_role : "Unassigned"),
-      since: t.created_at,
-    });
-  }
-  const trays = db.prepare("SELECT display_id, status, opened_at, opened_by FROM tray WHERE status IN ('open','assembling','exception')").all() as {
-    display_id: string; status: string; opened_at: string; opened_by: string | null;
-  }[];
-  for (const t of trays) {
-    const expected = (db.prepare("SELECT COUNT(*) n FROM tray_expected_slide WHERE tray_id = (SELECT id FROM tray WHERE display_id = ?)").get(t.display_id) as { n: number }).n;
-    const scanned = (
-      db
-        .prepare(
-          "SELECT COUNT(DISTINCT s.slide_id) n FROM tray_scan s JOIN tray tr ON tr.id = s.tray_id JOIN tray_expected_slide e ON e.tray_id = s.tray_id AND e.slide_id = s.slide_id WHERE tr.display_id = ? AND s.result = 'verified_expected'",
-        )
-        .get(t.display_id) as { n: number }
-    ).n;
-    if (scanned < expected) {
-      out.push({ item: `Tray ${t.display_id}`, blockedBy: `${expected - scanned} of ${expected} expected slides not scanned; cannot be verified complete`, owner: staffName(t.opened_by) ?? "Histotech", since: t.opened_at });
-    }
-  }
-  return out;
-}
-
-const TASK_KIND_LABEL: Record<string, string> = {
-  source_entry: "Approved gross description waiting for source-system entry",
-  print_reconcile: "Print outcome unknown; reconcile before any reprint",
-  tray_exception: "Tray exception to resolve",
-  order_change_review: "Source order changed; review affected work",
-  correction_review: "Post-accession discrepancy under review",
-  source_conflict: "Source conflict to review",
-  clarification_followup: "Clarification follow-up",
-  retrieval: "Blocks to retrieve",
-};

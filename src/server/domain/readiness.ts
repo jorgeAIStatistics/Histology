@@ -1,6 +1,6 @@
 import type { DB } from "../db/db";
 import type { HoldRow, HoldTransition } from "./holds";
-import { blockedTransitions } from "./holds";
+import { blockedTransitions, HOLD_TRANSITION_LABEL } from "./holds";
 import type { BlockState, GrossState, SlideState, SourceUpdateState, Stage } from "@/lib/domain";
 import { BLOCK_STATE_ORDER, SLIDE_STATE_ORDER } from "@/lib/domain";
 import { getSetting } from "../core/settings";
@@ -254,7 +254,7 @@ export function computeReadiness(db: DB, accessionIds: string[]): Map<string, Ca
       // ---- eligible / blocked
       const eligible: string[] = [];
       const blockedBy: string[] = [];
-      for (const h of holds) blockedBy.push(`${h.displayId} on ${h.scopeLabel}: ${h.reasonText} (blocks ${h.blocks.join(", ")})`);
+      for (const h of holds) blockedBy.push(`${h.displayId} on ${h.scopeLabel}: ${h.reasonText} (holds ${h.blocks.map((b) => HOLD_TRANSITION_LABEL[b] ?? b).join(", ")})`);
       if (!g && !pBlocks.length && p.status !== "canceled") {
         const hb = holdBlocks(holds, "gross_approval");
         if (hb.length) blockedBy.push(`Grossing documentation for part ${p.designation} cannot be approved until ${hb.map((h) => h.displayId).join(", ")} is released`);

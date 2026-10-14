@@ -3,7 +3,7 @@ import type { Ctx } from "../core/context";
 import { DomainError } from "../core/errors";
 import { newId } from "../core/ids";
 import { audit } from "../core/audit";
-import { decodeLabel, humanLabel, type DecodeResult } from "@/lib/identifiers";
+import { decodeLabel, humanLabel, stainCode, type DecodeResult } from "@/lib/identifiers";
 import { closeTasksForEntity, refreshSlideLabelState, requireText } from "./material";
 
 /**
@@ -186,5 +186,90 @@ export function roundTrip(payload: string): { payload: string; decoded: DecodeRe
     decoded,
     human: decoded.ok ? humanLabel(decoded.identity) : null,
     matches: decoded.ok && decoded.payload === payload.trim().toUpperCase(),
+  };
+}
+
+export interface RecordFieldCheck {
+  field: string;
+  /** What the decoded payload says ("—" when the format does not carry this field). */
+  encoded: string;
+  /** What the slide/block/case record says. */
+  record: string;
+  /** null = not carried by the demo payload (shown as readable text only). */
+  ok: boolean | null;
+}
+
+export interface RecordCheck {
+  decodes: boolean;
+  reason: string | null;
+  /** Every encoded field equals the record (fields the format does not carry are listed, not compared). */
+  matchesRecord: boolean;
+  fields: RecordFieldCheck[];
+  /** Readable text built from the RECORD (not from the payload), e.g. "D26-04817 A1-3 H&E deeper L1". */
+  recordText: string | null;
+}
+
+/**
+ * Decode a label payload and compare each decoded field with the authoritative
+ * record it claims to identify (accession, part, block, slide, stain). This is
+ * what makes the preview's round-trip check meaningful: a payload that encodes
+ * the wrong slide or stain is reported as a mismatch.
+ */
+export function checkPayloadAgainstRecord(db: DB, targetType: string, targetId: string, payload: string): RecordCheck {
+  const decoded = decodeLabel(payload);
+  const fields: RecordFieldCheck[] = [];
+  const cmp = (field: string, encoded: string | number | undefined, record: string | number | null | undefined) => {
+    const e = encoded === undefined || encoded === null ? "—" : String(encoded);
+    const r = record === undefined || record === null ? "Unknown" : String(record);
+    fields.push({ field, encoded: e, record: r, ok: e.toUpperCase() === r.toUpperCase() });
+  };
+  let recordText: string | null = null;
+  const id = decoded.ok ? decoded.identity : null;
+  if (targetType === "slide") {
+    const s = db
+      .prepare(
+        `SELECT a.accession_number, sp.designation AS part, b.block_seq, s.slide_seq, s.stain, s.level_label, b.label_text
+           FROM slide s JOIN block b ON b.id = s.block_id JOIN specimen_part sp ON sp.id = b.part_id JOIN accession a ON a.id = s.accession_id WHERE s.id = ?`,
+      )
+      .get(targetId) as { accession_number: string; part: string; block_seq: number; slide_seq: number; stain: string; level_label: string | null; label_text: string } | undefined;
+    if (s) {
+      recordText = `${s.accession_number} ${s.label_text}-${s.slide_seq} ${s.stain}${s.level_label ? ` ${s.level_label}` : ""}`;
+      cmp("Label type", id?.kind === "S" ? "Slide" : id ? id.kind : undefined, "Slide");
+      cmp("Accession", id?.accession, s.accession_number);
+      cmp("Part", id?.part, s.part);
+      cmp("Block", id?.block, s.block_seq);
+      cmp("Slide", id?.slide, s.slide_seq);
+      cmp("Stain", id?.stain ? stainCode(id.stain) : undefined, stainCode(s.stain));
+      if (s.level_label) fields.push({ field: "Level", encoded: "—", record: s.level_label, ok: null });
+    }
+  } else if (targetType === "block") {
+    const b = db
+      .prepare(
+        `SELECT a.accession_number, sp.designation AS part, b.block_seq, b.label_text FROM block b JOIN specimen_part sp ON sp.id = b.part_id
+           JOIN accession a ON a.id = b.accession_id WHERE b.id = ?`,
+      )
+      .get(targetId) as { accession_number: string; part: string; block_seq: number; label_text: string } | undefined;
+    if (b) {
+      recordText = `${b.accession_number} ${b.label_text}`;
+      cmp("Label type", id?.kind === "B" ? "Block" : id ? id.kind : undefined, "Block");
+      cmp("Accession", id?.accession, b.accession_number);
+      cmp("Part", id?.part, b.part);
+      cmp("Block", id?.block, b.block_seq);
+    }
+  } else {
+    const a = db.prepare("SELECT accession_number FROM accession WHERE id = ?").get(targetId) as { accession_number: string } | undefined;
+    if (a) {
+      recordText = a.accession_number;
+      cmp("Label type", id?.kind === "C" ? "Case" : id ? id.kind : undefined, "Case");
+      cmp("Accession", id?.accession, a.accession_number);
+    }
+  }
+  const compared = fields.filter((f) => f.ok !== null);
+  return {
+    decodes: decoded.ok,
+    reason: decoded.ok ? null : decoded.reason,
+    matchesRecord: decoded.ok && compared.length > 0 && compared.every((f) => f.ok),
+    fields,
+    recordText,
   };
 }

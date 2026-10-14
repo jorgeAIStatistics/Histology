@@ -50,14 +50,14 @@ These are **employee observations** from about four months as a histology assist
 
 ### 2.2 The problem in plain terms
 
-Information about each specimen is **re-copied by hand at several handoffs** (paper requisitions, stickers, memory, a printed daily report, retyping), and **questions to offices wait in channels without a clear owner or follow-up**. Possible consequences, which are hypotheses and have **not** been measured, include rework at accessioning, delayed cases, label mix-up risk, an end-of-day transcription backlog, and time spent looking for material.
+Information about each specimen is **re-copied by hand at several handoffs** (paper requisitions, stickers, memory, a printed daily report, retyping). **Replies to office clarification messages can be delayed, and we don't yet know why** (notifications may be unsupported, turned off, ignored or sent to the wrong person). Unclear follow-up ownership is one hypothesis to check, not an observation. Possible consequences, which are hypotheses and have **not** been measured, include rework at accessioning, delayed cases, label mix-up risk, an end-of-day transcription backlog, and time spent looking for material.
 
 ### 2.3 Why this is worth investigating (published evidence, with limits)
 
 - **[R6]** A 2016 single-center histology improvement series reported labeling errors falling from 1.03% to 0.28% after a barcode-enabled LIS intervention, and to 0.22% after further workflow changes; manual slide printing and microtomy were major error sources. *A historical result at another site, not a promised effect for this product.*
 - **[R7]** A University of Florida before/after study found fewer wrong-tissue-in-block incidents once barcode confirmation was reinforced with a workflow hard stop. *A barcode feature without an enforced process is not enough.*
 - **[R8]** A biopsy grossing study found voice recognition had negligible effect on the prosector's time per specimen while reducing transcription needs. *Capturing information at the source is worth exploring; it does not automatically speed up grossing or prevent every error.*
-- **[R9]** Observational work at UPMC documented manual work, communication and organizational burdens and stressed integration with the pathology information system. *Observe the real work before choosing screens.*
+- **[R9]** A 2012 UPMC contextual-inquiry study of six pathologists found anatomic pathology workflow labor-intensive and concluded that a digital slide system should integrate with the AP information system. *Its subjects were pathologists, not histology staff; the transferable lesson is to observe real work before designing screens.*
 - **[R5]** The CAP/NSH practical specimen-handling guide (March 2025) covers identification, discrepancy handling, traceability and validation of barcode materials and equipment. *Guidance to review with lab leadership, not a complete current accreditation checklist.*
 
 ---
@@ -67,12 +67,12 @@ Information about each specimen is **re-copied by hand at several handoffs** (pa
 | Role (demo name, fictional) | Main need | Primary screen |
 |---|---|---|
 | Accessioners (Maya Torres, Luis Benitez) | Reconcile arrivals fast; know the right doctor; raise and track questions without stopping the bench | `/intake`, `/clarifications` |
-| Accessioning lead (Kim Nguyen) | Own routing exceptions, escalations and related-order decisions | `/intake`, `/clarifications`, `/settings` |
+| Accessioning lead (Kim Nguyen) | Own routing exceptions and related-order decisions; review office answers, resolve clarifications and release holds (each with a reason) | `/intake`, `/clarifications`, `/settings` |
 | Grosser (Dana Whitfield) | Record each part once, clearly, at the bench | `/grossing` |
 | Histology assistant (Sam Ortiz) | Receive reviewed gross records as each part is ready, enter them into EMA, see what is still pending | `/grossing`, `/worklist` |
 | Histotechs (Priya Shah, Marcus Lee) | A current doctor/PAS worklist; print, tray and retrieval tasks | `/worklist`, `/materials` |
 | Operations supervisor (Tanya Brooks) | See what is blocked, who owns the next step, and the evidence | `/operations`, `/insights` |
-| Director of Operations, medical director (read-only demo roles) | Follow one case end to end; judge whether a pilot is worthwhile | `/demo`, `/operations`, `/cases/[id]` |
+| Director of Operations, medical director (demo roles; read-only for lab records, except that the medical director demo role can approve a new routing rule version and add or retire a coverage exception) | Follow one case end to end; judge whether a pilot is worthwhile | `/demo`, `/operations`, `/cases/[id]` |
 | Submitting offices (indirect) | Receive specific, answerable questions through an agreed channel | Not a screen in the first build; notifications are simulated |
 | Dermatopathologists (indirect) | Correct case assignment and a reliable worklist | Not a primary user in the first build |
 
@@ -95,7 +95,7 @@ Rules the companion always follows:
 
 - It **never** silently merges patients, combines cases, renumbers an issued accession, changes a specimen site, replaces a part designation or relabels physical material.
 - A discrepancy found after accessioning keeps the original references and points to the lab's authorized correction process. The demo shows a review/cross-reference record; it does not pretend to correct EMA.
-- A local draft is **never** shown as entered in EMA until the source system acknowledges it.
+- A local draft is **never** shown as entered until a named person attests the manual entry or the source system acknowledges it, and the two are displayed differently. The source-entry states are: *Source-system entry pending* → *Entered in source system (staff attested)* → *Source system acknowledged (simulated)*, plus *Failed*. An attestation is never called an acknowledgment. In this demo the acknowledgment can only come from a labeled demo control, because no real interface exists.
 
 Why a companion: it is the lowest-risk way to test whether the handoff gaps can be closed, it does not ask the lab to change its system of record, and it leaves room for the answer to be "configure EMA" or "buy a product" instead (Section 5).
 
@@ -107,7 +107,7 @@ An inefficient local process can come from configuration, hardware, training, ac
 
 | Option | What it means | Available categories (vendor descriptions only) | Questions to answer first |
 |---|---|---|---|
-| **Configure** | Use features of the current EMA setup more fully | ModMed describes pathology gross defaults, configurable stains, reporting/tracking, multiple accession sequences and slide/cassette label printing in many cases **[R1]** | Which EMA modules and pathology options are licensed and enabled? Can a ModMed specialist demonstrate them on our workflow? |
+| **Configure** | Use features of the current EMA setup more fully | ModMed describes pathology gross defaults, configurable stains, reporting/tracking and multiple accession sequences; its FAQ says the module handles slide/cassette label printing in most cases **[R1]** | Which EMA modules and pathology options are licensed and enabled? Can a ModMed specialist demonstrate them on our workflow? |
 | **Buy / integrate** | Add an existing specialist product | Leica CEREBRO describes identification, on-demand printing, tracking and workflow dashboards **[R10]**. Milestone MacroPATH describes integrated grossing documentation **[R11]**. Epredia offers direct slide printers **[R12]** | Does it work with our EMA tenant and our printers? What does it cost (vendor quote required)? |
 | **Build** (this companion) | A targeted coordination layer for gaps left after the two steps above | This project | Which gaps remain after configure and buy are reviewed? Can a supported interface supply the data? |
 
@@ -136,33 +136,35 @@ Costs (vendor fees, hardware, consumables, integration, maintenance, training) r
 
 | # | Flow | What it shows | Route |
 |---|---|---|---|
-| 1 | Arrival and pre-accession reconciliation | Courier manifest (expected vs received; "unknown" if no manifest), side-by-side order vs container vs requisition, explicit "verified against physical container," related-order candidates | `/intake` |
+| 1 | Arrival and pre-accession reconciliation | Courier manifest (expected vs received; "Unknown" if no manifest), side-by-side order vs container vs requisition, explicit "Staff verified against physical container," related-order candidates | `/intake` |
 | 2 | Office-to-pathologist routing | Suggestion from an approved, versioned rule (rule set v3, effective 2026-09-01) with the rule shown; unknown office (Seagrape Skin Studio) becomes a routing exception, never a guessed doctor; overrides need a reason | `/intake`, `/settings` |
-| 3 | Specimen-specific clarification | Task with affected part, evidence, office contact role, lab owner, follow-up time, distinct states (drafted, sent, delivery unknown, answered, reviewed, resolved), hold on the affected part only | `/clarifications`, `/cases/[id]` |
-| 4 | Live doctor/PAS worklist | Grouped by dermatopathologist (name plus color), PAS as text with its originating order and affected block/slide, changes since last acknowledged, printable snapshot with time and version | `/worklist` |
+| 3 | Specimen-specific clarification | Task with affected part, evidence, office contact role (from a simulated office contact directory), lab owner, follow-up time, distinct states (drafted, sent, delivery unknown, delivery failed, delivered, acknowledged, answered, reviewed, resolved, canceled), hold on the affected part only. Resolving the clarification and releasing the hold are separate audited actions, each with its own reason | `/clarifications`, `/cases/[id]`, `/settings` (office contacts) |
+| 4 | Live doctor/PAS worklist | Grouped by dermatopathologist (name plus a fictional demo color), PAS as text with its originating order or protocol and affected material, changes since last acknowledged, printable snapshot with time and version | `/worklist` |
 | 5 | Reviewed grossing record, incremental | Structured fields plus narrative from a synthetic dictation transcript; numbers, units and counts must be confirmed; a completed part creates the next task while other parts stay incomplete | `/grossing`, `/cases/[id]` |
 
 ### 6.2 Two smaller working demonstrations
 
 | Demo | What it shows | Route |
 |---|---|---|
-| Print queue and trays | Print jobs linked to official IDs; a printer timeout shows **unknown outcome** and must be reconciled before retry; reprints record a reason; tray verification slide by slide flags a missing expected slide | `/materials` (print jobs, trays) |
+| Print queue and trays | Print jobs linked to official IDs; a printer timeout shows **unknown outcome** and must be reconciled before retry; reprints record a reason and never create a new slide (an additional slide is a separate work order); tray verification slide by slide flags a missing expected slide and an unexpected one | `/materials` (print jobs, trays) |
 | Block retrieval | Request with last confirmed slot (not "guaranteed present"), checkout history, pick list by location; a wrong block scan is rejected | `/materials` (retrieval) |
 
-Supporting screens: `/operations` (what is blocked, who owns it, evidence, data age), `/insights` (queue charts on illustrative data), `/settings` (routing, demo scenarios, integration capabilities), `/demo` (guided five-minute walkthrough, before/after map, speaker notes).
+Supporting screens: `/operations` (what is blocked, who owns it, evidence, data age), `/insights` (queue charts on illustrative data, metric definitions and a blank scenario calculator), `/settings` (routing rules, demo scenarios, integration capabilities, office contacts, preferences), `/demo` (guided five-minute walkthrough, before/after map, speaker notes, real vs simulated).
 
 ### 6.3 The hero demo case (all fictional)
 
-Synthetic patient Avery Quinlan (MRN `HPD-448210`, tenant EMA-SIM Sunrise Coast) from Harbor Point Dermatology; ordering clinician Dr. Hannah Cole; assigned dermatopathologist Dr. Elena Marsh. Parts A (left upper back, shave, `ORD-77120`) and B (`ORD-77121`, order says **right** dorsal forearm, bottle says **left** dorsal forearm, punch) arrive as two separate orders from the same encounter. The system proposes a related-order candidate; a reviewer decides. Part B gets clarification `CLR-0457` and a hold on Part B only. The source simulator issues accession `D26-04817`. The grosser completes a reviewed record for Part A, which creates the EMA entry task and makes cassette A1 eligible for processing, while Part B stays incomplete. Demo day: Wednesday 2026-10-14, clock starting around 10:52 (America/New_York).
+Synthetic patient Avery Quinlan (MRN `448210`, tenant EMA-SIM Sunrise Coast) from Harbor Point Dermatology; ordering clinician Dr. Hannah Cole; assigned dermatopathologist Dr. Elena Marsh. Parts A (left upper back, shave, `ORD-77120`) and B (`ORD-77121`, order says **right** dorsal forearm, bottle says **left** dorsal forearm, punch) arrive at 11:00 as two separate orders from the same encounter (intake items `INT-1014-031` and `INT-1014-032`). The system proposes related-order candidate `REL-0112`; the accessioning lead decides (one accession, both orders kept). Part B gets clarification `CLR-0457` and hold `H-0090` on Part B only. The simulated office answer is reviewed, then the clarification is resolved. The hold stays until the amended order `ORD-77121` v2 arrives from the simulated source a few minutes later; the lead then releases it as a separate action with a reason. The source simulator issues accession `D26-04817`. The grosser completes a reviewed record for Part A, which creates the source-entry task for Sam Ortiz and makes block A1 eligible for processing, while Part B stays "Awaiting grossing" and the case stays incomplete.
+
+Steps 6 and 7 of the guided demo use **earlier synthetic cases**, not D26-04817, because the hero case has no slides or stored blocks yet on its first morning: tray `TRY-M-03` (Dr. Marsh), print job `PJ-8841`, and retrieval request `RR-0192` (Dr. Okafor) for blocks of D26-03990 and D26-03912. Demo day: Wednesday 2026-10-14, clock starting at 10:52 (America/New_York).
 
 ### 6.4 What is real, simulated, unsupported or unknown
 
-This table describes the intended split. What has actually been built and tested is reported separately in the implementation and test status notes.
+This table describes the split as built. Which behaviors are covered by automated tests, and which are not, is reported in `acceptance-tests.md` (the 15 acceptance checks, the tests behind them and the last recorded run).
 
 | Category | Examples |
 |---|---|
-| **Implemented locally (intended)** | Local database with seeded synthetic data, intake, routing rules, clarifications, worklist, grossing review, print/tray/retrieval demos, audit log, conflict detection, reset and demo clock |
-| **Simulated and labeled** | Source system (EMA-SIM, OTHER-EHR-SIM), office notifications and answers, printer, AI model (a deterministic demonstration extractor/drafter) |
+| **Implemented locally** | Local SQLite database with a reproducible synthetic day, intake and verification, routing rules with exceptions, related-order review, clarifications with scoped holds, the doctor/PAS worklist with change tracking and snapshots, per-part grossing review, print/tray/retrieval demos, office contact directory, local append-only audit log, conflict (stale update) detection, reset and demo clock |
+| **Simulated and labeled** | Source systems (EMA-SIM Sunrise Coast, OTHER-EHR-SIM Gulf), accession issuance, office notifications and answers, the source acknowledgment of a gross entry, printers, and the "assistant" (deterministic demonstration rules, not live AI) |
 | **Not supported in this project** | Any connection to the real EMA, real messages to offices, real printer control, writing back to EMA, production login/security |
 | **Unknown until discovery** | What EMA interfaces actually expose for this lab, what is licensed/enabled, existing printers, the approved routing mapping, what creates separate A/B orders |
 
@@ -235,8 +237,8 @@ Each assumption lets the synthetic prototype move forward without blocking on li
 | 4 | Separate A/B submissions show up as two source orders under one encounter. | Most visible form of O4; the data model also supports separate encounters and duplicate patient records. | Ask ModMed and the lab exactly what is created, and what correction is supported before vs after accession. |
 | 5 | After an accession number exists, correction must go through the lab's authorized process. | Observed that correction is difficult once assigned (O4). | Review the lab's written correction procedure. |
 | 6 | Most offices share one EMA tenant; at least one office uses a different EHR. | Tests source namespaces (same MRN in two systems must not collide). | Ask whether all contributing offices are in one EMA tenant and which use other EHRs. |
-| 7 | No courier manifest of expected containers exists, so expected quantity can be "unknown." | Not observed either way (O1). | Ask offices and couriers; check whether orders list expected containers. |
-| 8 | Office clarifications currently travel by EMA message, and the right recipient role at each office is unclear. | Delayed replies observed, cause unknown (O5). | Ask who receives clarifications, through which channel, and who covers absences. |
+| 7 | Whether real courier manifests exist is unknown (O1). The demo seeds a mix: some offices send a simulated manifest (for example Harbor Point Dermatology, expected 4 containers), others send none and are shown as "Expected Unknown (no source manifest)" (Mangrove Bay Dermatology, Seagrape Skin Studio). | Not observed either way (O1); the mix exercises both cases. | Ask offices and couriers; check whether orders list expected containers. |
+| 8 | Office clarifications currently travel by EMA message. Who receives them at each office, and who covers absences, is not known to us. | Delayed replies observed, cause unknown (O5). | Ask who receives clarifications, through which channel, and who covers absences. |
 | 9 | Faster clarification needs an agreement with offices on ownership and escalation. | More notifications alone may add noise. | Discuss with office managers; agree a contact and escalation path. |
 | 10 | PAS and other additional work are authorized by an order or protocol at a specific block or slide level. | PAS is tracked by hand today (O8, O9); eligibility must not be guessed from diagnosis text. | Ask what source authorizes PAS and at which material level it is specified. |
 | 11 | "The bible" mainly serves an information function (doctor, case list, PAS), and some paper may still be required. | Technicians depend on it (O9). | List which paper documents are record requirements vs handoff aids. |
@@ -244,7 +246,7 @@ Each assumption lets the synthetic prototype move forward without blocking on li
 | 13 | The local workflow could allow a completed part to move on before the whole batch is done. | Needed to test incremental handoff (flow 5). | Confirm with the medical director and SOP owner; identify what prevents incremental entry today (equipment, staffing, habit, access, system behavior). |
 | 14 | Cassettes/blocks are hand-marked with case numbers; exact object and step are unconfirmed. | O6; the specification warns not to assume. | Watch the step at the bench and confirm with the grosser and histotechs. |
 | 15 | The lab has some label printers, but their models, drivers and status reporting are unknown. | 300+ labels are printed daily (O8). | Inventory existing printers, scanners and label materials; ask whether EMA drives them today. |
-| 16 | A printer can report "submitted" but not always "completed," so outcomes can be unknown. | Common behavior of networked printers; forces safe handling of timeouts. | Test the real printers' status reporting. |
+| 16 | A printer can report "submitted" but not always "completed," so outcomes can be unknown. | Assumed so the demo handles the worst case; what the real printers report is unknown (discovery 6.3). | Test the real printers' status reporting. |
 | 17 | DataMatrix 2D barcodes are an acceptable demonstration symbology. | Small enough for slide and cassette labels. | Confirm the symbology, content and format the lab's scanners and labels use. |
 | 18 | Blocks are stored by an address like cabinet / drawer / box / slot, and checkouts are recorded somewhere (possibly on paper). | O10 suggests manual number checking. | Walk the storage area; ask how locations, checkouts, send-outs and returns are recorded. |
 | 19 | One main courier delivery around 11:00 is typical; late deliveries happen. | O1. | Count deliveries over representative days. |
@@ -268,6 +270,9 @@ Each assumption lets the synthetic prototype move forward without blocking on li
 | Idempotent | Doing the same import or click twice does not create duplicates |
 | Audit log | A record of who did what and when; here it is local and append-only, which is **not** proof of production tamper resistance |
 | Proposal | A suggested change that does nothing until a person reviews and accepts it |
+| Attested | A named staff member recorded that they did something outside the app (for example, typed the gross description into EMA). It is their statement, not a confirmation from EMA |
+| Acknowledged (by the source) | The source system itself confirmed it received something. In this demo that confirmation is simulated and labeled |
+| Hold | A stop on specific steps for specific material (for example, Part B only). It is released only by an authorized person with a reason |
 
 ---
 
@@ -285,4 +290,4 @@ Listed as given in the master specification (research checked 2026-10-14 accordi
 - **[R11]** Milestone Medical, MacroPATH. https://www.milestonemedsrl.com/products/grossing-and-macro-digital/macropath/
 - **[R12]** Epredia, Microscope Slide Printers. https://www.epredia.com/products/histology-instruments/slide-printing
 
-Related documents in this folder: `workflow-map.md`, `roadmap.md`, `ai-assistants.md`.
+Related documents in this folder: `workflow-map.md`, `roadmap.md`, `ai-assistants.md`, `data-model.md`, `design-spec.md`, `integration-capability-matrix.md`, `research-notes.md` (checked details for each reference), `discovery-checklist.md`, `pilot-proposal.md`, `director-pitch.md`.

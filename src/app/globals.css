@@ -164,6 +164,19 @@
 /* ---------- Additions beyond spec §3.2 (shared UI foundation) ---------- */
 
 /*
+ * `rail:` variant — the left nav shows as a 72px icon rail when the user
+ * collapses it (data-rail="true" on an ancestor) or below 1280px (tablet).
+ */
+@custom-variant rail {
+  &:where([data-rail="true"], [data-rail="true"] *) {
+    @slot;
+  }
+  @media (width < 1280px) {
+    @slot;
+  }
+}
+
+/*
  * Density (spec §3.1): Compact is the default at 1280px and wider; Comfortable
  * below 1280px or on touch. The `density-comfortable` class is set on <html>
  * by an inline script (before paint) and kept in sync by DensitySync.

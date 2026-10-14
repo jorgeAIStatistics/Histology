@@ -8,6 +8,7 @@ How to read it:
 - **"Confirm locally"** marks steps whose exact object, order or owner has not been verified.
 - **H1–H12** are hypotheses. **Every benefit shown in the "after" map is a hypothesis to measure**, not a demonstrated result. Section 5 lists how each one would be measured.
 - Processing, embedding, sectioning and staining are shown only at the level needed to show handoffs; they were not mapped in detail.
+- The app's `/demo` page (Workflow map tab) shows a shorter version of these two maps with a plain-text walkthrough.
 
 ---
 
@@ -88,23 +89,25 @@ Solid arrows are physical or sequential steps. Dotted arrows are information han
 ```mermaid
 flowchart TD
   C1["Courier arrives"] --> I1["Intake bench: scan or search;<br/>manifest shows expected vs received;<br/>expected = unknown if no manifest (H1)"]
+  I1 --> RT1["Routing, computed at receipt in parallel:<br/>approved, versioned office rule suggests the<br/>dermatopathologist and shows the rule;<br/>unknown office = routing exception (H2)"]
   I1 --> V1["Comparison panel: order vs observed container<br/>vs requisition; staff confirm against<br/>the physical container (H1)"]
   V1 --> D1{"Related-order<br/>candidate found?"}
-  D1 -->|Yes| RV1["Reviewer decides: link as related or<br/>keep separate; both source orders kept,<br/>never merged (H3)"]
+  D1 -->|Yes| RV1["Lead decides: link as related or<br/>keep separate; both source orders kept,<br/>never merged (H3)"]
   D1 -->|No| D2
   RV1 --> D2{"Discrepancy on a part?"}
   D2 -->|"Yes, affected part only"| CL1["Targeted clarification, e.g. CLR-0457:<br/>lab owner, office contact role, follow-up time;<br/>hold on the affected part only (H4, H5)"]
-  CL1 --> CL2["Office answer - simulated in demo -<br/>reviewed by the lab owner, then resolved"]
-  CL2 --> RT1
-  D2 -->|"No, or unaffected parts"| RT1["Routing: approved, versioned office rule<br/>suggests the dermatopathologist and shows the rule;<br/>unknown office = routing exception (H2)"]
-  RT1 --> ACC["Official accession issued in EMA<br/>(source simulator in demo)"]
+  CL1 --> CL2["Office answer - simulated in demo -<br/>reviewed by the accessioning lead, then resolved"]
+  CL2 --> HR["Hold released as a separate action,<br/>with a reason, by an authorized person<br/>(demo: after the amended order arrives)"]
+  HR -.->|"only if local policy<br/>gates accession"| ACC
+  D2 -->|"No, or unaffected parts"| ACC["Official accession issued in EMA<br/>(source simulator in demo)"]
+  RT1 -.->|"confirmed or overridden<br/>before accession"| ACC
   ACC --> PQ["Print queue linked to official IDs;<br/>timeouts = unknown outcome until reconciled;<br/>simulated printer (H9)"]
   ACC --> WL["Live worklist by doctor name and color;<br/>PAS as text with its order and<br/>affected block/slide (H7, H8)"]
   PQ -.-> G1
   G1["Grossing: open the exact case and part;<br/>structured fields plus narrative;<br/>confirm numbers, units and counts"] --> G2{"This part reviewed and<br/>approved for downstream use?"}
   G2 -->|Not yet| G1
-  G2 -->|Yes| E1["Task: enter gross description in EMA;<br/>shown as entered only after<br/>EMA acknowledges (H6)"]
-  G2 -->|Yes| CS["Cassette eligible for processing;<br/>other parts stay incomplete (H6)"]
+  G2 -->|Yes| E1["Task: enter gross description in EMA.<br/>Shown as 'Entered (staff attested)' only<br/>after a named person attests it; 'Source<br/>acknowledged' only from the source (H6)"]
+  G2 -->|Yes| CS["Block eligible for processing;<br/>other parts stay incomplete (H6)"]
   E1 --> EG1["Gross description in EMA"]
   CS --> WL
   WL --> HT["Histotech views: section and stain"]
@@ -122,16 +125,17 @@ flowchart TD
   classDef ema fill:#e6edf8,stroke:#2f5597,color:#14254a
   classDef review fill:#fff3dc,stroke:#a86b00,color:#3d2a00
   class ACC,EG1 ema
-  class RV1,CL2,G2 review
+  class RV1,CL2,HR,G2 review
 ```
 
-Blue boxes stay in EMA (authoritative). Amber boxes are human review or decision points. Everything else is an operational task in the companion. Dotted arrows are information handoffs.
+Blue boxes stay in EMA (authoritative). Amber boxes are human review or decision points. Everything else is an operational task in the companion. Dotted arrows are information handoffs. Routing is computed as soon as an item is received, so it runs alongside verification and clarification instead of waiting for them; it must be confirmed (or an exception resolved) before accession is requested.
 
 ### Notes on the "after" map
 
-- **Holds are scoped.** A discrepancy on Part B holds Part B, not the whole delivery or the whole case. Whether accessioning waits for a clarification is decided by **local policy**; the companion does not invent release rules.
+- **Holds are scoped.** A discrepancy on Part B holds Part B, not the whole delivery or the whole case. Whether accessioning waits for a clarification is decided by **local policy**; the companion does not invent release rules. In the demo the Part B hold blocks gross approval, processing, printing and tray delivery, not the accession request.
+- **Resolving is not releasing.** Resolving a clarification and releasing its hold are two separate, audited actions, each with its own reason. In the demo the lead resolves CLR-0457 after reviewing the simulated answer, and releases the Part B hold only after the amended order arrives from the simulated source.
 - **Related orders are never merged.** The system shows reasons and conflicts for a candidate; a person decides. Two legitimate encounters for the same patient stay separate.
-- **Gross records move per part.** "Approved for downstream use" in the companion is not the same as "entered in EMA." The EMA entry stays a separate, tracked task until EMA acknowledges it. Direct structured entry inside EMA may turn out to be the better first intervention (see `product-brief.md`, Section 5).
+- **Gross records move per part.** "Approved for downstream use" in the companion is not the same as "entered in EMA." The EMA entry stays a separate, tracked task. A named person attests the manual entry ("Entered in source system (staff attested)"); only the source itself can acknowledge it ("Source system acknowledged", simulated in the demo). The two are shown differently. Direct structured entry inside EMA may turn out to be the better first intervention (see `product-brief.md`, Section 5).
 - **Paper does not disappear on day one.** The worklist offers a printable snapshot showing generation time and version, for downtime and transition.
 - **Labels still need hands and hardware.** A web page cannot physically apply 300 stickers. Real printing depends on compatible printers, drivers, validated materials and bench procedures.
 - **Location is "last confirmed," not live.** Scanning a location does not prove every item in it is present.
@@ -152,7 +156,7 @@ Blue boxes stay in EMA (authoritative). Amber boxes are human review or decision
 | 6 | Accessioner → doctors (paper) | Case number on the requisition | Stickers on paper requisitions | **Observed:** manual sticker step (O6). Error frequency not measured | Not removed in the first build. Labels can be generated from official IDs; paper kept until the lab decides which documents are record requirements | Accession number; scanned documents if EMA stores them (confirm) | Requisition pages handled; sticker time |
 | 7 | Accessioning → cassettes/blocks | Case number on cassette/block | Handwritten; exact object and step to confirm (O6) | **Observed:** manual marking. Errors not measured | Cassette label previews linked to official IDs; real printing depends on hardware (H9) | Accession number | Marking time; illegible or wrong markings, if recorded |
 | 8 | Grosser → histology assistant | Specimen type, piece count, dimensions with units, orientation/ink, cassette allocation | Handwritten on the requisition, batched | **Observed:** batch waiting can keep the assistant until about 9 p.m.; real constraint unknown (O7) | Per-part structured record, reviewed and approved; downstream task created as each part is ready (H6) | Official gross description | **Separately:** grossing work, transcription work, verification work, batch waiting, integration lag; time of last entry each day |
-| 9 | Histology assistant → EMA | Gross description text | Typing from paper | **Observed:** manual transcription (O7). Accuracy not measured | Reviewed text ready to enter; "EMA update pending / acknowledged" tracked; never shown as entered before acknowledgement (H6) | Gross description | Manual transcription minutes; corrections found after entry |
+| 9 | Histology assistant → EMA | Gross description text | Typing from paper | **Observed:** manual transcription (O7). Accuracy not measured | Reviewed text ready to enter; states "Source-system entry pending", "Entered in source system (staff attested)" and "Source system acknowledged" tracked separately; an attestation is never shown as an acknowledgment (H6) | Gross description | Manual transcription minutes; corrections found after entry |
 | 10 | Lab → histotechs ("the bible") | Cases by doctor; PAS cases | Daily printed report; colored pages; yellow PAS table | **Observed:** technicians depend on a daily print (O9). A printed snapshot cannot show later changes; how often that causes problems is not measured | Live worklist by doctor name and color; PAS as text with the originating order and affected block/slide; "changed since you last acknowledged"; printable snapshot with time and version (H7, H8) | Orders and stain/work orders | Pages printed; time to prepare; changes or cancellations discovered late |
 | 11 | Histotech → slides (labels) | Slide IDs, stains, levels | 300+ labels/day printed and applied by hand; extras printed separately | **Observed:** high manual label volume; separate manual reprints; PAS separated by hand (O8) | Print queue tied to authorized work; unknown outcome must be reconciled before retry; reprints record a reason (H9). Applying labels stays manual unless hardware changes | Stain/work orders; label printing, if EMA does it [R1] | Label handling time; reprints with reasons; duplicate or missing labels |
 | 12 | Histotech → tray/delivery | Which slides belong to which case | Manual assembly; repeated scanning seen at Quest (O11) | **Observed at Quest:** repeated scanning of slides and requisitions. Current lab's tray step not mapped in detail | Set tray and case once; verify each slide; flag missing, unexpected, duplicate or canceled (H10) | Nothing in the first build | Tray verification time; discrepancies caught at the tray vs later |

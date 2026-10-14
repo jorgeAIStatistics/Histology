@@ -81,7 +81,7 @@ export const SOURCE_UPDATE_STATE = {
   not_started: "Not entered in source system",
   pending_entry: "Source-system entry pending",
   entered_attested: "Entered in source system (staff attested)",
-  source_acknowledged: "Source system acknowledged",
+  source_acknowledged: "Source system acknowledged (simulated)",
   failed: "Source update failed",
 } as const;
 export type SourceUpdateState = keyof typeof SOURCE_UPDATE_STATE;

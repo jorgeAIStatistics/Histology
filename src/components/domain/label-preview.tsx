@@ -67,9 +67,14 @@ export function LabelPreview({ payload, text, size = 88, showPayload = true, cap
         ) : (
           <span aria-hidden className="block shrink-0 rounded-sm bg-surface-sunken motion-safe:animate-pulse" style={{ width: size, height: size }} />
         )}
-        <div className="min-w-0">
+        <div className="min-w-0 max-w-[16rem]">
           <p className="id-mono text-base font-semibold text-black">{text}</p>
-          {showPayload ? <p className="id-mono mt-0.5 text-xs text-ink-muted">{payload}</p> : null}
+          {showPayload ? (
+            <p className="mt-0.5 break-all font-mono text-xs text-ink-muted">
+              <span className="sr-only">Encoded: </span>
+              {payload}
+            </p>
+          ) : null}
         </div>
       </div>
       {caption ? (

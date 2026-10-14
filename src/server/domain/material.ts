@@ -39,9 +39,15 @@ const MATERIAL_COLUMNS: [table: string, column: string, ddl: string][] = [
 ];
 const ensured = new WeakSet<DB>();
 
+/**
+ * Idempotent and additive. A database is only remembered as "done" once every
+ * column is already present when checked, so columns added inside a command
+ * transaction that later rolled back are simply added again on the next call.
+ */
 export function ensureMaterialsSchema(db: DB): void {
   if (ensured.has(db)) return;
   const cache = new Map<string, Set<string>>();
+  let missing = 0;
   for (const [table, column, ddl] of MATERIAL_COLUMNS) {
     let cols = cache.get(table);
     if (!cols) {
@@ -49,11 +55,12 @@ export function ensureMaterialsSchema(db: DB): void {
       cache.set(table, cols);
     }
     if (!cols.has(column)) {
+      missing += 1;
       db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
       cols.add(column);
     }
   }
-  ensured.add(db);
+  if (missing === 0) ensured.add(db);
 }
 
 // ---------------------------------------------------------------- lookups
@@ -355,7 +362,16 @@ export function advanceSlides(ctx: Ctx, slideIds: string[], toState: SlideState)
     const from = slideIndex(s.physical_state);
     if (from >= target) throw new DomainError("VALIDATION", `${label} is already ${SLIDE_STATE[s.physical_state]}; slides only move forward here`);
     if (from < slideIndex("sectioned") && target >= slideIndex("sectioned")) {
-      if (s.block_state !== "embedded" && s.block_state !== "sectioned") {
+      if (s.block_state === "stored") {
+        // An archived block can be cut again (deeper levels, recuts) once it is out of storage and on the bench.
+        const blk = ctx.db.prepare("SELECT custody_state, checkout_holder_id FROM block WHERE id = ?").get(s.block_id) as { custody_state: string; checkout_holder_id: string | null };
+        if (blk.custody_state === "stored") {
+          throw new DomainError("BLOCKED", `${label} cannot be sectioned: block ${s.accession_number} ${s.block_label} is filed in storage. Request it (Retrieval) and scan it out first.`);
+        }
+        if (blk.custody_state === "sent_out" || blk.custody_state === "missing_investigation") {
+          throw new DomainError("BLOCKED", `${label} cannot be sectioned: block ${s.accession_number} ${s.block_label} is ${blk.custody_state === "sent_out" ? "recorded as sent outside the lab" : "missing (investigation open)"}`);
+        }
+      } else if (s.block_state !== "embedded" && s.block_state !== "sectioned") {
         throw new DomainError("BLOCKED", `${label} cannot be sectioned: block ${s.block_label} is ${BLOCK_STATE[s.block_state]}, not embedded`);
       }
       assertNotHeld(ctx.db, "sectioning", scopesForSlide(ctx.db, id), `Sectioning ${label}`);

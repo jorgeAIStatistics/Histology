@@ -8,3 +8,5 @@ next-env.d.ts
 *.tsbuildinfo
 .DS_Store
 .next-*
+.ui-shots
+data/ui-*.db*

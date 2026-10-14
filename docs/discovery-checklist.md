@@ -35,7 +35,7 @@
 
 | # | Question | Who can answer | Why it matters to the design | Demo default assumption |
 |---|---|---|---|---|
-| [ ] 1.1\* | What EMA product, module and version do we use, and which pathology options are licensed and enabled? | MM-A, DO, IT | Decides configure vs buy vs build. ModMed advertises gross defaults, configurable stains, reporting/tracking, multiple accession sequences and slide/cassette label printing in many cases [R1]; we don't know what we have. | Nothing assumed. A simulated source system issues accessions. The demo does not claim EMA lacks any feature. |
+| [ ] 1.1\* | What EMA product, module and version do we use, and which pathology options are licensed and enabled? | MM-A, DO, IT | Decides configure vs buy vs build. ModMed advertises gross defaults, configurable stains, reporting/tracking and multiple accession sequences, and its FAQ says the module handles slide/cassette label printing in most cases [R1]; we don't know what we have. | Nothing assumed. A simulated source system issues accessions. The demo does not claim EMA lacks any feature. |
 | [ ] 1.2\* | Can a vendor specialist demonstrate existing grossing templates, label printing, worklists and corrections using our actual workflows (with test data)? | MM-A, DO | A configuration change may close a gap more cheaply and safely than new software. | The "configure EMA" option is evaluated first in `pilot-proposal.md`. |
 | [ ] 1.3 | Is there an EMA worklist or report that lists cases by assigned dermatopathologist, stage and PAS (the information in "the bible")? | MM-A, SUP | If yes, the companion's worklist may be unnecessary. | The companion builds its own worklist grouped by doctor. |
 | [ ] 1.4 | Who administers EMA configuration here, how are changes requested, tested and approved, and are there fees? | DO, IT, MM-A | Sets a realistic path and timeline for Option 1. | Not modeled. |
@@ -49,8 +49,8 @@
 | [ ] 2.1\* | Are the contributing offices in one EMA tenant or different tenants? Do some use other EHRs? | MM-A, IT, DO | Defines identifier namespaces and how many data sources exist. Identical MRNs from different sources must not collide. | Two simulated tenants: "EMA-SIM Sunrise Coast" (most offices) and "OTHER-EHR-SIM Gulf" (Lighthouse Skin Center). MRNs are scoped to their tenant. |
 | [ ] 2.2 | How do orders from non-EMA offices reach us (interface, fax, paper)? | DO, AL, IT | Changes the intake comparison and data sources. | The other-EHR office's orders come through the same simulated adapter, labeled with its tenant. |
 | [ ] 2.3 | Which identifiers appear on bottles and requisitions from each office (name, date of birth, MRN, order number, barcode)? | AL, OFF | Defines the comparison panel and what a scan can identify. | Synthetic bottle labels; a scan identifies a record, not what tissue is in the bottle. Staff must confirm "verified against physical container." |
-| [ ] 2.4 | Is there a courier manifest or expected-container list for each pickup? Who prepares it? | AL, OFF, SUP | Without one, expected quantity is unknown. | A simulated manifest; when absent, the screen says "expected quantity unknown." |
-| [ ] 2.5 | Is there a current list of submitting offices, contacts and working hours, and who keeps it current? | DO, SUP | Needed for routing and clarifications. | A fictional office directory with working hours. |
+| [ ] 2.4 | Is there a courier manifest or expected-container list for each pickup? Who prepares it? | AL, OFF, SUP | Without one, expected quantity is unknown. | A seeded mix: most offices send a simulated manifest; Mangrove Bay Dermatology and Seagrape Skin Studio send none, and the screen shows "Expected Unknown (no source manifest)." |
+| [ ] 2.5 | Is there a current list of submitting offices, contacts and working hours, and who keeps it current? | DO, SUP | Needed for routing and clarifications. | A fictional office contact and coverage directory with working hours (Settings → Office contacts); edits are audited. |
 
 ## 3. A/B order creation and correction (before and after accession)
 
@@ -70,7 +70,7 @@
 | [ ] 4.2 | Who approves mapping changes, how are vacations and coverage recorded, and from what date does a change apply? | MD, DO | Rules need an owner and effective dates. | Versioned rules with effective dates; overrides need a reason and an authorized role. |
 | [ ] 4.3 | What should happen when a new office has no rule? | MD, DO, AL | Prevents guessed assignments. | Seagrape Skin Studio becomes a routing exception; no doctor is guessed. |
 | [ ] 4.4 | Does EMA already store or auto-assign the dermatopathologist by office? | MM-A | If yes, the companion should read it rather than keep its own rules. | The companion suggests from its own rules; the source system stays authoritative. |
-| [ ] 4.5 | Is the per-doctor color convention agreed, and does anyone have difficulty telling the colors apart? | SUP, HT | Color must always come with text. | Teal (Marsh), violet (Okafor), amber (Ferreira), always shown with the doctor's name. |
+| [ ] 4.5 | What colors do the real "bible" pages use per doctor, should the digital worklist match them, and does anyone have difficulty telling the colors apart? | SUP, HT | Color must always come with text. | Fictional demo colors: teal (Marsh), violet (Okafor), amber (Ferreira), always shown with the doctor's name. They are not copied from the real pages, whose colors are unknown. |
 
 ## 5. Interfaces, data exposure and write support
 
@@ -78,11 +78,11 @@
 |---|---|---|---|---|
 | [ ] 5.1\* | What identifiers, part relationships, gross descriptions, work orders and status changes can approved interfaces actually expose? | MM-I, IT | Decides which screens could use real data and which would stay manual. ModMed documents a proprietary API and a certified read/search FHIR API [R2]; that does not prove access to internal histology workflow data. | All supplied by a simulated adapter; real availability is treated as unconfirmed until answered. |
 | [ ] 5.2\* | Are historical changes and cancellations available (versions, timestamps)? | MM-I | Needed for reconciliation and "what changed" highlights. | The simulator sends versions, corrections, cancellations and out-of-order updates. |
-| [ ] 5.3\* | Which write actions, if any, are supported? | MM-I | Decides whether Rollout Mode D is possible at all. | No writes. "Source-system update pending/acknowledged" is simulated and never shown as entered unless acknowledged. |
+| [ ] 5.3\* | Which write actions, if any, are supported? | MM-I | Decides whether Rollout Mode D is possible at all. | No writes. Staff attest manual entry ("Entered in source system (staff attested)"); "Source system acknowledged (simulated)" comes only from a labeled demo control. The two are shown differently, and an attestation is never called an acknowledgment. |
 | [ ] 5.4\* | What approvals, fees, rate limits, sandbox data and acknowledgement semantics apply? | MM-I, DO, PS | Cost and feasibility. ModMed describes sandbox development and review before production access [R2]. | None; local only. |
 | [ ] 5.5 | Which interfaces already run here (for example HL7 orders out / results in [R3]), and could an approved copy be used for a shadow evaluation? | IT, MM-I | A clinical order feed is not an internal histology workflow feed; we need to know what it actually contains. | Not assumed. |
 | [ ] 5.6 | Is there an approved export (report or file) for a shadow evaluation? What format and how often? | IT, MM-A, DO | Mode B may depend on it. We do not assume EMA offers any particular CSV export. | The fixture importer uses this project's own file format. |
-| [ ] 5.7 | How can we tell "no new events" apart from "source unavailable"? | MM-I, IT | Prevents an old worklist from looking live. | The demo shows last successful sync and data age; an outage marks data stale. |
+| [ ] 5.7 | How can we tell "no new events" apart from "source unavailable"? | MM-I, IT | Prevents an old worklist from looking current when it is not. | The demo shows last successful sync and data age as Synced / Delayed / Offline / Unknown, always with a Simulated tag; an outage marks data stale. |
 | [ ] 5.8 | Do source timestamps include a time zone and a last-updated time? | MM-I | Correct ordering and conflict detection. | Stored in UTC, displayed in Eastern time. |
 
 ## 6. Printers, scanners and labels
@@ -100,7 +100,7 @@
 
 | # | Question | Who can answer | Why it matters to the design | Demo default assumption |
 |---|---|---|---|---|
-| [ ] 7.1\* | Who receives office clarification requests, through which channel, and who covers when they are absent? | OFF, DO, AL | Faster answers need agreed ownership and escalation, not just more notifications. | A fictional office contact and coverage directory; sending is simulated and labeled. |
+| [ ] 7.1\* | Who receives office clarification requests, through which channel, and who covers when they are absent? | OFF, DO, AL | Faster answers need agreed ownership and escalation, not just more notifications. | A fictional office contact and coverage directory (primary, backup, escalation contact, working hours); sending is simulated and labeled. |
 | [ ] 7.2 | Are EMA message notifications supported, enabled, and reaching the right person? | MM-A, IT, OFF | We don't know whether delays come from unsupported, disabled, ignored or misdirected notifications. | Simulated delivery states, including "delivery unknown." |
 | [ ] 7.3 | Will offices agree to an expected acknowledgement time and an escalation contact? | DO, OFF | Sets follow-up times without creating noise. | Illustrative follow-up times. |
 | [ ] 7.4 | What may an ordinary notification contain under privacy policy? | PS | The default is no patient information in notification text. | A generic notification pointing to a secure case view (simulated). |
@@ -110,9 +110,9 @@
 
 | # | Question | Who can answer | Why it matters to the design | Demo default assumption |
 |---|---|---|---|---|
-| [ ] 8.1\* | What source authorizes PAS and other additional work? At which material level (case, part, block, slide) is it specified? | MD, HT, MM-A | The worklist must show exactly the authorized work. PAS is never inferred from diagnosis text. | Work orders (for example WO-2213) linked to the originating order or protocol and to specific material (for example "D26-04817 A1-2 PAS"). |
+| [ ] 8.1\* | What source authorizes PAS and other additional work? At which material level (case, part, block, slide) is it specified? | MD, HT, MM-A | The worklist must show exactly the authorized work. PAS is never inferred from diagnosis text. | Work orders linked to the originating order or protocol and to specific material. Examples in the seed: WO-2142, PAS requested on order ORD-75061 for part A of D26-04749, with slide "D26-04749 A1-2 PAS"; WO-2144, PAS from a synthetic standing protocol for nail specimens. In the demo a work order targets a part or a block. |
 | [ ] 8.2 | Who can order, change or cancel stains, and how do technicians learn about cancellations? | MD, HT | Canceled or amended orders must trigger review of work already printed or prepared. | Cancellations stay traceable and flag affected material for review. |
-| [ ] 8.3 | Are any stains ordered by standing protocol (for example by specimen type or office)? | MD | Decides whether a rule, rather than a person, creates the work order. | Only a protocol reference is modeled. |
+| [ ] 8.3 | Are any stains ordered by standing protocol (for example by specimen type or office)? | MD | Decides whether a rule, rather than a person, creates the work order. | One synthetic, illustrative standing-protocol reference (SP-NAIL-PAS-01, PAS on nail specimens) is seeded as an authorization source. It is not a real or recommended protocol. |
 | [ ] 8.4 | What does the separate yellow PAS table provide that the doctor list does not? | HT, SUP | Any replacement must keep that function. | The digital worklist shows PAS as explicit text with its source. |
 
 ## 9. Incremental grossing entry

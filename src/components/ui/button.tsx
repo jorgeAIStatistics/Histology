@@ -87,7 +87,7 @@ export function Button({
     >
       {/* Both labels share one grid cell so the width never jumps while loading. */}
       <span className="grid">
-        <span className={cn("col-start-1 row-start-1 inline-flex items-center justify-center gap-[inherit]", loading && "invisible")}>
+        <span className={cn("col-start-1 row-start-1 inline-flex items-center justify-center", size === "sm" ? "gap-1.5" : "gap-2", loading && "invisible")}>
           {icon ? <span className="inline-flex shrink-0 [&>svg]:size-4" aria-hidden>{icon}</span> : null}
           {children}
         </span>
