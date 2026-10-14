@@ -1,0 +1,267 @@
+@import "tailwindcss";
+
+/*
+ * Strict palette: Tailwind's default color palette is removed so raw classes
+ * such as `bg-red-500` cannot appear (design spec §3.2 implementation note).
+ * Use the token classes mapped in `@theme inline` below (bg-surface, text-ink,
+ * text-ink-muted, border-line-strong, bg-hold-bg, ...).
+ */
+@theme {
+  --color-*: initial;
+  --color-white: #FFFFFF;
+  --color-black: #000000;
+}
+
+/* ---------- Histology Lab OS design tokens (light only, v1) ---------- */
+:root {
+  color-scheme: light;
+
+  /* Neutrals */
+  --hlo-canvas: #F4F6F8;
+  --hlo-surface: #FFFFFF;
+  --hlo-surface-subtle: #EDF1F4;
+  --hlo-surface-sunken: #E4E9ED;
+  --hlo-border: #D5DDE3;
+  --hlo-border-strong: #7A8894;
+  --hlo-text: #0F1A23;
+  --hlo-text-secondary: #3E4C59;
+  --hlo-text-muted: #56636F;
+  --hlo-text-disabled: #8A95A0;
+
+  /* Brand + focus */
+  --hlo-brand: #0D5F87;
+  --hlo-brand-hover: #0A4D6E;
+  --hlo-brand-ink: #0A4A6A;
+  --hlo-brand-50: #E8F2F7;
+  --hlo-brand-100: #CFE5EF;
+  --hlo-brand-900: #0E2F42;
+  --hlo-focus: #1F5FD1;
+
+  /* Alert tones: fg = text, bg = tint, border, solid = stripe/icon */
+  --hlo-info-fg: #1D4E89;    --hlo-info-bg: #EAF2FB;    --hlo-info-border: #9DBBE3;    --hlo-info-solid: #2A64B0;
+  --hlo-success-fg: #016807; --hlo-success-bg: #E8F5EB; --hlo-success-border: #9CCDA8; --hlo-success-solid: #016807;
+  --hlo-warning-fg: #8C3A06; --hlo-warning-bg: #FFF5EE; --hlo-warning-border: #EFB283; --hlo-warning-solid: #E36A22; /* solid: stripes/icons only, never text */
+  --hlo-danger-fg: #A1161D;  --hlo-danger-bg: #FDECEC;  --hlo-danger-border: #EEA4A7;  --hlo-danger-solid: #C4232B;
+  --hlo-hold-fg: #6E2B66;    --hlo-hold-bg: #F7ECF5;    --hlo-hold-border: #CFA3C6;    --hlo-hold-solid: #6E2B66;
+
+  /* Doctor identity colors (swatch + header tint). Never put text inside a swatch. */
+  --hlo-dr-teal: #0F9485;   --hlo-dr-teal-tint: #E3F4F1;
+  --hlo-dr-violet: #9A4BD0; --hlo-dr-violet-tint: #F3ECFB;
+  --hlo-dr-amber: #916A0B;  --hlo-dr-amber-tint: #FAF1DC;
+
+  /* PAS (explicit text + icon; yellow echoes the paper system) */
+  --hlo-pas-bg: #FFE45C;
+  --hlo-pas-fg: #1C1700;
+  --hlo-pas-border: #8A7300;
+  --hlo-pas-row: #FFF8D6;
+
+  /* Honesty labels */
+  --hlo-sim-fg: #46525D;
+  --hlo-sim-bg: #F0F2F4;
+  --hlo-sim-border: #7F8B96;
+
+  /* Charts */
+  --hlo-chart-grid: #E4E9ED;
+  --hlo-chart-axis: #7A8894;
+  --hlo-age-1: #62AEDB; /* under 1 h */
+  --hlo-age-2: #3B89B4; /* 1 to 4 h */
+  --hlo-age-3: #235E7F; /* 4 to 8 h */
+  --hlo-age-4: #163F56; /* over 8 h */
+
+  /* Layout */
+  --hlo-banner-h: 28px;
+  --hlo-topbar-h: 52px;
+  --hlo-nav-w: 216px;
+  --hlo-nav-rail-w: 72px;
+  --hlo-identity-h: 56px;
+  --hlo-panel-w: 420px;
+
+  /* Motion */
+  --hlo-duration-fast: 120ms;
+  --hlo-duration-base: 180ms;
+  --hlo-ease: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* Map tokens into Tailwind utilities, e.g. bg-surface, text-ink, text-ink-muted, border-line-strong, bg-hold-bg, rounded-pill, shadow-2 */
+@theme inline {
+  --color-canvas: var(--hlo-canvas);
+  --color-surface: var(--hlo-surface);
+  --color-surface-subtle: var(--hlo-surface-subtle);
+  --color-surface-sunken: var(--hlo-surface-sunken);
+  --color-line: var(--hlo-border);
+  --color-line-strong: var(--hlo-border-strong);
+  --color-ink: var(--hlo-text);
+  --color-ink-secondary: var(--hlo-text-secondary);
+  --color-ink-muted: var(--hlo-text-muted);
+  --color-ink-disabled: var(--hlo-text-disabled);
+  --color-brand: var(--hlo-brand);
+  --color-brand-hover: var(--hlo-brand-hover);
+  --color-brand-ink: var(--hlo-brand-ink);
+  --color-brand-50: var(--hlo-brand-50);
+  --color-brand-100: var(--hlo-brand-100);
+  --color-brand-900: var(--hlo-brand-900);
+  --color-focus: var(--hlo-focus);
+  --color-info-fg: var(--hlo-info-fg);       --color-info-bg: var(--hlo-info-bg);       --color-info-border: var(--hlo-info-border);       --color-info-solid: var(--hlo-info-solid);
+  --color-success-fg: var(--hlo-success-fg); --color-success-bg: var(--hlo-success-bg); --color-success-border: var(--hlo-success-border); --color-success-solid: var(--hlo-success-solid);
+  --color-warning-fg: var(--hlo-warning-fg); --color-warning-bg: var(--hlo-warning-bg); --color-warning-border: var(--hlo-warning-border); --color-warning-solid: var(--hlo-warning-solid);
+  --color-danger-fg: var(--hlo-danger-fg);   --color-danger-bg: var(--hlo-danger-bg);   --color-danger-border: var(--hlo-danger-border);   --color-danger-solid: var(--hlo-danger-solid);
+  --color-hold-fg: var(--hlo-hold-fg);       --color-hold-bg: var(--hlo-hold-bg);       --color-hold-border: var(--hlo-hold-border);       --color-hold-solid: var(--hlo-hold-solid);
+  --color-dr-teal: var(--hlo-dr-teal);       --color-dr-teal-tint: var(--hlo-dr-teal-tint);
+  --color-dr-violet: var(--hlo-dr-violet);   --color-dr-violet-tint: var(--hlo-dr-violet-tint);
+  --color-dr-amber: var(--hlo-dr-amber);     --color-dr-amber-tint: var(--hlo-dr-amber-tint);
+  --color-pas-bg: var(--hlo-pas-bg); --color-pas-fg: var(--hlo-pas-fg); --color-pas-border: var(--hlo-pas-border); --color-pas-row: var(--hlo-pas-row);
+  --color-sim-fg: var(--hlo-sim-fg); --color-sim-bg: var(--hlo-sim-bg); --color-sim-border: var(--hlo-sim-border);
+
+  /* next/font exposes --font-plex-sans and --font-plex-mono on <html> */
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  --text-xs: 0.75rem;    --text-xs--line-height: 1rem;
+  --text-sm: 0.8125rem;  --text-sm--line-height: 1.125rem;
+  --text-base: 0.9375rem; --text-base--line-height: 1.375rem;
+  --text-md: 1.0625rem;  --text-md--line-height: 1.5rem;
+  --text-lg: 1.25rem;    --text-lg--line-height: 1.75rem;
+  --text-xl: 1.5rem;     --text-xl--line-height: 2rem;
+  --text-2xl: 1.875rem;  --text-2xl--line-height: 2.25rem;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+
+  --shadow-1: 0 1px 2px rgb(15 26 35 / 0.06), 0 1px 1px rgb(15 26 35 / 0.04);
+  --shadow-2: 0 4px 12px rgb(15 26 35 / 0.10), 0 1px 3px rgb(15 26 35 / 0.06);
+  --shadow-3: 0 12px 32px rgb(15 26 35 / 0.18), 0 2px 6px rgb(15 26 35 / 0.08);
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    background: var(--hlo-canvas);
+    color: var(--hlo-text);
+    /* keep focused rows clear of sticky bars (WCAG 2.4.11) */
+    scroll-padding-top: calc(var(--hlo-banner-h) + var(--hlo-topbar-h) + var(--hlo-identity-h) + 40px);
+  }
+  body { background: var(--hlo-canvas); font-size: var(--text-base); line-height: var(--text-base--line-height); }
+  :focus-visible { outline: 2px solid var(--hlo-focus); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important; scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* Identifiers: accession, intake, block, slide, CLR/WO/PJ/TRY/RR, MRN, order IDs */
+@utility id-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  letter-spacing: 0.01em;
+  white-space: nowrap; /* identifiers are never truncated or wrapped */
+}
+@utility num-tabular { font-variant-numeric: tabular-nums; } /* table columns and axis ticks only */
+
+/* ---------- Additions beyond spec §3.2 (shared UI foundation) ---------- */
+
+/*
+ * Density (spec §3.1): Compact is the default at 1280px and wider; Comfortable
+ * below 1280px or on touch. The `density-comfortable` class is set on <html>
+ * by an inline script (before paint) and kept in sync by DensitySync.
+ */
+:root {
+  --hlo-row-h: 36px;
+  --hlo-cell-fs: 0.8125rem;
+  --hlo-cell-lh: 1.125rem;
+  --hlo-target-min: 32px;
+  /* Sticky offsets used by the identity bar, table headers and side panel. */
+  --hlo-chrome-h: calc(var(--hlo-banner-h) + var(--hlo-topbar-h));
+}
+.density-comfortable {
+  --hlo-row-h: 48px;
+  --hlo-cell-fs: 0.9375rem;
+  --hlo-cell-lh: 1.375rem;
+  --hlo-target-min: 44px;
+}
+
+/* Tooltip / popover / toast entrance: opacity only, no movement. */
+@keyframes hlo-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@utility animate-fade-in {
+  animation: hlo-fade-in var(--hlo-duration-fast) var(--hlo-ease);
+}
+
+/* Native <dialog> backdrop (tokens only). */
+dialog.hlo-dialog::backdrop {
+  background: rgb(15 26 35 / 0.45);
+}
+
+/* Context-change highlight on the identity bar: static outline, no motion. */
+.hlo-identity-flash {
+  outline: 2px solid var(--hlo-brand);
+  outline-offset: -2px;
+}
+
+/* Windows High Contrast / forced colors: keep the signals that rely on fills visible. */
+@media (forced-colors: active) {
+  .hlo-pas-tag,
+  .hlo-pill,
+  .hlo-chip,
+  .hlo-banner {
+    border: 1px solid CanvasText !important;
+  }
+  .hlo-hold-stripe,
+  .hlo-stripe {
+    forced-color-adjust: none;
+  }
+  .hlo-swatch {
+    forced-color-adjust: none;
+    border: 1px solid CanvasText;
+  }
+}
+
+/* Visible only in print (worklist snapshot header, footers). */
+.print-only {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 12mm;
+  }
+  html,
+  body {
+    background: #FFFFFF !important;
+    scroll-padding-top: 0;
+  }
+  .no-print,
+  [data-shell-chrome] {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  /* Sticky chrome becomes static so it does not repeat or overlap on paper. */
+  .sticky {
+    position: static !important;
+  }
+  main {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+  a {
+    color: inherit !important;
+    text-decoration: none !important;
+  }
+  table {
+    page-break-inside: auto;
+  }
+  tr {
+    page-break-inside: avoid;
+  }
+  thead {
+    display: table-header-group;
+  }
+}

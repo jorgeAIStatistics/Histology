@@ -1,0 +1,51 @@
+{
+  "name": "histology-lab-os",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Histology Lab OS — Histology Redesigned. Synthetic local demonstration of an operational coordination companion for a dermatopathology lab.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "schema": "node scripts/gen-schema-module.mjs",
+    "predev": "node scripts/gen-schema-module.mjs",
+    "dev": "next dev -p 3100",
+    "prebuild": "node scripts/gen-schema-module.mjs",
+    "build": "next build",
+    "start": "next start -p 3100",
+    "typecheck": "node scripts/gen-schema-module.mjs && tsc --noEmit",
+    "db:reset": "node scripts/gen-schema-module.mjs && tsx scripts/reset-db.ts",
+    "pretest": "node scripts/gen-schema-module.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "check": "npm run typecheck && npm run test"
+  },
+  "dependencies": {
+    "@tanstack/react-table": "8.21.3",
+    "better-sqlite3": "12.11.1",
+    "bwip-js": "4.11.4",
+    "clsx": "2.1.1",
+    "lucide-react": "0.577.0",
+    "next": "16.3.8",
+    "radix-ui": "1.8.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "recharts": "3.10.1",
+    "tailwind-merge": "3.7.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0",
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "24.19.2",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "tailwindcss": "4.3.3",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}
