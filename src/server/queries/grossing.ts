@@ -119,9 +119,15 @@ export interface QueueRow {
   pathologist: PathologistRef | null;
   officeName: string | null;
   state: PartStateKey;
-  record: { id: string; recordVersion: number; state: GrossState; sourceUpdateState: SourceUpdateState; updatedAt: string; approvedAt: string | null; blockerCount: number } | null;
+  record: {
+    id: string; recordVersion: number; state: GrossState; sourceUpdateState: SourceUpdateState; updatedAt: string; approvedAt: string | null; blockerCount: number;
+    /** Derived, read-only: who started the record (display name). */
+    grosser: string | null;
+  } | null;
   holds: HoldSummary[];
   otherParts: { designation: string; state: PartStateKey }[];
+  /** Derived, read-only: owner of the open source-entry task for this part, if any. */
+  sourceEntryOwner: string | null;
 }
 
 const QUEUE_ORDER: PartStateKey[] = [
@@ -160,9 +166,13 @@ export function grossingQueue(db: DB): QueueRow[] {
       pathologist: p.assigned_pathologist_id ? { id: p.assigned_pathologist_id, name: p.path_name ?? p.assigned_pathologist_id, color: p.color_token } : null,
       officeName: p.office_name, state: partState(rec, holds, p.status),
       record: rec
-        ? { id: rec.id, recordVersion: rec.record_version, state: rec.state, sourceUpdateState: rec.source_update_state, updatedAt: rec.updated_at, approvedAt: rec.approved_at, blockerCount }
+        ? {
+            id: rec.id, recordVersion: rec.record_version, state: rec.state, sourceUpdateState: rec.source_update_state, updatedAt: rec.updated_at, approvedAt: rec.approved_at, blockerCount,
+            grosser: name(db, rec.grosser_id),
+          }
         : null,
       holds, otherParts: [],
+      sourceEntryOwner: rec?.state === "approved_for_downstream" ? sourceEntryOwnerOf(db, p.id) : null,
     };
   });
   const byAcc = new Map<string, QueueRow[]>();
@@ -174,6 +184,17 @@ export function grossingQueue(db: DB): QueueRow[] {
     .filter((r) => r.state !== "canceled")
     .filter((r) => !r.state.startsWith("approved") || r.state === "approved_pending_entry" || (r.record?.approvedAt ? labDay(r.record.approvedAt) === today : false))
     .sort((a, b) => QUEUE_ORDER.indexOf(a.state) - QUEUE_ORDER.indexOf(b.state) || (a.priority === "rush" ? -1 : 0) - (b.priority === "rush" ? -1 : 0) || a.ref.localeCompare(b.ref));
+}
+
+/** Display name of the owner of the open source-entry task for a part (read-only). */
+function sourceEntryOwnerOf(db: DB, partId: string): string | null {
+  const r = db
+    .prepare(
+      `SELECT s.display_name AS owner FROM task tk LEFT JOIN staff s ON s.id = tk.owner_id
+        WHERE tk.kind = 'source_entry' AND tk.entity_id = ? AND tk.status IN ('open','in_progress') LIMIT 1`,
+    )
+    .get(partId) as { owner: string | null } | undefined;
+  return r?.owner ?? null;
 }
 
 // ------------------------------------------------------------------ source entry queue (Sam)

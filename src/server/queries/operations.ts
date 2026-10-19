@@ -62,6 +62,49 @@ export interface BlockedItem {
   evidenceHref: string;
   /** Clarifications only: the follow-up time has passed (what the "Clarifications overdue" tile counts). */
   overdue?: boolean;
+  /** Derived: stable key for "who holds the next step" (the staff id, or "unassigned-<role words>"); the page's owner filter uses it. */
+  ownerKey: string;
+  /** Derived: the hold or clarification is about patient identity (name, DOB or MRN disagree): the top rung of the severity ladder. */
+  identity?: boolean;
+}
+
+/** Where the bench path stands: intake (provisional orders), each derived worklist stage (parts), delivered (parts). */
+export type PathStageKey = "intake" | Stage;
+
+export interface PathStage {
+  key: PathStageKey;
+  label: string;
+  /** Intake counts provisional intake items (orders); every later stage counts specimen parts. */
+  unit: "order" | "part";
+  count: number;
+  /** How many of `count` sit under an active hold, and which holds. */
+  held: number;
+  holdIds: string[];
+  /** The longest-waiting item at this stage: its latest recorded event (intake: received), age at the demo clock, and reference. Null for delivered or when empty. */
+  oldestSince: string | null;
+  oldestAge: string | null;
+  oldestRef: string | null;
+  /** Derived: the record that shows the longest wait (the intake item, or the case opened at that part). Null when there is no oldest item. */
+  oldestHref: string | null;
+  /** Items at this stage with no recorded event (age Unknown). */
+  unknownAge: number;
+  href: string;
+}
+
+/** Waiting work grouped by who holds the next step, by age. Sorted by name (unassigned last): not a workload or productivity ranking. */
+export interface OwnerQueue {
+  key: string;
+  owner: string;
+  ownerId: string | null;
+  unassigned: boolean;
+  /** Items per age bucket (under 1 h, 1 to 4 h, 4 to 8 h, over 8 h) since the item started waiting. */
+  buckets: [number, number, number, number];
+  unknown: number;
+  total: number;
+  holds: number;
+  oldestSince: string | null;
+  oldestAge: string;
+  href: string;
 }
 
 export interface QueueAgeRow {
@@ -86,6 +129,18 @@ export interface OperationsData {
   freshness: FreshnessSummary;
   queueAge: { rows: QueueAgeRow[]; bucketLabels: readonly string[]; definition: string; partsCounted: number };
   handoffs: { label: string; lines: HandoffLine[] };
+  /** Derived: the bench path, intake to delivered, with counts, holds where they sit and the longest wait per stage. */
+  path: { stages: PathStage[]; definition: string };
+  /** Derived: blocked and waiting items grouped by owner and age (same records as `blocked`). */
+  owners: { rows: OwnerQueue[]; bucketLabels: readonly string[]; definition: string };
+}
+
+const AGE_BUCKET = (minutes: number) => (minutes < 60 ? 0 : minutes < 240 ? 1 : minutes < 480 ? 2 : 3);
+/** Stable owner key for filtering: the staff id, or "unassigned-<role words>" for work nobody holds yet. */
+export function ownerKeyFor(ownerId: string | null, owner: string): string {
+  if (ownerId) return ownerId;
+  const words = owner.toLowerCase().replace(/\bunassigned\b/g, " ").replace(/[^a-z]+/g, "-").replace(/^-+|-+$/g, "");
+  return words ? `unassigned-${words}` : "unassigned";
 }
 
 function count(db: DB, sql: string, ...params: unknown[]): number | null {
@@ -202,16 +257,17 @@ export function getOperations(db: DB): OperationsData {
     caseHref(t.accession_id) ??
     (t.intake_item_id ? `/intake?item=${encodeURIComponent(intakeDisplay.get(t.intake_item_id) ?? t.intake_item_id)}` : null) ??
     (t.entity_type === "clarification" ? `/clarifications?selected=${encodeURIComponent(clrDisplay.get(t.entity_id) ?? t.entity_id)}` : null);
-  const push = (b: Omit<BlockedItem, "age">) => blocked.push({ ...b, age: b.since ? fmtAge(b.since, now) : "Unknown" });
+  const push = (b: Omit<BlockedItem, "age" | "ownerKey">) =>
+    blocked.push({ ...b, age: b.since ? fmtAge(b.since, now) : "Unknown", ownerKey: ownerKeyFor(b.ownerId, b.owner) });
 
   // Holds
   const holds = db
     .prepare(
-      `SELECT h.*, c.display_id AS clr_display, c.state AS clr_state, c.lab_owner_id, c.next_follow_up_at, ii.display_id AS intake_display
+      `SELECT h.*, c.display_id AS clr_display, c.state AS clr_state, c.category AS clr_category, c.lab_owner_id, c.next_follow_up_at, ii.display_id AS intake_display
          FROM hold h LEFT JOIN clarification c ON c.id = h.clarification_id LEFT JOIN intake_item ii ON ii.id = h.intake_item_id
         WHERE h.status = 'active' ORDER BY h.placed_at`,
     )
-    .all() as { id: string; display_id: string; scope_label: string; reason_text: string; blocks: string; clarification_id: string | null; placed_at: string; accession_id: string | null; intake_item_id: string | null; clr_display: string | null; clr_state: string | null; lab_owner_id: string | null; next_follow_up_at: string | null; intake_display: string | null }[];
+    .all() as { id: string; display_id: string; scope_label: string; reason_text: string; blocks: string; clarification_id: string | null; placed_at: string; accession_id: string | null; intake_item_id: string | null; clr_display: string | null; clr_state: string | null; clr_category: string | null; reason_code: string; lab_owner_id: string | null; next_follow_up_at: string | null; intake_display: string | null }[];
   for (const h of holds) {
     let blocksList: string[] = [];
     try {
@@ -233,7 +289,7 @@ export function getOperations(db: DB): OperationsData {
       key: `hold:${h.id}`, category: "holds", item: `${h.display_id} · ${h.scope_label}`, ref: h.display_id, subject: h.scope_label, itemHref,
       blocks: `${h.reason_text}. Blocks ${blocksList.join(", ").replace(/_/g, " ")}.`, nextStep: next,
       owner: t ? ownerOf(t, "") : nameOf(h.lab_owner_id) ?? "Accessioning lead (unassigned)", ownerId: t?.owner_id ?? h.lab_owner_id,
-      since: h.placed_at,
+      since: h.placed_at, identity: h.reason_code === "identity_conflict" || h.clr_category === "identity_conflict",
       evidenceLabel: h.clarification_id ? `${h.clr_display}` : "Case history", evidenceHref: h.clr_display ? `/clarifications?selected=${encodeURIComponent(h.clr_display)}` : `${itemHref}${itemHref.startsWith("/cases/") ? "?tab=history" : ""}`,
     });
   }
@@ -250,7 +306,7 @@ export function getOperations(db: DB): OperationsData {
                    AND NOT EXISTS (SELECT 1 FROM hold h WHERE h.clarification_id = c.id AND h.status = 'active')))
         ORDER BY c.created_at`,
     )
-    .all({ now }) as { id: string; display_id: string; subject_label: string; state: string; lab_owner_id: string | null; next_follow_up_at: string | null; sent_at: string | null; created_at: string; accession_id: string | null; hold_display: string | null }[];
+    .all({ now }) as { id: string; display_id: string; subject_label: string; state: string; category: string; lab_owner_id: string | null; next_follow_up_at: string | null; sent_at: string | null; created_at: string; accession_id: string | null; hold_display: string | null }[];
   for (const c of needClr) {
     const t = taskFor("clarification", c.id);
     if (t) usedTasks.add(t.id);
@@ -261,7 +317,7 @@ export function getOperations(db: DB): OperationsData {
       nextStep: c.state === "answered" ? "Review the office answer" : c.state === "delivery_failed" || c.state === "delivery_unknown" ? "Follow up by phone per local policy (delivery not confirmed, simulated)" : "Send a follow-up (simulated) or escalate",
       owner: t ? ownerOf(t, "") : nameOf(c.lab_owner_id) ?? "Unassigned", ownerId: t?.owner_id ?? c.lab_owner_id,
       since: c.sent_at ?? c.created_at, evidenceLabel: c.display_id, evidenceHref: `/clarifications?selected=${encodeURIComponent(c.display_id)}`,
-      overdue: isOverdue,
+      overdue: isOverdue, identity: c.category === "identity_conflict",
     });
   }
   const overdueTile = tiles.find((t) => t.key === "clarifications_overdue")!;
@@ -363,8 +419,12 @@ export function getOperations(db: DB): OperationsData {
     const href = taskRecordHref(t) ?? "/operations";
     // "Enter approved gross description in source system — D26-04792 part B" → ref "D26-04792", subject "part B · ...".
     const m = /^(.*?) — (\S+)( part [A-Z])?$/.exec(t.title);
-    const ref = m ? m[2] : undefined;
-    const subject = m ? (t.kind === "source_entry" ? `${m[3]?.trim() ?? "case"} · gross description to enter` : `${m[3] ? `${m[3].trim()} · ` : ""}${m[1]}`) : undefined;
+    // Derived, display only: "Review possible related orders REL-0112: ORD-77120 + ORD-77121" → ref "REL-0112", subject "ORD-77120 + ORD-77121".
+    const idm = m ? null : /^(.*?)\s*\b([A-Z][A-Z0-9]{0,4}(?:-[A-Z0-9]+)+)\b:?\s*(.*)$/.exec(t.title);
+    const ref = m ? m[2] : idm ? idm[2] : undefined;
+    const subject = m
+      ? t.kind === "source_entry" ? `${m[3]?.trim() ?? "case"} · gross description to enter` : `${m[3] ? `${m[3].trim()} · ` : ""}${m[1]}`
+      : idm ? idm[3] || idm[1] || undefined : undefined;
     push({
       key: `task:${t.id}`, category: t.kind === "source_entry" ? "source_entry" : t.kind === "clarification_followup" ? "clarifications" : "review",
       item: t.title, ref, subject, itemHref: href,
@@ -445,7 +505,7 @@ export function getOperations(db: DB): OperationsData {
         continue;
       }
       const m = Math.max(0, minutesBetween(since, now));
-      q.buckets[m < 60 ? 0 : m < 240 ? 1 : m < 480 ? 2 : 3] += 1;
+      q.buckets[AGE_BUCKET(m)] += 1;
     }
   }
 
@@ -490,6 +550,75 @@ export function getOperations(db: DB): OperationsData {
   }
   if (!lines.length) lines.push({ text: "No open tasks: nobody is holding a pending handoff right now.", evidence: [{ label: "Blocked work", href: "/operations#blocked" }] });
 
+  // ------------------------------------------------------------ bench path (derived, read-only)
+  // Intake: provisional intake items not yet accessioned (orders). Later stages: parts on today's worklist by derived stage.
+  const intakeItems = db
+    .prepare("SELECT id, display_id, received_at FROM intake_item WHERE status NOT IN ('accessioned','canceled') ORDER BY received_at, display_id")
+    .all() as { id: string; display_id: string; received_at: string | null }[];
+  const intakeHolds = new Map<string, string[]>();
+  for (const h of holds) {
+    if (h.accession_id || !h.intake_item_id) continue;
+    intakeHolds.set(h.intake_item_id, [...(intakeHolds.get(h.intake_item_id) ?? []), h.display_id]);
+  }
+  const oldestIntake = intakeItems.find((i) => i.received_at) ?? null;
+  const pathStages: PathStage[] = [
+    {
+      key: "intake", label: STAGE.intake, unit: "order", count: intakeItems.length,
+      held: intakeItems.filter((i) => intakeHolds.has(i.id)).length,
+      holdIds: intakeItems.flatMap((i) => intakeHolds.get(i.id) ?? []),
+      oldestSince: oldestIntake?.received_at ?? null, oldestAge: oldestIntake?.received_at ? fmtAge(oldestIntake.received_at, now) : null,
+      oldestRef: oldestIntake?.display_id ?? null, oldestHref: oldestIntake ? `/intake?item=${encodeURIComponent(oldestIntake.display_id)}` : null, unknownAge: intakeItems.filter((i) => !i.received_at).length, href: "/intake",
+    },
+  ];
+  for (const stage of [...QUEUE_STAGES, "delivered"] as Stage[]) {
+    const parts = rows.flatMap((r) =>
+      r.parts
+        .filter((p) => p.stage === stage)
+        .map((p) => ({
+          p,
+          ref: `${r.accessionNumber ?? r.provisionalId ?? "Unknown"} part ${p.designation}`,
+          href: r.accessionNumber ? `/cases/${encodeURIComponent(r.accessionNumber)}?part=${encodeURIComponent(p.designation)}` : r.provisionalId ? `/intake?item=${encodeURIComponent(r.provisionalId)}` : null,
+        })),
+    );
+    const waiting = stage === "delivered" ? [] : parts.filter(({ p }) => partSince.has(p.partId));
+    const oldest = waiting.reduce<(typeof waiting)[number] | null>((o, x) => (!o || Date.parse(partSince.get(x.p.partId)!) < Date.parse(partSince.get(o.p.partId)!) ? x : o), null);
+    const oldestSince = oldest ? partSince.get(oldest.p.partId)! : null;
+    const heldParts = parts.filter(({ p }) => p.holds.length > 0);
+    pathStages.push({
+      key: stage, label: STAGE[stage], unit: "part", count: parts.length,
+      held: heldParts.length, holdIds: [...new Set(heldParts.flatMap(({ p }) => p.holds.map((h) => h.displayId)))],
+      oldestSince, oldestAge: oldestSince ? fmtAge(oldestSince, now) : null, oldestRef: oldest?.ref ?? null, oldestHref: oldest?.href ?? null,
+      unknownAge: stage === "delivered" ? 0 : parts.length - waiting.length,
+      href: `/worklist?view=operations&stage=${encodeURIComponent(stage)}`,
+    });
+  }
+
+  // ------------------------------------------------------------ waiting work by owner and age (same records as `blocked`)
+  const ownerMap = new Map<string, OwnerQueue>();
+  for (const b of blocked) {
+    const unassigned = !b.ownerId;
+    const q =
+      ownerMap.get(b.ownerKey) ??
+      ownerMap
+        .set(b.ownerKey, {
+          key: b.ownerKey, owner: b.owner || "Unassigned", ownerId: b.ownerId, unassigned, buckets: [0, 0, 0, 0], unknown: 0, total: 0, holds: 0,
+          oldestSince: null, oldestAge: "Unknown", href: `/operations?owner=${encodeURIComponent(b.ownerKey)}#blocked`,
+        })
+        .get(b.ownerKey)!;
+    q.total += 1;
+    if (b.category === "holds") q.holds += 1;
+    if (!b.since) {
+      q.unknown += 1;
+      continue;
+    }
+    q.buckets[AGE_BUCKET(Math.max(0, minutesBetween(b.since, now)))] += 1;
+    if (!q.oldestSince || Date.parse(b.since) < Date.parse(q.oldestSince)) {
+      q.oldestSince = b.since;
+      q.oldestAge = fmtAge(b.since, now);
+    }
+  }
+  const ownerRows = [...ownerMap.values()].sort((a, b) => Number(a.unassigned) - Number(b.unassigned) || a.owner.localeCompare(b.owner));
+
   return {
     generatedAt: now,
     note: `Computed from synthetic demo data at demo clock ${fmtSmart(now, now)} ET. Not observed lab performance.`,
@@ -504,5 +633,15 @@ export function getOperations(db: DB): OperationsData {
       partsCounted,
     },
     handoffs: { label: "Who holds each open task. Computed by fixed rules from open tasks and holds (deterministic demo), not AI.", lines },
+    path: {
+      stages: pathStages,
+      definition:
+        "Orders at intake (wait since received), parts on today's worklist after it (wait since the part's latest recorded event).",
+    },
+    owners: {
+      rows: ownerRows,
+      bucketLabels: AGE_BUCKET_LABELS,
+      definition: "Every blocked or waiting item below, by who holds its next step and how long it has waited. Sorted by name, unassigned last; not a workload or productivity measure.",
+    },
   };
 }

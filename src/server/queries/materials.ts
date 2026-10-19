@@ -11,6 +11,7 @@ import {
   custodyFacts, custodyHistory, ITEM_STATUS_LABEL, LOCATION_CAPTION, locationCard, splitLocation, type CustodyEventView, type CustodyFacts, type LocationCard,
 } from "@/server/domain/retrieval";
 import { SLIDE_DISPOSITION_LABEL } from "@/server/domain/workorder";
+import { holdsBlocking, scopesForSlide } from "@/server/domain/holds";
 
 /**
  * Read models for /materials (print jobs, trays, retrieval). Server components
@@ -598,6 +599,8 @@ export interface TrayDetail {
   pathologistColor: string | null;
   /** Latest print job per expected slide (for "label problem? reprint" links to the Print jobs tab). */
   printJobs: Record<string, string>;
+  /** Derived, read only: active holds that stop tray delivery, per expected slide (drawn hatched on the tray). */
+  holds: Record<string, { displayId: string; scopeLabel: string; reason: string }[]>;
 }
 
 export function getTrayDetail(db: DB, idOrDisplay: string): TrayDetail | null {
@@ -615,7 +618,12 @@ export function getTrayDetail(db: DB, idOrDisplay: string): TrayDetail | null {
     .all(t.id) as { target_id: string; display_id: string }[];
   const printJobs: Record<string, string> = {};
   for (const j of jobs) printJobs[j.target_id] = j.display_id; // later rows overwrite: newest wins
-  return { view, bench: benchSlidesFor(db, view), pathologistColor: t.color_token, printJobs };
+  const holds: TrayDetail["holds"] = {};
+  for (const e of view.expected) {
+    const blocking = holdsBlocking(db, "tray_delivery", scopesForSlide(db, e.slideId));
+    if (blocking.length) holds[e.slideId] = blocking.map((h) => ({ displayId: h.display_id, scopeLabel: h.scope_label, reason: h.reason_text }));
+  }
+  return { view, bench: benchSlidesFor(db, view), pathologistColor: t.color_token, printJobs, holds };
 }
 
 /** Pathologists and how many slides are ready for a new tray — the same rules tray.open applies. */

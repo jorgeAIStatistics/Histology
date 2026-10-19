@@ -23,6 +23,7 @@ import {
   type WorklistView,
 } from "@/components/worklist/views";
 import { partsText, tidyPlurals } from "@/components/worklist/format";
+import { encodeLabel, namespaceCode } from "@/lib/identifiers";
 
 // ---------------------------------------------------------------- types
 
@@ -161,6 +162,11 @@ export interface WorklistRow {
   changeSummaries: string[];
   routing: { status: string; explanation: string } | null;
   openClarifications: number;
+  /**
+   * Derived, read only: the case label's DataMatrix payload (encodeLabel, kind C), so the side panel can set the
+   * case as its printed label. Null for intake items, which have no official number.
+   */
+  labelPayload: string | null;
 }
 
 export interface WorklistGroup {
@@ -193,6 +199,21 @@ export interface WorklistData {
   groups: WorklistGroup[];
   totals: { inScope: number; shown: number; allCases: number };
   doctors: { id: string; name: string; colorToken: string | null }[];
+  /**
+   * The latest snapshot this user printed or downloaded of this view (derived, read only), and how many rows
+   * in the view's scope changed after it, so the screen can say what the paper copy no longer shows. Null when
+   * the user has never taken one.
+   */
+  lastSnapshot: LastSnapshot | null;
+}
+
+export interface LastSnapshot {
+  displayId: string;
+  seq: number;
+  generatedAt: string;
+  format: string;
+  /** Rows in the view's scope (any filter) with a new, changed or canceled entry after the snapshot's version. */
+  changedRows: number;
 }
 
 // ---------------------------------------------------------------- source freshness
@@ -423,6 +444,7 @@ function mrnLabel(mrn: string, tenant: string): string {
 interface AccRow {
   id: string;
   accession_number: string;
+  namespace: string;
   assigned_pathologist_id: string | null;
   priority: string;
   received_day: string;
@@ -486,7 +508,7 @@ export function loadWorklistRows(db: DB, ackedSeq: number, now: string, opts: Lo
   const one = opts.accessionId ?? null;
   const accessions = db
     .prepare(
-      `SELECT a.id, a.accession_number, a.assigned_pathologist_id, a.priority, a.received_day, a.case_status, a.issued_at, a.updated_at,
+      `SELECT a.id, a.accession_number, a.namespace, a.assigned_pathologist_id, a.priority, a.received_day, a.case_status, a.issued_at, a.updated_at,
               o.name AS office_name, c.display_name AS clinician_name, c.credential AS clinician_credential,
               p.family_name, p.given_name, p.source_mrn, t.name AS tenant_name
          FROM accession a
@@ -697,6 +719,7 @@ export function loadWorklistRows(db: DB, ackedSeq: number, now: string, opts: Lo
       change: tag.change, changeTags: tag.tags, changeSummaries: tag.summaries,
       routing: { status: ROUTING_STATUS.exception, explanation: e.explanation },
       openClarifications: (db.prepare("SELECT COUNT(*) n FROM clarification WHERE intake_item_id = ? AND state NOT IN ('resolved','canceled')").get(e.id) as { n: number }).n,
+      labelPayload: null,
     });
   }
   return rows;
@@ -857,6 +880,7 @@ function buildCaseRow(
     changeSummaries: tag.summaries,
     routing: null,
     openClarifications,
+    labelPayload: encodeLabel({ kind: "C", namespace: namespaceCode(a.namespace), accession: a.accession_number }),
   };
 }
 
@@ -1006,7 +1030,23 @@ export function getWorklist(db: DB, opts: GetWorklistOptions): WorklistData {
     groups,
     totals: { inScope: inScope.length, shown: shown.length, allCases: all.length },
     doctors,
+    lastSnapshot: loadLastSnapshot(db, opts.staffId, opts.view, inScope),
   };
+}
+
+/** The user's latest snapshot of this view and how many in-scope rows changed after its version (read only). */
+function loadLastSnapshot(db: DB, staffId: string, view: WorklistView, inScope: WorklistRow[]): LastSnapshot | null {
+  const snap = db
+    .prepare("SELECT display_id, seq, generated_at, format FROM worklist_snapshot WHERE generated_by = ? AND view = ? ORDER BY seq DESC, generated_at DESC, display_id DESC LIMIT 1")
+    .get(staffId, view) as { display_id: string; seq: number; generated_at: string; format: string } | undefined;
+  if (!snap) return null;
+  const keys = new Set(inScope.map((r) => (r.kind === "case" ? `a:${r.id}` : `i:${r.id}`)));
+  const changed = new Set<string>();
+  for (const c of db.prepare("SELECT accession_id, intake_item_id FROM worklist_change WHERE seq > ?").all(snap.seq) as { accession_id: string | null; intake_item_id: string | null }[]) {
+    const key = c.accession_id ? `a:${c.accession_id}` : c.intake_item_id ? `i:${c.intake_item_id}` : null;
+    if (key && keys.has(key)) changed.add(key);
+  }
+  return { displayId: snap.display_id, seq: snap.seq, generatedAt: snap.generated_at, format: snap.format, changedRows: changed.size };
 }
 
 /** Find one row on today's worklist (any view, unfiltered), as one user sees it. */

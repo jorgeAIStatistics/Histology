@@ -1,27 +1,22 @@
 import Link from "next/link";
+import { FlaskConical } from "lucide-react";
 
 /**
- * Demo-mode banner (spec §5.1): always visible, cannot be dismissed.
- * brand-900 background, white text, small yellow "DEMO" tag. role="note".
+ * Demo status: always visible in the top bar, cannot be dismissed. States the
+ * one fact every screen depends on (synthetic data, simulated connectors) once,
+ * so individual rows do not have to repeat it.
  */
 export function DemoBanner() {
   return (
-    <div
-      role="note"
-      aria-label="Demo mode"
-      className="flex h-[var(--hlo-banner-h)] items-center gap-2 overflow-hidden whitespace-nowrap bg-brand-900 px-4 text-xs text-white"
-    >
-      <span className="inline-flex h-4 items-center rounded-sm bg-pas-bg px-1 text-xs font-semibold leading-none text-pas-fg">DEMO</span>
-      <span className="min-w-0 truncate">
-        <span>Demo mode. Synthetic data only. No real patients.</span>
-        <span className="max-lg:hidden"> Source system, notifications, printer and AI are simulated.</span>
-        <span className="lg:hidden"> All connectors simulated.</span>
-      </span>
+    <div role="note" aria-label="Demo mode" className="flex shrink-0 items-center">
       <Link
         href="/settings?tab=integration"
-        className="shrink-0 rounded-sm font-medium text-white underline underline-offset-2 hover:text-brand-100 focus-visible:outline-white"
+        title="Synthetic data only. No real patients. Source system, notifications, printers, scanners and the assistant are simulated."
+        className="inline-flex h-7 items-center gap-1.5 rounded-pill bg-shell-fg px-2.5 text-sm font-semibold text-shell hover:bg-white/90"
       >
-        What is simulated?
+        <FlaskConical className="size-3.5" aria-hidden />
+        Synthetic<span className="max-[1535px]:sr-only"> demo</span>
+        <span className="sr-only">: what is simulated?</span>
       </Link>
     </div>
   );

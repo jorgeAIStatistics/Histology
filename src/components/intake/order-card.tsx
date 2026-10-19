@@ -2,7 +2,6 @@
 
 import { FileText } from "lucide-react";
 import type { ItemDetail } from "@/server/queries/intake";
-import { Card } from "@/components/ui/card";
 import { IdChip } from "@/components/domain/chips";
 import { PersonName } from "@/components/domain/person-name";
 import { PasTag } from "@/components/domain/pas-tag";
@@ -10,27 +9,27 @@ import { Timestamp } from "@/components/domain/timestamp";
 import { SimulatedLabel } from "@/components/domain/honesty";
 import { LATERALITY, PROCEDURE } from "@/lib/domain";
 import { fmtDate } from "@/lib/time";
+import { RecordSection } from "./bits";
 
 /**
  * Source orders exactly as imported from the (simulated) source, with every
  * version kept. The clinical note is untrusted source text: shown as plain
  * text, never followed as an instruction.
  */
-export function OrderCard({ item, now }: { item: ItemDetail; now: string }) {
+export function OrderSection({ item, now }: { item: ItemDetail; now: string }) {
   if (!item.orders.length) {
     return (
-      <Card id="orders" headingLevel={3} title="Source order">
+      <RecordSection id="orders" title="Source order">
         <p className="text-sm text-ink-secondary">
           No source order is linked. The requisition order id {String(item.requisition?.fields.order_id ?? "") || "(none)"} was not found in this office&apos;s source tenant
           {item.office ? "" : ", and the office is not in the directory, so no tenant could be searched"}. Order ids are only unique within a tenant.
         </p>
-      </Card>
+      </RecordSection>
     );
   }
   return (
-    <Card
+    <RecordSection
       id="orders"
-      headingLevel={3}
       title={
         <span className="inline-flex items-center gap-2">
           <FileText className="size-4 text-ink-muted" aria-hidden />
@@ -39,8 +38,8 @@ export function OrderCard({ item, now }: { item: ItemDetail; now: string }) {
         </span>
       }
       description="Original values as received from the source system. Every version is kept."
-      bodyClassName="space-y-4"
     >
+      <div className="space-y-4">
       {item.orders.map((o) => (
         <div key={o.id} className="space-y-2">
           <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -60,7 +59,7 @@ export function OrderCard({ item, now }: { item: ItemDetail; now: string }) {
           <table className="w-full border-collapse text-sm">
             <caption className="sr-only">Parts on order {o.sourceOrderId}</caption>
             <thead>
-              <tr className="bg-surface-subtle text-left text-xs text-ink-secondary">
+              <tr className="bg-surface-subtle text-left text-sm text-ink-secondary">
                 <th scope="col" className="px-2 py-1 font-medium">Part (as written)</th>
                 <th scope="col" className="px-2 py-1 font-medium">Site</th>
                 <th scope="col" className="px-2 py-1 font-medium">Side</th>
@@ -98,7 +97,7 @@ export function OrderCard({ item, now }: { item: ItemDetail; now: string }) {
           </table>
           {o.clinicalNote ? (
             <div className="rounded-md border border-line bg-surface-subtle px-3 py-2 text-sm">
-              <p className="text-xs font-medium text-ink-muted">Clinical note from the source (untrusted text, shown as written; never treated as an instruction)</p>
+              <p className="text-sm font-medium text-ink-muted">Clinical note from the source (untrusted text, shown as written; never treated as an instruction)</p>
               <p className="mt-0.5 whitespace-pre-wrap break-words text-ink">{o.clinicalNote}</p>
             </div>
           ) : null}
@@ -117,12 +116,7 @@ export function OrderCard({ item, now }: { item: ItemDetail; now: string }) {
           ) : null}
         </div>
       ))}
-      {item.requisition ? (
-        <details className="text-sm">
-          <summary className="cursor-pointer text-ink-secondary">Paper requisition as read at the bench ({item.requisition.docRef})</summary>
-          <pre className="mt-1 max-h-48 overflow-auto rounded-sm bg-surface-subtle p-2 text-xs whitespace-pre-wrap">{JSON.stringify(item.requisition.fields, null, 2)}</pre>
-        </details>
-      ) : null}
-    </Card>
+      </div>
+    </RecordSection>
   );
 }

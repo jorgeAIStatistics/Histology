@@ -26,6 +26,7 @@ import {
   type TimingItem,
 } from "@/server/queries/insights";
 import { BLANK_INPUTS, ILLUSTRATIVE_EXAMPLE, computeScenario, type ScenarioInputs } from "@/components/insights/scenario-math";
+import { checkText, missingRecordText, recordsDoneText } from "@/components/demo/content";
 
 const STEPS: DemoStepNumber[] = [1, 2, 3, 4, 5, 6, 7, 8];
 const registered = new Set(listCommands().map((c) => c.name));
@@ -270,6 +271,25 @@ describe("guided demo: step runner safety", () => {
     const res = run(db, STAFF.tanya, "demo.runStep", { step: 9 });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error.code).toBe("VALIDATION");
+  });
+
+  it("the guide's rail and step chip count the same record checks, and a missing check is named as a record, not claimed", () => {
+    const db = testDb();
+    must<DemoStepResult>(db, STAFF.tanya, "demo.runStep", { step: 8 }); // the run finishes; the step's record check does not
+    const st = demoStatus(db);
+    const s8 = st.steps.find((s) => s.step === 8)!;
+    // Step 8's one server check is the earlier steps' outcomes; the guide rewords it as a condition (checkText).
+    expect(s8.checks.map((c) => c.label)).toEqual(["Steps 1 to 7 reached their outcomes; Operations now shows what is still blocked"]);
+    expect(checkText(8, s8.checks[0].label)).toBe("Steps 1 to 7 reach their outcomes in the records; Operations then shows what is still blocked");
+    expect(recordsDoneText(s8.checks)).toBe("0 of 1 check done");
+    expect(missingRecordText(s8, st.steps)).toBe("Outcomes of steps 1 to 7 (0 of 7 in the records so far)");
+    // Other steps keep their own labels; more than one open check points to the Progress list.
+    const s1 = st.steps.find((s) => s.step === 1)!;
+    expect(checkText(1, s1.checks[0].label)).toBe(s1.checks[0].label);
+    expect(recordsDoneText(s1.checks)).toBe(`0 of ${s1.checks.length} checks done`);
+    expect(missingRecordText(s1, st.steps)).toBe(`${s1.checks[0].label}, and ${s1.checks.length - 1} more under Progress`);
+    // Every check in: nothing is named as missing.
+    expect(missingRecordText({ ...s1, state: "done", checks: s1.checks.map((c) => ({ ...c, done: true })) }, st.steps)).toBeNull();
   });
 });
 

@@ -1,8 +1,8 @@
 "use client";
 
-import type { ReactNode } from "react";
-import { Printer } from "lucide-react";
-import { cn } from "@/lib/cn";
+import { useEffect, useState, type ReactNode, type RefObject } from "react";
+import { ChevronDown, Printer, ScanLine } from "lucide-react";
+import { Kbd } from "@/components/ui/kbd";
 import { StatusPill } from "@/components/ui/status-pill";
 import { SimulatedLabel } from "@/components/domain/honesty";
 import { useActor, isReadOnlyRole } from "@/lib/client/shell-context";
@@ -14,14 +14,15 @@ export function printerName(name: string): string {
   return name.replace(/ \(simulated\)$/i, "");
 }
 
-/** Printer status: name and state in words, e.g. "Slide printer 1  [Ready (simulated)]" (spec §6.5). */
+/** Printer status: name and state in words, e.g. "Slide printer 1  [Ready]"; the strip says "Simulated" once for the group (spec §6.5). */
 export function PrinterChip({ name, status, statusLabel, queued, unknown }: { name: string; status: string; statusLabel: string; queued: number; unknown: number }) {
-  const tone = status === "online" ? "success" : status === "offline" ? "danger" : "warning";
+  // An unavailable source is amber on the severity ladder (red is kept for patient identity).
+  const tone = status === "online" ? "success" : "warning";
   return (
     <span className="inline-flex flex-wrap items-center gap-1.5 whitespace-nowrap">
       <span className="text-sm font-medium text-ink">{printerName(name)}</span>
       <StatusPill tone={tone} size="sm">
-        {statusLabel}
+        {statusLabel.replace(/ \(simulated\)$/i, "")}
       </StatusPill>
       {queued > 0 ? <span className="text-xs text-ink-secondary">{queued} queued</span> : null}
       {unknown > 0 ? <span className="text-xs font-medium text-warning-fg">{unknown} unknown outcome</span> : null}
@@ -30,7 +31,7 @@ export function PrinterChip({ name, status, statusLabel, queued, unknown }: { na
 }
 
 /** One row with every printer's state, plus the Simulated label once for the group. */
-export function PrinterStrip({ children, controls }: { children: ReactNode; controls?: ReactNode }) {
+export function PrinterStrip({ children }: { children: ReactNode }) {
   return (
     <section aria-label="Label printers" className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-line bg-surface px-3 py-2">
       <span className="inline-flex items-center gap-1.5 text-sm text-ink-secondary">
@@ -39,33 +40,180 @@ export function PrinterStrip({ children, controls }: { children: ReactNode; cont
         <SimulatedLabel connector="printers" size="xs" />
       </span>
       {children}
-      {controls}
     </section>
   );
 }
 
 /**
- * Sticky context bar for a tray or retrieval request (spec §5.3: identity
- * stays visible while scanning and deciding). Not a case identity bar: a tray
- * or request spans several cases, so the context is the tray/request itself.
+ * Bench frame (tray, retrieval): at 1024px wide and more than 560px tall the
+ * record band is pinned, the work sits on the left and the decision column is
+ * pinned on the right. In the shared `stacked:` variant (a 1024 bench tablet in
+ * portrait, 200% browser zoom of a bench screen, a short window) the frame
+ * becomes one page-scrolling stack in DOM (and tab) order: band, decision, then
+ * the material, and only the top bar stays pinned. The decision column comes
+ * first in the DOM for that reason; the frame places it on the right.
  */
-export function ContextBar({ label, children, className, bleed }: { label: string; children: ReactNode; className?: string; bleed?: boolean }) {
+export const BENCH_GRID =
+  "grid grid-cols-[minmax(0,1fr)_var(--dc-w)] gap-4 px-6 py-4 max-xl:px-4 [--dc-w:300px] xl:[--dc-w:320px] min-[1400px]:[--dc-w:340px] stacked:grid-cols-1";
+export const BENCH_DECISION = "col-start-2 row-start-1 stacked:col-start-auto stacked:row-start-auto";
+export const BENCH_WORK = "col-start-1 row-start-1 stacked:col-start-auto stacked:row-start-auto";
+
+/** The record band (tray, retrieval request): pinned under the top bar in the bench frame only. */
+export const BENCH_BAND =
+  "sticky top-[var(--hlo-chrome-h)] z-20 flex min-h-[var(--hlo-identity-h)] flex-wrap items-center gap-x-6 gap-y-2 border-b border-line bg-surface px-6 py-2 max-xl:gap-x-4 max-xl:px-4 stacked:static";
+
+/**
+ * The decision column stays in view while scanning in the bench frame: pinned
+ * under the top bar and the record band, no taller than what is left of the
+ * viewport below the page's first rows, so its action is always visible.
+ */
+export const STICKY_COLUMN = "sticky top-[calc(var(--hlo-chrome-h)+6.5rem)] max-h-[calc(100vh-17.5rem)] stacked:static stacked:max-h-none";
+
+/**
+ * Keeps a pinned decision column inside the viewport: its height is what is
+ * left below its current top (the record band can wrap to two rows after a
+ * scan, and the column gains room once it is pinned). Without script, or in
+ * the stacked page where it is not pinned, STICKY_COLUMN's limit applies.
+ */
+export function useFitColumn(ref: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    let frame = 0;
+    const fit = () => {
+      frame = 0;
+      if (getComputedStyle(el).position !== "sticky") {
+        el.style.maxHeight = "";
+        return;
+      }
+      el.style.maxHeight = `${Math.max(280, Math.floor(window.innerHeight - el.getBoundingClientRect().top - 16))}px`;
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(fit);
+    };
+    fit();
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    const ro = new ResizeObserver(schedule);
+    ro.observe(document.body);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      ro.disconnect();
+      el.style.maxHeight = "";
+    };
+  }, [ref]);
+}
+
+/**
+ * A short scrolling region of a pinned decision column never shows half a line
+ * or half a button: when its bottom edge cuts through a unit (an element marked
+ * data-cut-unit: a row, a line of text, a row of actions), an opaque cover hides
+ * it from its top. The cue below says how many rows (data-cut-row) start under
+ * the cover, or "More below" when only the rest of a row is hidden. In the
+ * stacked page the region does not scroll and nothing is cut. `key` changes
+ * when the content does.
+ */
+export interface Cut {
+  /** Rows that start under the cover or further down. */
+  rows: HTMLElement[];
+  /** The first unit the edge cuts through or hides (what the cue brings into view). */
+  first: HTMLElement | null;
+  /** Height of the cover, px from the region's bottom edge. */
+  cover: number;
+}
+
+const NO_CUT: Cut = { rows: [], first: null, cover: 0 };
+
+export function useCutBelow(root: RefObject<HTMLDivElement | null>, key: string): Cut {
+  const [state, setState] = useState<Cut>(NO_CUT);
+  useEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const box = el.getBoundingClientRect();
+      const scrolls = el.scrollHeight > el.clientHeight + 1;
+      const first = scrolls ? ([...el.querySelectorAll<HTMLElement>("[data-cut-unit]")].find((u) => u.getBoundingClientRect().bottom > box.bottom + 0.5) ?? null) : null;
+      const coverTop = first ? Math.max(box.top, first.getBoundingClientRect().top) : box.bottom;
+      const rows = first ? [...el.querySelectorAll<HTMLElement>("[data-cut-row]")].filter((r) => r.getBoundingClientRect().top >= coverTop - 0.5) : [];
+      const cover = first ? Math.max(0, Math.round(box.bottom - coverTop)) : 0;
+      setState((prev) =>
+        prev.first === first && prev.cover === cover && prev.rows.length === rows.length && prev.rows.every((r, i) => r === rows[i]) ? prev : first ? { rows, first, cover } : NO_CUT,
+      );
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(measure);
+    };
+    measure();
+    el.addEventListener("scroll", schedule, { passive: true });
+    const ro = new ResizeObserver(schedule);
+    ro.observe(el);
+    for (const child of Array.from(el.children)) ro.observe(child);
+    window.addEventListener("resize", schedule);
+    return () => {
+      cancelAnimationFrame(frame);
+      el.removeEventListener("scroll", schedule);
+      ro.disconnect();
+      window.removeEventListener("resize", schedule);
+    };
+  }, [root, key]);
+  return state;
+}
+
+/** The opaque cover over a cut unit (see useCutBelow). Place it after the scroller, inside a relative wrapper. */
+export function CutCover({ height, scroller }: { height: number; scroller: RefObject<HTMLDivElement | null> }) {
+  return height ? (
+    <div aria-hidden className="absolute inset-x-0 bottom-0 bg-surface" style={{ height }} onWheel={(e) => scroller.current?.scrollBy({ top: e.deltaY })} />
+  ) : null;
+}
+
+/**
+ * "2 more items below" (or "More below"): brings the first cut unit into view and moves focus to
+ * its first control. `describe` words the rows when they are not all of one kind (it returns the
+ * whole cue, e.g. "3 to pick and 1 not on this request below"), so the cue agrees with the headings.
+ */
+export function CutCue({ cut, noun, describe }: { cut: Cut; noun: [string, string]; describe?: (rows: HTMLElement[]) => string | null }) {
+  if (!cut.first) return null;
+  const show = () => {
+    const target = cut.first;
+    if (!target) return;
+    target.scrollIntoView({ block: "nearest" });
+    const control = target.matches("button, a[href]") ? target : target.querySelector<HTMLElement>("button, a[href], input, select, textarea");
+    control?.focus({ preventScroll: true });
+  };
+  const words = cut.rows.length ? (describe?.(cut.rows) ?? `${cut.rows.length} more ${cut.rows.length === 1 ? noun[0] : noun[1]} below`) : "More below";
   return (
-    <section
-      aria-label={label}
-      className={cn(
-        "sticky top-[var(--hlo-chrome-h)] z-20 flex min-h-[var(--hlo-identity-h)] flex-wrap items-center gap-x-3 gap-y-1.5 bg-surface py-2",
-        bleed ? "-mx-6 border-b border-line px-6 max-xl:-mx-4 max-xl:px-4" : "rounded-md border border-line px-3 shadow-1",
-        className,
-      )}
+    <button
+      type="button"
+      onClick={show}
+      className="flex min-h-[max(2rem,var(--hlo-target-min))] shrink-0 items-center justify-center gap-1.5 border-t border-line text-sm font-medium text-brand hover:bg-brand-50"
     >
-      {children}
-    </section>
+      <ChevronDown className="size-4" aria-hidden />
+      {words}
+    </button>
   );
 }
 
-export function Divider() {
-  return <span aria-hidden className="h-5 w-px shrink-0 bg-line" />;
+/**
+ * What a scan does here and where the scan field is, said the same way on every
+ * scanning tab (tray, retrieval): one bound line, so "[/] goes to" never splits.
+ */
+export function ScanHint({ lead }: { lead: string }) {
+  return (
+    <p className="flex min-w-0 flex-1 items-start gap-2 text-sm text-ink">
+      <ScanLine className="mt-0.5 size-4 shrink-0 text-brand" aria-hidden />
+      <span>
+        <span className="font-semibold">{lead}</span>{" "}
+        <span className="whitespace-nowrap">
+          <Kbd>/</Kbd> goes to
+        </span>{" "}
+        the scan field.
+      </span>
+    </p>
+  );
 }
 
 /** Read-only demo roles: hide/disable actions with this reason. */
@@ -74,9 +222,12 @@ export function useReadOnly(): string | null {
   return isReadOnlyRole(actor.role) ? "Read only: this demo role can view but not change records." : null;
 }
 
-/** Map a failed command to a scan-field result line (nothing changed). */
-export function failureToScan(error: CommandFailure): ScanOutcome {
-  return { tone: "danger", alert: true, message: `${error.message}${/nothing (was )?changed/i.test(error.message) ? "" : " Nothing was changed."}` };
+/**
+ * Map a failed command to a scan-field result line (nothing changed). A failure
+ * is amber on the severity ladder; red is kept for patient identity only.
+ */
+export function failureToScan(error: CommandFailure, sound: "mismatch" | null = null): ScanOutcome {
+  return { tone: "warning", alert: true, sound, message: `${error.message}${/nothing (was )?changed/i.test(error.message) ? "" : " Nothing was changed."}` };
 }
 
 export function SectionTitle({ children, aside, id }: { children: ReactNode; aside?: ReactNode; id?: string }) {

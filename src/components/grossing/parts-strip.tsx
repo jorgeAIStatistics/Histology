@@ -2,47 +2,59 @@
 
 import Link from "next/link";
 import type { MouseEvent } from "react";
-import { CircleCheck, CircleDashed, CirclePause, Clock, TriangleAlert } from "lucide-react";
+import { Check, Circle, CircleDashed, CirclePause, ClipboardCheck, Hourglass, TriangleAlert, UserCheck, XCircle } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { IdText } from "@/components/domain/id-text";
 import type { PartStateKey } from "@/server/queries/grossing";
 
-const LABEL: Record<PartStateKey, string> = {
+/** Part state in words (the link text starts "Part B: <state>"). */
+export const PART_STATE_LABEL: Record<PartStateKey, string> = {
   awaiting: "Awaiting grossing",
   on_hold: "On hold",
   draft: "Gross draft",
   needs_clarification: "Needs clarification",
   operator_reviewed: "Operator reviewed",
-  approved_pending_entry: "Approved for downstream use",
-  approved_entered: "Approved for downstream use",
-  approved_acknowledged: "Approved for downstream use",
+  approved_pending_entry: "Approved, source entry pending",
+  approved_entered: "Approved, entered (staff attested)",
+  approved_acknowledged: "Approved, source acknowledged (simulated)",
   canceled: "Canceled",
 };
 
-const ICON: Record<PartStateKey, typeof Clock> = {
-  awaiting: Clock,
-  on_hold: CirclePause,
-  draft: CircleDashed,
-  needs_clarification: TriangleAlert,
-  operator_reviewed: CircleDashed,
-  approved_pending_entry: CircleCheck,
-  approved_entered: CircleCheck,
-  approved_acknowledged: CircleCheck,
-  canceled: CircleDashed,
-};
+/**
+ * Icon on the severity ladder: amber only for "data may be wrong", hatched pause for a hold, quiet check when done.
+ * Every record state has its own icon: reviewed (clipboard check), source entry pending (hourglass), entered by staff
+ * attestation (person check, as in the source-entry view), acknowledged by the simulated source (check).
+ */
+export function PartStateIcon({ state, className }: { state: PartStateKey; className?: string }) {
+  const c = cn("size-4 shrink-0", className);
+  switch (state) {
+    case "on_hold":
+      return <CirclePause className={cn(c, "text-hold-solid")} aria-hidden />;
+    case "needs_clarification":
+      return <TriangleAlert className={cn(c, "text-warning-solid")} aria-hidden />;
+    case "draft":
+      return <CircleDashed className={cn(c, "text-ink-muted")} aria-hidden />;
+    case "operator_reviewed":
+      return <ClipboardCheck className={cn(c, "text-ink-secondary")} aria-hidden />;
+    case "approved_pending_entry":
+      return <Hourglass className={cn(c, "text-ink-muted")} aria-hidden />;
+    case "approved_entered":
+      return <UserCheck className={cn(c, "text-ink-secondary")} aria-hidden />;
+    case "approved_acknowledged":
+      return <Check className={cn(c, "text-ink-muted")} aria-hidden />;
+    case "canceled":
+      return <XCircle className={cn(c, "text-ink-muted")} aria-hidden />;
+    default:
+      return <Circle className={cn(c, "text-ink-muted")} aria-hidden />;
+  }
+}
 
-const TONE: Record<PartStateKey, string> = {
-  awaiting: "border-line-strong bg-surface text-ink",
-  on_hold: "border-hold-border bg-hold-bg text-hold-fg",
-  draft: "border-line-strong bg-surface text-ink",
-  needs_clarification: "border-warning-border bg-warning-bg text-warning-fg",
-  operator_reviewed: "border-info-border bg-info-bg text-info-fg",
-  approved_pending_entry: "border-success-border bg-success-bg text-success-fg",
-  approved_entered: "border-success-border bg-success-bg text-success-fg",
-  approved_acknowledged: "border-success-border bg-success-bg text-success-fg",
-  canceled: "border-line bg-surface-subtle text-ink-muted",
-};
-
-/** One chip per part of the case, so a finished part never reads as a finished case. */
+/**
+ * Every part of the case with its own state, so a finished part never reads as a finished case. The current part is
+ * set in hematoxylin (the selected state); a held part carries the hold hatch. The state is written out in full at
+ * every width (a touch tablet never shows a title): when the strip does not fit beside the heading it wraps to its
+ * own row instead of shortening the words.
+ */
 export function PartsStrip({
   parts,
   currentPartId,
@@ -54,12 +66,11 @@ export function PartsStrip({
 }) {
   return (
     <nav aria-label="Parts of this case">
-      <ul className="flex flex-wrap gap-2">
+      <ul className="flex flex-wrap gap-1.5">
         {parts.map((p) => {
-          const Icon = ICON[p.state];
           const href = `/grossing?part=${encodeURIComponent(p.ref)}`;
           const current = p.partId === currentPartId;
-          const extra = p.state === "on_hold" && p.holdIds.length ? ` (${p.holdIds.join(", ")})` : p.state === "approved_pending_entry" ? " · source entry pending" : p.state === "approved_entered" ? " · entered (staff attested)" : p.state === "approved_acknowledged" ? " · source acknowledged (simulated)" : "";
+          const held = p.state === "on_hold";
           return (
             <li key={p.partId}>
               <Link
@@ -67,16 +78,20 @@ export function PartsStrip({
                 onClick={onNavigate?.(href)}
                 aria-current={current ? "page" : undefined}
                 className={cn(
-                  "inline-flex min-h-8 items-center gap-1.5 rounded-sm border px-2 py-1 text-sm",
-                  TONE[p.state],
-                  current ? "ring-2 ring-brand ring-offset-1" : "hover:underline",
+                  "inline-flex min-h-[max(2rem,var(--hlo-target-min))] items-center gap-1.5 rounded-md border px-2.5 py-1 text-sm leading-5 transition-colors duration-[var(--hlo-duration-fast)]",
+                  current
+                    ? "border-shell bg-shell text-shell-fg [&_svg]:text-shell-muted"
+                    : held
+                      ? "hatch border-hold-border text-hold-fg hover:border-ink-muted"
+                      : "border-line-strong bg-surface text-ink hover:bg-surface-subtle",
                 )}
               >
-                <Icon className="size-4 shrink-0" aria-hidden />
-                <span className="font-semibold">Part {p.designation}:</span>
+                <PartStateIcon state={p.state} />
                 <span>
-                  {LABEL[p.state]}
-                  {extra}
+                  <span className="font-semibold">Part {p.designation}:</span>{" "}
+                  <span className={current ? "text-shell-fg" : "text-ink-secondary"}>
+                    <IdText text={`${PART_STATE_LABEL[p.state]}${held && p.holdIds.length ? ` (${p.holdIds.join(", ")})` : ""}`} />
+                  </span>
                 </span>
                 <span className="sr-only">{current ? " (current part)" : ""}, site {p.site}</span>
               </Link>

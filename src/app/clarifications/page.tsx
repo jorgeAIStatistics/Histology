@@ -2,7 +2,7 @@ import Link from "next/link";
 import { getDb } from "@/server/db/db";
 import { readClock } from "@/server/core/clock";
 import { getActor } from "@/server/session";
-import { CLARIFICATION_FILTERS, getClarificationDetail, listClarifications, parseFilter } from "@/server/queries/clarifications";
+import { CLARIFICATION_FILTERS, deskAttention, getClarificationDetail, listClarifications, parseFilter } from "@/server/queries/clarifications";
 import { NOTIFY_SOURCE_ID } from "@/server/sim/notifications";
 import { PageBody, PageHeader } from "@/components/ui/page-header";
 import { AlertBanner } from "@/components/ui/alert-banner";
@@ -15,9 +15,11 @@ export const metadata = { title: "Clarifications" };
 type SP = { tab?: string | string[]; selected?: string | string[] };
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
-const DESCRIPTION =
-  "Specimen-specific questions to submitting offices, from draft to reviewed resolution. Holds stay on the affected material only. Office messages are simulated; no real office is contacted.";
-
+/**
+ * /clarifications: specimen-specific questions to submitting offices, from
+ * draft to a reviewed resolution. Holds stay on the affected material only.
+ * Office messages are simulated; no real office is contacted.
+ */
 export default async function Page({ searchParams }: { searchParams: Promise<SP> }) {
   const sp = await searchParams;
   const tab = first(sp.tab);
@@ -25,19 +27,20 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
   const actor = await getActor();
   const readOnly = actor.role === "director" || actor.role === "medical_director";
   const readOnlyNote = readOnly
-    ? `Read only: ${ROLE_LABEL[actor.role]} can view but not change records. The simulated office answer is a demo control available to any role.`
+    ? `Read only: ${ROLE_LABEL[actor.role]} can view but not change records. The people below can act. The simulated office answer is a presenter control available to any role.`
     : null;
-  const header = <PageHeader title="Clarifications" description={DESCRIPTION} simulated="notifications" readOnly={readOnly} />;
 
   try {
     const db = getDb();
     const now = readClock(db).now;
     let queue = listClarifications(db, { filter: parseFilter(tab), actorId: actor.id, now });
-    // A scanned or linked CLR (no tab in the URL) must appear in the list beside its panel: fall back to "All".
+    // A scanned or linked CLR (no tab in the URL) must appear in the list beside its record: fall back to "All".
     if (!tab && selected && !queue.rows.some((r) => r.displayId === selected || r.id === selected)) {
       queue = listClarifications(db, { filter: parseFilter("all"), actorId: actor.id, now });
     }
     const detail = selected ? getClarificationDetail(db, selected, { now, role: actor.role }) : null;
+    // Nothing open: the landing pane leads with what needs attention across the whole desk, whatever the filter.
+    const desk = selected ? null : deskAttention(queue.filter === "all" ? queue.rows : listClarifications(db, { filter: "all", actorId: actor.id, now }).rows);
     const notify = db.prepare("SELECT status, last_error FROM integration_source WHERE id = ?").get(NOTIFY_SOURCE_ID) as { status: string; last_error: string | null } | undefined;
     const banner =
       notify && notify.status === "offline" ? (
@@ -47,13 +50,14 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
       ) : null;
     return (
       <ClarificationsWorkspace
-        header={header}
         banner={banner}
         filters={CLARIFICATION_FILTERS.map((f) => ({ key: f.key, label: f.label }))}
         queue={queue}
         detail={detail}
+        desk={desk}
         selected={selected}
         now={now}
+        readOnly={readOnly}
         readOnlyNote={readOnlyNote}
       />
     );
@@ -61,9 +65,9 @@ export default async function Page({ searchParams }: { searchParams: Promise<SP>
     console.error("[clarifications] failed to load", e);
     return (
       <PageBody>
-        {header}
+        <PageHeader title="Clarifications" simulated="notifications" readOnly={readOnly} />
         <AlertBanner
-          tone="danger"
+          tone="warning"
           blocking
           title="Could not load clarifications"
           action={

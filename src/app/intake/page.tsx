@@ -1,24 +1,20 @@
 import { getDb } from "@/server/db/db";
 import { getActor } from "@/server/session";
-import { intakeBench, type Lane } from "@/server/queries/intake";
-import { IntakeBenchView } from "@/components/intake/intake-bench";
+import { intakeBench } from "@/server/queries/intake";
+import { IntakeWorkstation } from "@/components/intake/workstation";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Intake" };
 
-const LANES: Lane[] = ["to_review", "exceptions", "done"];
-
 /**
- * /intake — arrival, reconciliation and routing bench (design spec §6.1).
- * ?item=<INT display id> selects an item; ?lane=to_review|exceptions|done picks the queue tab.
+ * /intake: the intake workstation. ?item=<INT display id> opens an item.
+ * The read model computes the plan for this item and this person (finding,
+ * hold scope, five steps, next step, waiting on, accession reason).
  */
-export default async function IntakePage({ searchParams }: { searchParams: Promise<{ item?: string; lane?: string }> }) {
+export default async function IntakePage({ searchParams }: { searchParams: Promise<{ item?: string }> }) {
   const sp = await searchParams;
   const actor = await getActor();
-  const db = getDb();
   const item = typeof sp.item === "string" && sp.item.trim() ? sp.item.trim().slice(0, 40) : null;
-  const bench = intakeBench(db, actor, { item });
-  const requested = LANES.includes(sp.lane as Lane) ? (sp.lane as Lane) : null;
-  const lane: Lane = requested ?? bench.selected?.lane ?? (bench.counts.to_review > 0 || bench.counts.exceptions === 0 ? "to_review" : "exceptions");
-  return <IntakeBenchView bench={bench} initialLane={lane} />;
+  const bench = intakeBench(getDb(), actor, { item });
+  return <IntakeWorkstation bench={bench} />;
 }

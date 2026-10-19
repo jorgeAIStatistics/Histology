@@ -8,7 +8,7 @@ import { labLocalToIso } from "@/lib/time";
 import { ROLE_LABEL } from "@/lib/roles";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { Tabs } from "@/components/ui/tabs";
-import { PageBody, PageHeader } from "@/components/ui/page-header";
+import { PageBody } from "@/components/ui/page-header";
 import { SimulatedLabel } from "@/components/domain/honesty";
 import { GuidedDemo, type OpsBlockerView } from "@/components/demo/guided-demo";
 import { DemoToolbar, PresenterSizeProvider } from "@/components/demo/demo-toolbar";
@@ -80,11 +80,15 @@ export default async function DemoPage({ searchParams }: { searchParams: SP }) {
 
   return (
     <PageBody>
-      <PageHeader
-        title="Guided demo"
-        description="A five-minute walk through one multipart case (Avery Quinlan, synthetic) on the real screens. Steps 6 and 7 use earlier synthetic cases."
-        actions={<SimulatedLabel>Synthetic data, simulated connectors</SimulatedLabel>}
-      />
+      <header className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-xl font-bold tracking-[-0.015em] text-ink">Guided demo</h1>
+          <SimulatedLabel>Synthetic data, simulated connectors</SimulatedLabel>
+        </div>
+        <p className="max-w-[90ch] text-sm text-ink-muted">
+          A five-minute walk through one multipart case (Avery Quinlan, synthetic) on the real screens. Steps 6 and 7 use earlier synthetic cases.
+        </p>
+      </header>
       <PresenterSizeProvider>
         {status ? <DemoToolbar doneCount={status.doneCount} total={STEPS.length} /> : null}
         <Tabs
@@ -93,7 +97,7 @@ export default async function DemoPage({ searchParams }: { searchParams: SP }) {
           items={TABS.map((t) => ({ key: t.key, label: t.label, href: t.key === "guide" && tab === "guide" ? `/demo?tab=guide&step=${selected}` : `/demo?tab=${t.key}` }))}
         />
         {loadError ? (
-          <AlertBanner tone="danger" title="Could not load the demo progress" blocking>
+          <AlertBanner tone="warning" title="Could not load the demo progress">
             {loadError} Nothing was changed. Reload the page; if it keeps failing, reset the demo data.
           </AlertBanner>
         ) : null}
@@ -114,7 +118,7 @@ export default async function DemoPage({ searchParams }: { searchParams: SP }) {
         {tab === "map" ? <WorkflowMap /> : null}
         {tab === "notes" ? <SpeakerNotes /> : null}
         {tab === "real" ? <RealVsSimulated /> : null}
-        {tab === "map" ? <p className="text-xs text-ink-muted">{COPY_GUARD}</p> : null}
+        {tab === "map" ? <p className="text-sm text-ink-muted">{COPY_GUARD}</p> : null}
       </PresenterSizeProvider>
     </PageBody>
   );

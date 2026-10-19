@@ -2,15 +2,18 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
-import { AccessionChip, IdChip, PartChip, ProvisionalChip } from "./chips";
+import { TriangleAlert } from "lucide-react";
+import { encodeLabel, namespaceCode } from "@/lib/identifiers";
 import { DoctorChip } from "./doctor-chip";
 import { HoldPill } from "./hold";
 import { SyntheticTag } from "./honesty";
 import { PasTag } from "./pas-tag";
+import { SpecimenLabel } from "./specimen-label";
 
 /**
  * Sticky identity bar (spec §5.3): the current case or part stays visible
- * during every edit and confirmation. Sits directly under the top bar.
+ * during every edit and confirmation, led by the part set as its specimen
+ * label (dashed provisional, solid official). Sits directly under the top bar.
  * When `contextKey` changes (a scan opened a different case/part), it shows a
  * 2px brand outline for ~1.5 s (no movement) and announces "Now working on ...".
  * Pages must reset their form fields on context change (values never carry over)
@@ -43,10 +46,6 @@ export interface IdentityBarProps {
 function identityText(identity: IdentityRef, part?: { letter: string } | null): string {
   const base = identity.kind === "accession" ? identity.accession : `provisional intake item ${identity.id}`;
   return part ? `${base} Part ${part.letter}` : base;
-}
-
-function Divider() {
-  return <span aria-hidden className="h-5 w-px shrink-0 bg-line" />;
 }
 
 export function IdentityBar({
@@ -85,59 +84,73 @@ export function IdentityBar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
+  const payload =
+    identity.kind === "accession" && identity.namespace
+      ? encodeLabel({ kind: "C", namespace: namespaceCode(identity.namespace), accession: identity.accession })
+      : undefined;
+
   return (
     <section
       aria-label="Current case"
+      data-identity-sticky
       className={cn(
-        "sticky top-[var(--hlo-chrome-h)] z-20 flex min-h-[var(--hlo-identity-h)] flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-surface px-6 py-2 max-xl:px-4",
+        "sticky top-[var(--hlo-chrome-h)] z-20 flex min-h-[var(--hlo-identity-h)] flex-wrap [@media(max-height:560px)]:static items-center gap-x-5 gap-y-2 border-b border-line bg-surface px-6 py-2 max-xl:gap-x-4 max-xl:px-4",
         flash && "hlo-identity-flash",
         className,
       )}
     >
-      <div className="flex shrink-0 items-center gap-2">
-        {identity.kind === "accession" ? (
-          <AccessionChip accession={identity.accession} namespace={identity.namespace} href={false} />
-        ) : (
-          <ProvisionalChip id={identity.id} href={false} />
-        )}
-        {part ? <PartChip part={part.letter} description={part.description} warning={part.warning} /> : null}
-      </div>
+      <SpecimenLabel
+        size="md"
+        status={identity.kind === "accession" ? "official" : "provisional"}
+        id={identity.kind === "accession" ? identity.accession : identity.id}
+        parts={part ? [part.letter] : []}
+        payload={payload}
+        lines={[
+          identity.kind === "accession" ? (identity.namespace ?? "Accession") : "Official number: not issued",
+        ]}
+      />
 
       {patient ? (
-        <>
-          <Divider />
-          <div className="flex min-w-0 items-center gap-2 text-sm">
-            <span className="font-medium text-ink">{patient.name}</span>
+        <div className="min-w-0 leading-5">
+          <p className="flex items-center gap-2">
+            <span className="text-md font-semibold tracking-[-0.01em] text-ink">{patient.name}</span>
             <SyntheticTag />
-            {patient.mrn ? <IdChip kind="MRN" id={patient.mrn} tenant={patient.tenant ?? undefined} /> : null}
-          </div>
-        </>
+          </p>
+          {patient.mrn ? (
+            <p className="text-sm text-ink-secondary">
+              MRN <span className="id-mono text-ink">{patient.mrn}</span>
+              {patient.tenant ? <span className="text-ink-muted"> · {patient.tenant}</span> : null}
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
-      {office ? (
-        <>
-          <Divider />
-          <span className="text-sm text-ink-secondary">{office}</span>
-        </>
+      {part?.description || part?.warning ? (
+        <div className="min-w-0 max-w-[22rem] leading-5">
+          {part.description ? <p className="text-base font-medium text-ink first-letter:uppercase">{part.description}</p> : null}
+          {part.warning ? (
+            <p className="mt-0.5 inline-flex items-start gap-1 rounded-sm bg-warning-bg px-1.5 text-sm font-medium text-warning-fg">
+              <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning-solid" aria-hidden />
+              {part.warning}
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
-      {doctor !== undefined ? (
-        <>
-          <Divider />
-          <DoctorChip name={doctor?.name ?? null} color={doctor?.color} className="text-sm" />
-        </>
+      {doctor !== undefined || office ? (
+        <div className="min-w-0 text-sm leading-5 text-ink-secondary">
+          {doctor !== undefined ? <DoctorChip name={doctor?.name ?? null} color={doctor?.color} className="text-base font-medium text-ink" /> : null}
+          {office ? <p>{office}</p> : null}
+        </div>
       ) : null}
 
       {(holds && holds.length > 0) || pas ? (
-        <>
-          <Divider />
-          <div className="flex flex-wrap items-center gap-1.5">
-            {holds?.map((h) => (
-              <HoldPill key={h} scope={h} />
-            ))}
-            {pas ? <PasTag {...(typeof pas === "object" ? pas : {})} /> : null}
-          </div>
-        </>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {holds?.map((h) => (
+            <HoldPill key={h} scope={h} />
+          ))}
+          {pas ? <PasTag {...(typeof pas === "object" ? pas : {})} /> : null}
+        </div>
       ) : null}
 
       {actions ? <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div> : null}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Pencil } from "lucide-react";
+import { Pencil, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CommandError } from "@/components/ui/command-button";
 import type { ConflictField } from "@/components/ui/conflict-dialog";
@@ -186,7 +186,7 @@ export function ContactEditButton({
         open={open}
         onClose={close}
         title={`Edit contact: ${contact.name}`}
-        description={`${officeName} · ${contact.role} · fictional contact, simulated channel`}
+        description={`${officeName}, ${contact.role}. Fictional contact, simulated channel.`}
         size="md"
         footer={
           <div className="flex flex-wrap justify-end gap-2">
@@ -217,7 +217,7 @@ export function ContactEditButton({
           </div>
         }
       >
-        <div className="grid gap-4">
+        <div className="grid grid-cols-1 gap-4">
           <div className="grid gap-2">
             <Checkbox
               label="Out of office (coverage gap)"
@@ -252,8 +252,11 @@ export function ContactEditButton({
             onChange={(e) => set({ escalation: e.target.checked })}
           />
           {bothRoles ? (
-            <p role="alert" className="text-sm text-danger-fg">
-              One contact cannot be both primary and escalation contact. Clarifications go to the primary; escalations go to a separate contact. Clear one of the two.
+            <p role="alert" className="flex items-start gap-1.5 text-sm font-medium text-warning-fg">
+              <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning-solid" aria-hidden />
+              <span>
+                One contact cannot be both primary and escalation contact. Clarifications go to the primary; escalations go to a separate contact. Clear one of the two.
+              </span>
             </p>
           ) : null}
           <CommandError error={cmd.error} />

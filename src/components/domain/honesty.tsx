@@ -28,7 +28,7 @@ export function SimulatedLabel({
   return (
     <span
       className={cn(
-        "hlo-chip inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-sm border border-dashed border-sim-border bg-sim-bg font-medium text-sim-fg",
+        "hlo-chip inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-sm border border-sim-border bg-sim-bg font-medium text-sim-fg",
         size === "sm" ? "h-6 px-1.5 text-xs" : "h-5 px-1 text-xs",
         className,
       )}
@@ -44,7 +44,7 @@ export function IllustrativeTag({ children, className }: { children?: ReactNode;
   return (
     <span
       className={cn(
-        "hlo-chip inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-sm border border-dashed border-sim-border bg-sim-bg px-1.5 py-0.5 text-xs font-medium text-sim-fg",
+        "hlo-chip inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-sm border border-sim-border bg-sim-bg px-1.5 py-0.5 text-xs font-medium text-sim-fg",
         className,
       )}
     >
@@ -95,7 +95,7 @@ export function SyntheticTag({ className }: { className?: string }) {
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-center rounded-sm border border-dashed border-sim-border bg-sim-bg px-1 text-xs font-medium leading-4 text-sim-fg",
+        "inline-flex shrink-0 items-center rounded-sm border border-sim-border bg-sim-bg px-1 text-xs font-medium leading-4 text-sim-fg",
         className,
       )}
     >

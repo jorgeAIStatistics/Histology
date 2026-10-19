@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Popover } from "radix-ui";
-import { CircleCheck, CircleQuestionMark, Clock, OctagonX, type LucideIcon } from "lucide-react";
+import { CircleCheck, CircleQuestionMark, Clock, TriangleAlert, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { fmtSmart, fmtAge } from "@/lib/time";
 import { useDemoNow, useLive } from "@/lib/client/live";
@@ -17,11 +17,13 @@ import {
 } from "@/lib/client/freshness";
 import { SimulatedLabel } from "@/components/domain/honesty";
 
-const STATE_UI: Record<SyncState, { icon: LucideIcon; text: string; iconClass: string; textClass: string }> = {
-  synced: { icon: CircleCheck, text: "Synced", iconClass: "text-success-solid", textClass: "text-ink" },
-  delayed: { icon: Clock, text: "Delayed", iconClass: "text-warning-solid", textClass: "text-warning-fg" },
-  offline: { icon: OctagonX, text: "Offline", iconClass: "text-danger-solid", textClass: "text-danger-fg" },
-  unknown: { icon: CircleQuestionMark, text: "Sync status unknown", iconClass: "text-ink-muted", textClass: "text-ink-secondary" },
+// iconClass/textClass for the light popover; dark* for the trigger on the hematoxylin bar.
+const STATE_UI: Record<SyncState, { icon: LucideIcon; text: string; iconClass: string; textClass: string; darkIconClass: string; darkTextClass: string }> = {
+  synced: { icon: CircleCheck, text: "Synced", iconClass: "text-success-solid", textClass: "text-ink", darkIconClass: "text-shell-muted", darkTextClass: "text-shell-fg" },
+  delayed: { icon: Clock, text: "Delayed", iconClass: "text-warning-solid", textClass: "text-warning-fg", darkIconClass: "text-warning-on-dark", darkTextClass: "text-warning-on-dark" },
+  // A stale or offline source is "data may be wrong" (amber); red is reserved for patient identity.
+  offline: { icon: TriangleAlert, text: "Offline", iconClass: "text-warning-solid", textClass: "text-warning-fg", darkIconClass: "text-warning-on-dark", darkTextClass: "text-warning-on-dark" },
+  unknown: { icon: CircleQuestionMark, text: "Sync status unknown", iconClass: "text-ink-muted", textClass: "text-ink-secondary", darkIconClass: "text-shell-muted", darkTextClass: "text-shell-fg" },
 };
 
 /**
@@ -65,16 +67,19 @@ export function SourceFreshness() {
       <Popover.Trigger asChild>
         <button
           type="button"
-          className="flex h-10 shrink-0 items-center gap-2 rounded-md px-2 text-left hover:bg-surface-subtle"
+          title={`Source (simulated): ${summary}${detail}`}
+          className="flex h-10 shrink-0 items-center gap-2 rounded-md px-2 text-left text-shell-fg hover:bg-shell-2 data-[state=open]:bg-shell-2"
           aria-label={`Source freshness: ${summary}${detail}${age ? ` (${age})` : ""}. Simulated. Show details`}
         >
-          <Icon className={cn("size-4 shrink-0", ui.iconClass)} aria-hidden />
-          <span className="flex flex-col leading-tight">
-            <span className="text-xs text-ink-muted">Source (simulated)</span>
-            <span className={cn("max-w-[17rem] truncate text-sm font-medium", ui.textClass)}>
-              {summary}
-              {detail ? <span className="font-normal max-2xl:hidden">{detail}</span> : null}
-              {age ? <span className="font-normal text-ink-muted max-2xl:hidden"> ({age})</span> : null}
+          <Icon className={cn("size-4 shrink-0", ui.darkIconClass)} aria-hidden />
+          <span className={cn("flex flex-col leading-tight", worst === "synced" && "max-[1719px]:hidden")}>
+            <span className="text-xs text-shell-muted max-[1439px]:hidden">Source (simulated)</span>
+            <span className={cn("max-w-[11rem] truncate text-sm font-semibold max-xl:max-w-[7.5rem] min-[1720px]:max-w-[17rem]", ui.darkTextClass)}>
+              <span className="max-[1439px]:hidden">{summary}</span>
+              {/* Below 1440px: the state word only ("Offline"); the full sentence stays in the accessible name and tooltip. */}
+              <span className="min-[1440px]:hidden">{worst === "unknown" ? "Unknown" : ui.text}</span>
+              {detail ? <span className="font-normal max-[1719px]:hidden">{detail}</span> : null}
+              {age ? <span className="font-normal text-shell-muted max-[1719px]:hidden"> ({age})</span> : null}
             </span>
           </span>
         </button>
@@ -114,7 +119,7 @@ export function SourceFreshness() {
                     {s.last_error ? (
                       <>
                         <dt>Last error</dt>
-                        <dd className="text-danger-fg">{s.last_error}</dd>
+                        <dd className="text-warning-fg">{s.last_error}</dd>
                       </>
                     ) : null}
                   </dl>
@@ -129,7 +134,7 @@ export function SourceFreshness() {
                 {others.map((s) => (
                   <li key={s.id} className="flex justify-between gap-2">
                     <span className="text-ink">{sourceLabel(s)}</span>
-                    <span className={cn(s.status === "offline" ? "text-danger-fg" : s.status === "degraded" ? "text-warning-fg" : "text-ink-secondary")}>
+                    <span className={cn(s.status === "offline" || s.status === "degraded" ? "text-warning-fg" : "text-ink-secondary")}>
                       {s.status === "connected" ? "Available (simulated)" : s.status === "offline" ? "Unavailable (simulated)" : "Degraded (simulated)"}
                     </span>
                   </li>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useMemo, useState, type ChangeEvent } from "react";
-import { Calculator, RotateCcw } from "lucide-react";
+import { Calculator, Info, RotateCcw } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Field, Input } from "@/components/ui/field";
 import { Button } from "@/components/ui/button";
@@ -90,7 +90,7 @@ export function ScenarioCalculator() {
         <span className="flex flex-wrap items-center gap-2">
           <Calculator className="size-4 text-ink-muted" aria-hidden />
           <span>Scenario calculator</span>
-          <span className="text-sm font-normal text-ink-muted">A worksheet, not a measurement or a forecast</span>
+          <IllustrativeTag className="font-medium tracking-normal">A worksheet, not a measurement or a forecast</IllustrativeTag>
         </span>
       }
       description="Inputs start blank. Use measured values from a baseline and a shadow comparison, and a labor cost agreed with finance. This worksheet handles one activity at a time (here: per case). Repeat it for parts, 100 labels or blocks and add the results; never count the same minutes twice."
@@ -127,7 +127,7 @@ export function ScenarioCalculator() {
         </AlertBanner>
       ) : null}
 
-      <div className="mt-3 grid gap-6 xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
+      <div className={example ? "mt-4 grid gap-6 xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]" : "grid gap-6 xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]"}>
         <fieldset className="grid content-start gap-3">
           <legend className="mb-1 text-sm font-semibold text-ink">Inputs</legend>
           <div role="group" aria-labelledby={`${resultId}-saved`} className="grid gap-1.5">
@@ -154,26 +154,26 @@ export function ScenarioCalculator() {
           {field("costs", "Annualized costs from quotes (C)", { unit: "USD per year", hint: "Leave blank until vendor quotes and internal estimates exist." })}
         </fieldset>
 
-        <section aria-labelledby={`${resultId}-h`} aria-live="polite" className="min-w-0">
+        <section aria-labelledby={`${resultId}-h`} aria-live="polite" className="min-w-0 xl:border-l xl:border-line xl:pl-6">
           <h3 id={`${resultId}-h`} className="mb-2 flex items-center gap-2 text-sm font-semibold text-ink">
             Results {example ? <IllustrativeTag>Illustrative example</IllustrativeTag> : null}
           </h3>
           {!p.ready ? (
-            <p className="rounded-md border border-dashed border-line-strong bg-surface-subtle p-3 text-sm text-ink-secondary">
+            <p className="rounded-md border border-dashed border-line-strong px-3 py-2.5 text-sm text-ink-secondary">
               {Object.keys(p.errors).length
                 ? "Fix the highlighted inputs to see results."
                 : `Enter the required inputs to see results (${p.missing.length} still blank). Nothing is assumed for a blank input.`}
             </p>
           ) : (
-            <div className="flex flex-col gap-3 text-sm">
-              <div className="rounded-md border border-line bg-surface-subtle p-3">
-                <p className="font-medium text-ink">Formula</p>
-                <pre className="mt-1 whitespace-pre-wrap font-mono text-xs leading-5 text-ink-secondary">
+            <div className="flex animate-swap-in flex-col gap-3 text-sm">
+              <figure className="m-0 rounded-md bg-surface-subtle px-3 py-2.5">
+                <figcaption className="font-medium text-ink">Formula, with these inputs</figcaption>
+                <pre className="mt-1 overflow-x-auto font-mono text-xs leading-5 whitespace-pre-wrap text-ink-secondary">
 {formulaText}
                 </pre>
-              </div>
+              </figure>
 
-              <dl className="grid gap-2">
+              <dl className="divide-y divide-line border-y border-line">
                 <ResultRow
                   label="Labor time saved (potential, not cash)"
                   value={`${ranged((pt) => signedHours(pt.annualHours))} hours per year`}
@@ -219,19 +219,22 @@ export function ScenarioCalculator() {
           )}
 
           <div className="mt-4">
-            <p className="text-sm font-semibold text-ink">Costs that require quotes or internal estimates</p>
-            <ul className="mt-1 grid gap-1 text-sm text-ink-secondary sm:grid-cols-2">
+            <h4 className="text-sm font-semibold text-ink">Costs that require quotes or internal estimates</h4>
+            <ul className="mt-1 grid text-sm text-ink-secondary sm:grid-cols-2 sm:gap-x-6">
               {QUOTE_COSTS.map((c) => (
-                <li key={c} className="flex items-start justify-between gap-2 rounded-sm border border-line px-2 py-1">
+                <li key={c} className="flex items-start justify-between gap-3 border-b border-line py-1.5">
                   <span>{c}</span>
-                  <span className="shrink-0 text-xs text-ink-muted">Quote required</span>
+                  <span className="shrink-0 text-ink-muted">Quote required</span>
                 </li>
               ))}
             </ul>
           </div>
-          <p className="mt-3 rounded-md border-l-4 border-info-solid bg-info-bg px-3 py-2 text-sm text-info-fg">
-            A short pilot cannot establish a reduction in rare patient-harm events, such as a misidentified specimen: they are too infrequent to measure reliably in
-            weeks or months. A pilot would track near misses, verification burden and unintended delays instead, and makes no claim of harm prevention.
+          <p className="mt-4 flex max-w-[90ch] items-start gap-2 text-sm text-ink">
+            <Info className="mt-0.5 size-4 shrink-0 text-info-solid" aria-hidden />
+            <span>
+              A short pilot cannot establish a reduction in rare patient-harm events, such as a misidentified specimen: they are too infrequent to measure reliably in weeks
+              or months. A pilot would track near misses, verification burden and unintended delays instead, and makes no claim of harm prevention.
+            </span>
           </p>
         </section>
       </div>
@@ -241,9 +244,9 @@ export function ScenarioCalculator() {
 
 function ResultRow({ label, value, unknown, note }: { label: string; value: string | null; unknown?: string; note?: string }) {
   return (
-    <div className="rounded-md border border-line px-3 py-2">
+    <div className="grid gap-x-4 gap-y-0.5 py-2 sm:grid-cols-[minmax(11rem,15rem)_minmax(0,1fr)]">
       <dt className="text-ink-secondary">{label}</dt>
-      <dd className="mt-0.5">
+      <dd>
         {value ? (
           <span className="font-semibold text-ink">{value}</span>
         ) : (

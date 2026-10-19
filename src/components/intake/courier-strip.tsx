@@ -24,18 +24,18 @@ interface ReceiveResult {
 }
 
 function deliveryPill(d: DeliveryView) {
-  if (!d.arrivedAt) return <StatusPill tone="neutral">Expected</StatusPill>;
+  if (!d.arrivedAt) return <StatusPill tone="neutral" className="text-sm">Expected</StatusPill>;
   if (d.status === "reconciled") {
     const differs = (d.totals.missing ?? 0) > 0 || d.totals.extra > 0 || d.lines.some((l) => l.missingParts.length > 0);
-    return differs ? <StatusPill tone="warning">Unpacked · differences found</StatusPill> : <StatusPill tone="success">Unpacked · reconciled</StatusPill>;
+    return differs ? <StatusPill tone="warning" className="text-sm">Unpacked with differences</StatusPill> : <StatusPill tone="success" className="text-sm">Unpacked and reconciled</StatusPill>;
   }
-  return <StatusPill tone="info">Arrived · unpacking</StatusPill>;
+  return <StatusPill tone="info" className="text-sm">Arrived, unpacking</StatusPill>;
 }
 
 function ItemLinks({ ids }: { ids: string[] }) {
   if (!ids.length) return null;
   return (
-    <p className="text-xs text-ink-secondary">
+    <p className="text-sm text-ink-secondary">
       {ids.map((id, i) => (
         <span key={id}>
           {i ? ", " : ""}
@@ -68,25 +68,13 @@ export function CourierStrip({
   /** While an item is open the per-office boxes fold into one summary line, so the comparison stays above the fold. */
   itemSelected?: boolean;
 }) {
-  const router = useRouter();
   const [selectedId, setSelectedId] = useState<string | null>(activeId);
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const d = deliveries.find((x) => x.id === selectedId) ?? deliveries.find((x) => x.id === activeId) ?? null;
-  const unpack = useCommand<ReceiveResult, { deliveryId: string }>("intake.receivePhysicalItem", {
-    errorToast: false,
-    successToast: (r) =>
-      r.duplicate
-        ? `${r.displayId} was already unpacked. No duplicate was created.`
-        : `${r.displayId} received${r.missingParts.length ? `; missing container for part ${r.missingParts.join(", ")}` : ""}${r.routingStatus === "exception" ? "; routing exception" : ""}${r.relatedCandidates.length ? `; possible related order ${r.relatedCandidates.join(", ")}` : ""}`,
-    onSuccess: (r) =>
-      router.push(`/intake?item=${encodeURIComponent(r.displayId)}`, {
-        scroll: false,
-      }),
-  });
 
   if (!deliveries.length) {
     return (
-      <section aria-label="Courier deliveries" className="rounded-md border border-dashed border-line bg-surface px-4 py-3 text-sm text-ink-secondary">
+      <section aria-label="Courier deliveries" className="rounded-md border border-line bg-surface px-4 py-3 text-sm text-ink-secondary">
         No courier deliveries are scheduled for today in this demo.
       </section>
     );
@@ -111,7 +99,7 @@ export function CourierStrip({
               aria-pressed={x.id === d?.id}
               onClick={() => setSelectedId(x.id)}
               className={cn(
-                "rounded-sm border px-2 py-0.5 text-xs",
+                "rounded-sm border px-2 py-0.5 text-sm",
                 // Tablet, item open, offices folded: only the delivery in view; "Show offices" brings the others back.
                 itemSelected && !open && hasBoxes && x.id !== d?.id && "max-xl:hidden",
                 x.id === d?.id
@@ -139,33 +127,9 @@ export function CourierStrip({
             </CommandButton>
           ) : null}
           {d && canUnpack && d.simRemaining > 0 ? (
-            <>
-              <Button
-                size="sm"
-                variant={d.arrivedAt ? "primary" : "secondary"}
-                icon={<PackageOpen />}
-                loading={unpack.pending}
-                loadingLabel="Unpacking..."
-                onClick={() => void unpack.run({ deliveryId: d.id })}
-              >
-                Unpack next item (simulated)
-              </Button>
-              <CommandButton
-                command="intake.receiveAll"
-                input={{ deliveryId: d.id }}
-                size="sm"
-                pendingLabel="Unpacking..."
-                successToast={(r) => {
-                  const res = r as { received: unknown[] };
-                  return `${res.received.length} requisition(s) unpacked (simulated)`;
-                }}
-              >
-                Unpack all (simulated)
-              </CommandButton>
-              <span className="text-xs text-ink-secondary">
-                {d.simRemaining} of {d.simTotal} still in the bag
-              </span>
-            </>
+            <span className="text-sm text-ink-secondary">
+              {d.simRemaining} of {d.simTotal} still in the bag (simulated)
+            </span>
           ) : null}
           {hasBoxes ? (
             <Button
@@ -183,9 +147,55 @@ export function CourierStrip({
         </div>
       </div>
       {d ? <DeliveryLine d={d} now={now} compact={itemSelected && !open} /> : null}
-      <CommandError error={unpack.error} className="px-3 pb-2" />
       {d && open ? <ManifestGrid d={d} /> : null}
     </section>
+  );
+}
+
+/**
+ * Presenter controls (demo) for the courier bag: unpack the next requisition
+ * or all of them. A real bench does not know what is in the bag; these live in
+ * the "Presenter controls (demo)" disclosure, not on the bench surface.
+ */
+export function UnpackControls({ delivery: d, permissions }: { delivery: DeliveryView | null; permissions: BenchPermissions }) {
+  const router = useRouter();
+  const unpack = useCommand<ReceiveResult, { deliveryId: string }>("intake.receivePhysicalItem", {
+    errorToast: false,
+    successToast: (r) =>
+      r.duplicate
+        ? `${r.displayId} was already unpacked. No duplicate was created.`
+        : `${r.displayId} received${r.missingParts.length ? `; missing container for part ${r.missingParts.join(", ")}` : ""}${r.routingStatus === "exception" ? "; routing exception" : ""}${r.relatedCandidates.length ? `; possible related order ${r.relatedCandidates.join(", ")}` : ""}`,
+    onSuccess: (r) =>
+      router.push(`/intake?item=${encodeURIComponent(r.displayId)}`, {
+        scroll: false,
+      }),
+  });
+  if (!d || d.simTotal === 0 || !permissions.receive) return <p className="text-sm text-ink-muted">Nothing to unpack in this demo delivery.</p>;
+  if (d.simRemaining === 0) return <p className="text-sm text-ink-muted">Courier {d.displayId}: every requisition is unpacked (simulated).</p>;
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" variant="secondary" icon={<PackageOpen />} loading={unpack.pending} loadingLabel="Unpacking..." onClick={() => void unpack.run({ deliveryId: d.id })}>
+          Unpack next item (simulated)
+        </Button>
+        <CommandButton
+          command="intake.receiveAll"
+          input={{ deliveryId: d.id }}
+          size="sm"
+          pendingLabel="Unpacking..."
+          successToast={(r) => {
+            const res = r as { received: unknown[] };
+            return `${res.received.length} requisition(s) unpacked (simulated)`;
+          }}
+        >
+          Unpack all (simulated)
+        </CommandButton>
+      </div>
+      <p className="text-sm text-ink-muted">
+        {d.simRemaining} of {d.simTotal} requisitions still in the bag of courier <span className="id-mono">{d.displayId}</span>.
+      </p>
+      <CommandError error={unpack.error} />
+    </div>
   );
 }
 
@@ -201,7 +211,7 @@ function DeliveryLine({ d, now, compact }: { d: DeliveryView; now: string; compa
   const final = d.unpackingComplete;
   const problems = d.lines.filter((l) => arrived && ((final && ((l.missing ?? 0) > 0 || l.extra > 0)) || l.missingParts.length > 0));
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-3 py-1.5 text-xs text-ink-secondary">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-3 py-1.5 text-sm text-ink-secondary">
       {simulated ? <SimulatedLabel connector="courier contents" size="xs" /> : null}
       {!compact || !arrived ? (
         <span>
@@ -291,7 +301,7 @@ function ManifestGrid({ d }: { d: DeliveryView }) {
                   {l.officeName}
                 </span>
               </p>
-              <p className="num-tabular text-xs text-ink-secondary">
+              <p className="num-tabular text-sm text-ink-secondary">
                 {/* "Expected Unknown" stays together; the reason may wrap. */}
                 <span className="whitespace-nowrap">
                   Expected {l.expected === null ? <UnknownValue /> : <span className="font-medium text-ink">{l.expected}</span>}
@@ -312,7 +322,7 @@ function ManifestGrid({ d }: { d: DeliveryView }) {
                 ) : null}
               </p>
               {l.missingParts.map((m) => (
-                <p key={`${m.orderRef}-${m.designation}`} className="text-xs text-warning-fg">
+                <p key={`${m.orderRef}-${m.designation}`} className="text-sm text-warning-fg">
                   No container for <span className="id-mono">{m.orderRef}</span> part {m.designation} (
                   <Link className="underline underline-offset-2" href={`/intake?item=${encodeURIComponent(m.intakeDisplay)}`}>
                     {m.intakeDisplay}
@@ -321,7 +331,7 @@ function ManifestGrid({ d }: { d: DeliveryView }) {
                 </p>
               ))}
               {/* "No manifest received, expected quantity unknown" only repeats the Unknown above. */}
-              {l.note && !(l.expected === null && /expected quantity unknown/i.test(l.note)) ? <p className="text-xs text-ink-muted">{l.note}</p> : null}
+              {l.note && !(l.expected === null && /expected quantity unknown/i.test(l.note)) ? <p className="text-sm text-ink-muted">{l.note}</p> : null}
               {arrived ? <ItemLinks ids={l.items} /> : null}
             </li>
           );
@@ -332,12 +342,12 @@ function ManifestGrid({ d }: { d: DeliveryView }) {
               <TriangleAlert className="size-3.5 shrink-0 text-warning-solid" aria-hidden />
               {g.officeName}
             </p>
-            <p className="text-xs text-warning-fg">Not on any manifest line · received {g.received} (extra)</p>
+            <p className="text-sm text-warning-fg">Not on any manifest line · received {g.received} (extra)</p>
             <ItemLinks ids={g.items} />
           </li>
         ))}
       </ul>
-      <p className="mt-1.5 text-xs text-ink-muted">
+      <p className="mt-1.5 text-sm text-ink-muted">
         {arrived && !final ? "Unpacking: missing and extra are counted when every requisition is unpacked. " : ""}A delivery with an unknown expectation is
         never shown as complete.
       </p>

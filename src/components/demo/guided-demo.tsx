@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, CircleCheck, CircleDashed, CircleDot, Clock, ExternalLink, Lock, Play, WandSparkles } from "lucide-react";
+import { AppWindow, CircleCheck, CircleDashed, CircleDot, Clock, Lock, Play, WandSparkles } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { fmtTime } from "@/lib/time";
 import { useCommand } from "@/lib/client/command";
@@ -13,15 +13,12 @@ import { CommandError } from "@/components/ui/command-button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { StatusPill } from "@/components/ui/status-pill";
 import { SimulatedLabel } from "@/components/domain/honesty";
-import { COPY_GUARD, STEPS, type DemoIds } from "./content";
+import { IdText } from "@/components/domain/id-text";
+import { COPY_GUARD, STEPS, checkText, missingRecordText, recordsDoneText, type DemoIds, type StepRecords } from "./content";
 import { ActionLog, type StepRunResult } from "./action-log";
 import { usePresenterLarge } from "./demo-toolbar";
 
-export interface StepStatusView {
-  step: number;
-  state: "done" | "in_progress" | "not_started";
-  checks: { label: string; done: boolean; detail?: string }[];
-}
+export type StepStatusView = StepRecords;
 
 /** One row of the real Operations "what is blocked" list (S3 read model), for step 8. */
 export interface OpsBlockerView {
@@ -35,15 +32,12 @@ export interface OpsBlockerView {
 
 type LoggedRun = StepRunResult & { ranAt?: string; ranBy?: string | null };
 
-const runToast = (what: string) => (r: StepRunResult) => (r.status === "ran" ? `Step ${r.step}: ${what}` : null);
-
-const STATE_LABEL = { done: "Done", in_progress: "In progress", not_started: "Not started" } as const;
-const STATE_TONE = { done: "success", in_progress: "info", not_started: "neutral" } as const;
+// Severity ladder: done is a quiet check, in progress is plain ink (someone still has to act), not started is a dashed ring.
+const STATE_ICON = { done: CircleCheck, in_progress: CircleDot, not_started: CircleDashed } as const;
 
 function StateIcon({ state, className }: { state: StepStatusView["state"]; className?: string }) {
-  if (state === "done") return <CircleCheck className={cn("size-4 text-success-solid", className)} aria-hidden />;
-  if (state === "in_progress") return <CircleDot className={cn("size-4 text-info-solid", className)} aria-hidden />;
-  return <CircleDashed className={cn("size-4 text-ink-muted", className)} aria-hidden />;
+  const Icon = STATE_ICON[state];
+  return <Icon className={cn("size-4", state === "in_progress" ? "text-ink" : "text-ink-muted", className)} aria-hidden />;
 }
 
 /**
@@ -84,13 +78,11 @@ export function GuidedDemo({
   const [results, setResults] = useState<Record<number, StepRunResult | undefined>>({});
   const [confirmAuto, setConfirmAuto] = useState(false);
 
-  // Toast only when something ran; "nothing to simulate yet" and "not available" are explained in the action log banner.
+  // No toast: the run's result line swaps in inside the step sheet and is the one confirmation (a toast would cover the sheet at 200% zoom).
   const world = useCommand<StepRunResult, { step: number }>("demo.runStep", {
-    successToast: runToast("simulator events run"),
     onSuccess: (r) => setResults((prev) => ({ ...prev, [r.step]: r })),
   });
   const auto = useCommand<StepRunResult, { step: number; autoStaffActions: boolean }>("demo.runStep", {
-    successToast: runToast("rehearsal actions performed"),
     onSuccess: (r) => setResults((prev) => ({ ...prev, [r.step]: r })),
   });
   const clock = useCommand<unknown, DemoClockInput>(DEMO_CLOCK_COMMAND, { successToast: "Demo clock moved" });
@@ -113,218 +105,222 @@ export function GuidedDemo({
   const links = content.links(ids);
   const result: LoggedRun | undefined = results[content.step] ?? lastResults[content.step];
   const busy = world.pending || auto.pending;
-  const prev = content.step > 1 ? content.step - 1 : null;
-  const next = content.step < STEPS.length ? content.step + 1 : null;
+  const prev = STEPS.find((x) => x.step === content.step - 1) ?? null;
+  const next = STEPS.find((x) => x.step === content.step + 1) ?? null;
   const txt = presenterLarge ? "text-md" : "text-sm";
 
-  return (
-    <div className="grid gap-4 xl:grid-cols-[17rem_minmax(0,1fr)]">
-      {/* Stepper */}
-      <nav aria-label="Demo steps" className="min-w-0">
-        <ol className="grid grid-cols-2 gap-1 sm:grid-cols-4 xl:grid-cols-1">
-          {STEPS.map((s) => {
-            const st = steps.find((x) => x.step === s.step)?.state ?? "not_started";
-            const active = s.step === content.step;
-            return (
-              <li key={s.step}>
-                <Link
-                  href={`/demo?tab=guide&step=${s.step}`}
-                  scroll={false}
-                  aria-current={active ? "step" : undefined}
-                  className={cn(
-                    "flex h-full items-start gap-2 rounded-md border px-3 py-2 text-sm",
-                    active ? "border-brand bg-brand-50" : "border-line bg-surface hover:bg-surface-subtle",
-                  )}
-                >
-                  <StateIcon state={st} className="mt-0.5 shrink-0" />
-                  <span className="min-w-0">
-                    <span className="block font-medium text-ink">
-                      {s.step}. {s.short}
-                    </span>
-                    <span className="block text-xs text-ink-muted">
-                      {stepClockIso[s.step] ? `${fmtTime(stepClockIso[s.step])} ET` : ""} · {STATE_LABEL[st]}
-                    </span>
-                  </span>
-                </Link>
-              </li>
-            );
-          })}
-        </ol>
-        <p className="mt-2 text-xs text-ink-muted max-xl:hidden">Progress is read from the records, so it also counts work done directly on the real screens.</p>
-      </nav>
+  const fresh = results[content.step] !== undefined;
+  // Which record is still missing (a run can finish while a check is still open), named as a record, never as a claim.
+  const missingRecord = status ? missingRecordText(status, steps) : null;
 
-      {/* Step detail */}
-      <section aria-labelledby="demo-step-title" className="min-w-0 rounded-md border border-line bg-surface shadow-1">
-        <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-3">
+  return (
+    <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[17rem_minmax(0,1fr)]">
+      <StepRail steps={steps} current={content.step} stepClockIso={stepClockIso} />
+
+      {/* Step detail: one sheet, sections divided by hairlines */}
+      <section aria-labelledby="demo-step-title" className="min-w-0 rounded-lg border border-line bg-surface">
+        <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 border-b border-line px-4 py-3">
           <div className="min-w-0">
-            <p className="text-xs font-medium text-ink-muted">
-              Step {content.step} of {STEPS.length} · about {content.seconds} s ·{" "}
-              <span className="inline-flex items-center gap-1">
-                <Clock className="size-3.5" aria-hidden />
-                {stepIso ? `Scripted for ${fmtTime(stepIso)} ET` : "Scripted time unknown"}
-              </span>
-            </p>
-            <h2 id="demo-step-title" className={cn("font-semibold text-ink", presenterLarge ? "text-xl" : "text-md")}>
+            <h2 id="demo-step-title" className={cn("font-bold tracking-[-0.01em] text-ink", presenterLarge ? "text-2xl" : "text-lg")}>
               {content.title}
             </h2>
-            <p className="text-sm text-ink-secondary">On screen: {content.cast}</p>
+            <dl className={cn("mt-1 flex flex-wrap gap-x-5 gap-y-0.5", txt)}>
+              <div className="flex gap-1.5">
+                <dt className="text-ink-muted">Step</dt>
+                <dd className="text-ink">
+                  {content.step} of {STEPS.length}
+                </dd>
+              </div>
+              <div className="flex gap-1.5">
+                <dt className="text-ink-muted">Scripted for</dt>
+                <dd className="text-ink">{stepIso ? `${fmtTime(stepIso)} ET` : "Unknown"}</dd>
+              </div>
+              <div className="flex gap-1.5">
+                <dt className="text-ink-muted">Spoken</dt>
+                <dd className="text-ink">About {content.seconds} s</dd>
+              </div>
+              <div className="flex gap-1.5">
+                <dt className="text-ink-muted">On screen</dt>
+                <dd className="text-ink">{content.cast}</dd>
+              </div>
+            </dl>
+            {missingRecord ? (
+              <p className={cn("mt-1 text-ink-secondary", txt)}>
+                <span className="text-ink-muted">Missing record: </span>
+                <IdText text={missingRecord} />
+              </p>
+            ) : null}
           </div>
           {status ? (
-            <StatusPill tone={STATE_TONE[status.state]}>
-              {STATE_LABEL[status.state]} ({status.checks.filter((c) => c.done).length} of {status.checks.length})
+            <StatusPill tone="neutral" icon={STATE_ICON[status.state]}>
+              Records: {recordsDoneText(status.checks)}
             </StatusPill>
           ) : null}
         </header>
 
-        <div className={cn("grid gap-4 p-4", txt)}>
-          {/* Controls */}
-          <div role="group" aria-label={`Presenter controls for step ${content.step}`} className="grid gap-3 rounded-md border border-line bg-surface-subtle p-3 lg:grid-cols-2">
-            <div className="flex flex-col items-start gap-1.5">
-              <Button
-                variant="primary"
-                icon={<Play />}
-                loading={world.pending}
-                loadingLabel="Running..."
-                disabled={busy}
-                onClick={() => void world.run({ step: content.step })}
-              >
-                Run simulator events for this step
-              </Button>
-              <p className="text-xs text-ink-secondary">{content.worldEvents}</p>
-              <CommandError error={world.error} />
-            </div>
-            <div className="flex flex-col items-start gap-1.5">
-              <Button
-                variant="secondary"
-                icon={canRehearse ? <WandSparkles /> : <Lock />}
-                loading={auto.pending}
-                loadingLabel="Performing..."
-                disabled={busy || !canRehearse}
-                aria-describedby={canRehearse ? undefined : "demo-rehearsal-note"}
-                onClick={() => setConfirmAuto(true)}
-              >
-                Auto-perform staff actions (rehearsal)
-              </Button>
-              <p className="text-xs text-ink-secondary">{content.staffActions}</p>
-              {rehearsalNote ? (
-                <p id="demo-rehearsal-note" className="text-xs text-ink-muted">
-                  {rehearsalNote}
-                </p>
-              ) : null}
-              <CommandError error={auto.error} />
-            </div>
-            {clockBehind && stepIso ? (
-              <div className="flex flex-wrap items-center gap-2 lg:col-span-2">
-                <Button variant="quiet" size="sm" icon={<Clock />} loading={clock.pending} loadingLabel="Moving..." onClick={() => void clock.run({ iso: stepIso })}>
-                  Jump demo clock to {fmtTime(stepIso)} ET
-                </Button>
-                <span className="text-xs text-ink-muted">The demo clock is at {fmtTime(clockNow)} ET. Step runs only move it forward.</span>
-                <CommandError error={clock.error} />
-              </div>
-            ) : null}
+        {/* Controls: the step's one primary action, then the rehearsal shortcut */}
+        <div role="group" aria-label={`Presenter controls for step ${content.step}`} className={cn("grid gap-4 border-b border-line px-4 py-4 lg:grid-cols-2", txt)}>
+          <div className="flex flex-col items-start gap-1.5">
+            <Button
+              variant="primary"
+              icon={<Play />}
+              loading={world.pending}
+              loadingLabel="Running..."
+              disabled={busy}
+              onClick={() => void world.run({ step: content.step })}
+            >
+              Run simulator events for this step
+            </Button>
+            <p className="text-ink-secondary">
+              <IdText text={content.worldEvents} />
+            </p>
+            <CommandError error={world.error} />
           </div>
+          <div className="flex flex-col items-start gap-1.5">
+            <Button
+              variant="secondary"
+              icon={canRehearse ? <WandSparkles /> : <Lock />}
+              loading={auto.pending}
+              loadingLabel="Performing..."
+              disabled={busy || !canRehearse}
+              aria-describedby={canRehearse ? undefined : "demo-rehearsal-note"}
+              onClick={() => setConfirmAuto(true)}
+            >
+              Auto-perform staff actions (rehearsal)
+            </Button>
+            <p className="text-ink-secondary">
+              <IdText text={content.staffActions} />
+            </p>
+            {rehearsalNote ? (
+              <p id="demo-rehearsal-note" className="text-ink-muted">
+                {rehearsalNote}
+              </p>
+            ) : null}
+            <CommandError error={auto.error} />
+          </div>
+          {clockBehind && stepIso ? (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 lg:col-span-2">
+              <Button variant="quiet" size="sm" icon={<Clock />} loading={clock.pending} loadingLabel="Moving..." onClick={() => void clock.run({ iso: stepIso })}>
+                Jump demo clock to {fmtTime(stepIso)} ET
+              </Button>
+              <span className="text-sm text-ink-muted">The demo clock is at {fmtTime(clockNow)} ET. Step runs only move it forward.</span>
+              <CommandError error={clock.error} />
+            </div>
+          ) : null}
+        </div>
 
-          {result ? <ActionLog result={result} ranAt={result.ranAt} /> : null}
+        <div className={cn("grid gap-5 p-4", txt)}>
+          {result ? <ActionLog key={`${result.step}-${result.ranAt ?? "now"}-${result.clockAfter}`} result={result} ranAt={result.ranAt} fresh={fresh} /> : null}
 
-          {/* Open the real screens */}
           <div>
             <h3 className="mb-1.5 text-sm font-semibold text-ink">Open the real screen</h3>
             <ul className="flex flex-wrap gap-2">
               {links.map((l) => (
                 <li key={l.href + l.label} className="flex flex-col">
-                  <ButtonLink href={l.href} size="sm" variant="secondary" icon={<ExternalLink />}>
-                    {l.label}
+                  <ButtonLink href={l.href} size="sm" variant="secondary" icon={<AppWindow />}>
+                    <IdText text={l.label} />
                   </ButtonLink>
-                  {l.pending ? <span className="mt-0.5 text-xs text-ink-muted">Expected ID; exists {l.pending}</span> : null}
+                  {l.pending ? <span className="mt-0.5 text-sm text-ink-muted">Expected ID; exists {l.pending}</span> : null}
                 </li>
               ))}
             </ul>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid gap-5 lg:grid-cols-2">
             <div>
               <h3 className="mb-1.5 text-sm font-semibold text-ink">What to click</h3>
-              <ol className="list-decimal space-y-1 pl-5 text-ink">
+              <ol className="list-decimal space-y-1 pl-5 text-ink marker:text-ink-muted">
                 {content.click.map((c) => (
-                  <li key={c}>{c}</li>
+                  <li key={c}>
+                    <IdText text={c} />
+                  </li>
                 ))}
               </ol>
             </div>
             <div>
               <h3 className="mb-1.5 text-sm font-semibold text-ink">What to notice</h3>
-              <ul className="list-disc space-y-1 pl-5 text-ink">
+              <ul className="list-disc space-y-1 pl-5 text-ink marker:text-ink-muted">
                 {content.notice.map((c) => (
-                  <li key={c}>{c}</li>
+                  <li key={c}>
+                    <IdText text={c} />
+                  </li>
                 ))}
               </ul>
             </div>
           </div>
 
-          <div className="rounded-md border border-line bg-surface-subtle p-3">
-            <h3 className="mb-1.5 text-sm font-semibold text-ink">Real vs simulated in this step</h3>
-            <div className="grid gap-3 sm:grid-cols-2">
+          <section aria-labelledby="demo-step-rvs" className="border-t border-line pt-4">
+            <h3 id="demo-step-rvs" className="mb-1.5 text-sm font-semibold text-ink">
+              Real vs simulated in this step
+            </h3>
+            <div className="grid gap-4 sm:grid-cols-2">
               <div>
-                <p className="text-xs font-semibold text-ink-secondary">Working in this demo (local logic)</p>
-                <ul className="mt-1 list-disc space-y-0.5 pl-5 text-ink">
+                <p className="text-sm font-semibold text-ink-secondary">Working in this demo (local logic)</p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-5 text-ink marker:text-ink-muted">
                   {content.working.map((w) => (
                     <li key={w}>{w}</li>
                   ))}
                 </ul>
               </div>
               <div>
-                <p className="text-xs font-semibold text-ink-secondary">
-                  <SimulatedLabel size="xs">Simulated in this step</SimulatedLabel>
-                </p>
-                <ul className="mt-1 list-disc space-y-0.5 pl-5 text-ink">
+                <SimulatedLabel>Simulated in this step</SimulatedLabel>
+                <ul className="mt-1 list-disc space-y-0.5 pl-5 text-ink marker:text-ink-muted">
+                  {/* Plain text: these name simulated systems (EMA-SIM), which are not identifiers. */}
                   {content.simulated.map((w) => (
                     <li key={w}>{w}</li>
                   ))}
                 </ul>
               </div>
             </div>
-          </div>
+          </section>
 
           {status ? (
-            <div>
-              <h3 className="mb-1.5 text-sm font-semibold text-ink">Progress (read from the records)</h3>
+            <section aria-labelledby="demo-step-progress" className="border-t border-line pt-4">
+              <h3 id="demo-step-progress" className="mb-1.5 text-sm font-semibold text-ink">
+                Progress (read from the records)
+              </h3>
               <ul className="grid gap-1">
                 {status.checks.map((c) => (
                   <li key={c.label} className="flex items-start gap-2">
-                    {c.done ? <CircleCheck className="mt-0.5 size-4 shrink-0 text-success-solid" aria-hidden /> : <CircleDashed className="mt-0.5 size-4 shrink-0 text-ink-muted" aria-hidden />}
-                    <span>
+                    {c.done ? <CircleCheck className="mt-0.5 size-4 shrink-0 text-ink-muted" aria-hidden /> : <CircleDashed className="mt-0.5 size-4 shrink-0 text-ink-muted" aria-hidden />}
+                    <span className={c.done ? "text-ink-secondary" : "text-ink"}>
                       <span className="sr-only">{c.done ? "Done: " : "Not yet: "}</span>
-                      {c.label}
-                      {c.detail ? <span className="ml-1 text-ink-muted">({c.detail})</span> : null}
+                      <IdText text={checkText(content.step, c.label)} />
+                      {c.detail ? (
+                        <span className="ml-1 text-ink-muted">
+                          (<IdText text={c.detail} />)
+                        </span>
+                      ) : null}
                     </span>
                   </li>
                 ))}
               </ul>
-            </div>
+            </section>
           ) : null}
 
           {content.step === 8 ? <OperationsSummary blockers={blockers} heroAccession={ids.accession} /> : null}
 
-          <nav aria-label="Step navigation" className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
+          <nav aria-label="Step navigation" className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-4">
             {prev ? (
-              <ButtonLink href={`/demo?tab=guide&step=${prev}`} size="sm" variant="quiet" icon={<ArrowLeft />} scroll={false}>
-                Previous step
+              <ButtonLink href={`/demo?tab=guide&step=${prev.step}`} size="sm" variant="quiet" scroll={false}>
+                Previous: {prev.step}. {prev.short}
               </ButtonLink>
             ) : (
               <span />
             )}
             {next ? (
-              <ButtonLink href={`/demo?tab=guide&step=${next}`} size="sm" variant="secondary" scroll={false}>
-                Next step <ArrowRight className="size-4" aria-hidden />
+              <ButtonLink href={`/demo?tab=guide&step=${next.step}`} size="sm" variant="secondary" scroll={false}>
+                Next: {next.step}. {next.short}
               </ButtonLink>
             ) : (
               <ButtonLink href="/demo?tab=notes" size="sm" variant="secondary">
-                Closing notes <ArrowRight className="size-4" aria-hidden />
+                Closing notes
               </ButtonLink>
             )}
           </nav>
         </div>
 
-        <footer className="border-t border-line bg-surface-subtle px-4 py-2 text-xs text-ink-secondary" role="note">
+        <footer className="rounded-b-lg border-t border-line bg-surface-subtle px-4 py-2 text-sm text-ink-secondary" role="note">
           {COPY_GUARD}
         </footer>
       </section>
@@ -354,11 +350,54 @@ export function GuidedDemo({
   );
 }
 
+/**
+ * The eight steps as one hairline sheet, like the Intake step rail: the current step selected (fill and a
+ * 1px brand outline), done quiet, in progress in ink. Progress is read from the records.
+ */
+function StepRail({ steps, current, stepClockIso }: { steps: StepStatusView[]; current: number; stepClockIso: Record<number, string> }) {
+  return (
+    <nav aria-label="Demo steps" className="min-w-0">
+      <ol className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-line bg-line md:grid-cols-4 xl:grid-cols-1">
+        {STEPS.map((s) => {
+          const rec = steps.find((x) => x.step === s.step);
+          const st = rec?.state ?? "not_started";
+          const active = s.step === current;
+          return (
+            <li key={s.step} className="flex bg-surface">
+              <Link
+                href={`/demo?tab=guide&step=${s.step}`}
+                scroll={false}
+                aria-current={active ? "step" : undefined}
+                className={cn(
+                  "flex min-h-[max(2.75rem,var(--hlo-target-min))] w-full items-start gap-2 px-3 py-2 text-sm transition-colors duration-[var(--hlo-duration-fast)]",
+                  active ? "bg-brand-50 shadow-[inset_0_0_0_1px_var(--hlo-brand)]" : "hover:bg-surface-subtle",
+                )}
+              >
+                <StateIcon state={st} className="mt-0.5 shrink-0" />
+                <span className="min-w-0">
+                  <span className={cn("block", active ? "font-semibold text-ink" : st === "done" ? "font-medium text-ink-secondary" : "font-medium text-ink")}>
+                    {s.step}. {s.short}
+                  </span>
+                  <span className="block text-sm text-ink-muted">
+                    {stepClockIso[s.step] ? `${fmtTime(stepClockIso[s.step])} ET, ` : ""}
+                    {rec ? recordsDoneText(rec.checks) : "not read from the records"}
+                  </span>
+                </span>
+              </Link>
+            </li>
+          );
+        })}
+      </ol>
+      <p className="mt-2 text-sm text-ink-muted max-xl:hidden">Progress is read from the records, so it also counts work done directly on the real screens.</p>
+    </nav>
+  );
+}
+
 /** Step 8: the real Operations "what is still blocked" list (owner and age), with a link to the full screen. */
 function OperationsSummary({ blockers, heroAccession }: { blockers: OpsBlockerView[] | null; heroAccession: string | null }) {
   if (blockers === null) {
     return (
-      <p className="rounded-md border border-line bg-surface-subtle p-3 text-sm text-ink-secondary">
+      <p className="border-t border-line pt-4 text-sm text-ink-secondary">
         The Operations summary could not be read here. Open the Operations screen for the full list.
       </p>
     );
@@ -368,29 +407,38 @@ function OperationsSummary({ blockers, heroAccession }: { blockers: OpsBlockerVi
   const ordered = heroAccession ? [...blockers.filter(isHero), ...blockers.filter((b) => !isHero(b))] : blockers;
   const shown = ordered.slice(0, 8);
   return (
-    <div>
-      <h3 className="mb-1.5 text-sm font-semibold text-ink">Still blocked right now (from the Operations screen)</h3>
+    <section aria-labelledby="demo-ops-summary" className="border-t border-line pt-4">
+      <h3 id="demo-ops-summary" className="mb-1.5 text-sm font-semibold text-ink">
+        Still blocked right now (from the Operations screen)
+      </h3>
       {blockers.length === 0 ? (
         <p className="text-sm text-ink-secondary">Nothing is blocked in the synthetic records right now.</p>
       ) : (
-        <ul className="grid gap-1 rounded-md border border-line p-2 text-sm">
+        <ul className="divide-y divide-line border-y border-line text-sm">
           {shown.map((b) => (
-            <li key={b.key} className="border-b border-line py-1 last:border-b-0">
-              <Link href={b.href} className="font-medium text-brand underline-offset-2 hover:underline">
-                {b.item}
-              </Link>
-              <p className="text-xs text-ink-secondary">{b.blocks}</p>
-              <p className="text-xs text-ink-muted">
-                Owner: {b.owner} · waiting {b.age}
-              </p>
+            <li key={b.key} className="grid gap-x-6 gap-y-0.5 py-2 md:grid-cols-[minmax(0,1fr)_minmax(12rem,auto)]">
+              <div className="min-w-0">
+                <Link href={b.href} className="font-medium text-brand underline-offset-2 hover:underline">
+                  <IdText text={b.item} />
+                </Link>
+                <p className="text-ink-secondary">
+                  <IdText text={b.blocks} />
+                </p>
+              </div>
+              <dl className="grid grid-cols-[auto_minmax(0,1fr)] content-start gap-x-2 text-ink-secondary">
+                <dt className="text-ink-muted">Owner</dt>
+                <dd className="text-ink">{b.owner}</dd>
+                <dt className="text-ink-muted">Waiting</dt>
+                <dd>{b.age}</dd>
+              </dl>
             </li>
           ))}
         </ul>
       )}
-      <p className="mt-1 text-xs text-ink-muted">
+      <p className="mt-1.5 text-sm text-ink-muted">
         {blockers.length > shown.length ? `Showing ${shown.length} of ${blockers.length}${heroAccession && blockers.some(isHero) ? `, ${heroAccession} first` : ""}. ` : ""}Ages use the demo clock and synthetic records. They are not results and
         are not used to rank anyone.
       </p>
-    </div>
+    </section>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { OctagonX } from "lucide-react";
+import { TriangleAlert } from "lucide-react";
 import { createContext, useContext, useId, type ComponentProps, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
@@ -83,8 +83,8 @@ export function Field({ label, children, hint, error, required, unit, id, classN
         </p>
       ) : null}
       {error ? (
-        <p id={errorId} className="flex items-start gap-1 text-xs font-medium text-danger-fg">
-          <OctagonX className="mt-px size-3.5 shrink-0 text-danger-solid" aria-hidden />
+        <p id={errorId} className="flex items-start gap-1 text-xs font-medium text-warning-fg">
+          <TriangleAlert className="mt-px size-3.5 shrink-0 text-warning-solid" aria-hidden />
           <span>{error}</span>
         </p>
       ) : null}
@@ -108,7 +108,7 @@ function useFieldProps<T extends { id?: string; required?: boolean; "aria-descri
 }
 
 const controlBase =
-  "w-full rounded-sm border border-line-strong bg-surface text-ink placeholder:text-ink-muted transition-colors duration-[var(--hlo-duration-fast)] hover:border-ink-secondary disabled:cursor-not-allowed disabled:border-line disabled:bg-surface-sunken disabled:text-ink-disabled aria-[invalid=true]:border-danger-solid aria-[invalid=true]:bg-danger-bg";
+  "w-full rounded-sm border border-line-strong bg-surface text-ink placeholder:text-ink-muted transition-colors duration-[var(--hlo-duration-fast)] hover:border-ink-secondary disabled:cursor-not-allowed disabled:border-line disabled:bg-surface-sunken disabled:text-ink-disabled aria-[invalid=true]:border-warning-solid aria-[invalid=true]:bg-warning-bg";
 
 const controlSize = {
   sm: "h-8 min-h-[max(2rem,var(--hlo-target-min))] px-2 text-sm",
@@ -135,7 +135,17 @@ export interface SelectProps extends Omit<ComponentProps<"select">, "size"> {
 export function Select({ invalid, size = "md", className, children, ...rest }: SelectProps) {
   const field = useFieldProps(rest, invalid);
   return (
-    <select {...rest} {...field} className={cn(controlBase, controlSize[size], "pr-7", className)}>
+    <select
+      {...rest}
+      {...field}
+      className={cn(
+        controlBase,
+        controlSize[size],
+        // Drawn chevron in muted ink instead of the OS default; native appearance returns in forced colors.
+        "select-chevron appearance-none pr-8 forced-colors:appearance-auto",
+        className,
+      )}
+    >
       {children}
     </select>
   );
@@ -161,16 +171,16 @@ export function Checkbox({
   const id = rest.id ?? `cb${auto}`;
   const hintId = hint ? `${id}-hint` : undefined;
   return (
-    <div className={cn("flex items-start gap-2", className)}>
+    <div className={cn("flex min-h-[var(--hlo-target-min)] items-start gap-2 py-0.5", className)}>
       <input
         type="checkbox"
         {...rest}
         id={id}
         aria-describedby={[rest["aria-describedby"], hintId].filter(Boolean).join(" ") || undefined}
-        className="mt-0.5 size-4 shrink-0 accent-[var(--hlo-brand)] disabled:cursor-not-allowed"
+        className="mt-0.5 size-[1.125rem] shrink-0 accent-[var(--hlo-brand)] disabled:cursor-not-allowed"
       />
       <div className="min-w-0">
-        <label htmlFor={id} className="text-sm text-ink">
+        <label htmlFor={id} className="inline-block py-0.5 text-sm text-ink">
           {label}
         </label>
         {hint ? (

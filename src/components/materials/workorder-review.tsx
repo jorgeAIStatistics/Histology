@@ -59,16 +59,16 @@ function ReviewCard({ wo }: { wo: WorkOrderReviewView }) {
         <StatusPill tone="warning">{wo.statusLabel}</StatusPill>
       </div>
       <p className="mt-1 text-sm text-ink-secondary">
-        Original authorization: {wo.sourceReference}
-        {wo.statusReason ? <> · Source change: {wo.statusReason}</> : null}
+        Original authorization: {wo.sourceReference}.
+        {wo.statusReason ? <> Source change: {wo.statusReason}</> : null}
       </p>
       <ul className="mt-2 flex flex-col gap-1 text-sm">
         {wo.slides.map((s) => (
           <li key={s.id} className="flex flex-wrap items-center gap-2">
             <span className="id-mono font-medium">{s.label}</span>
             <span className="text-ink-secondary">
-              {s.prepared ? `Prepared (${s.physicalState.replace(/_/g, " ")})` : "Not yet cut"} · label {LABEL_STATE_TEXT[s.labelState] ?? s.labelState.replace(/_/g, " ")}
-              {s.status === "canceled_needs_review" ? " · awaiting review (still on the worklist)" : ""}
+              {s.prepared ? `Prepared (${s.physicalState.replace(/_/g, " ")})` : "Not yet cut"}, label {LABEL_STATE_TEXT[s.labelState] ?? s.labelState.replace(/_/g, " ")}
+              {s.status === "canceled_needs_review" ? ", awaiting review (still on the worklist)" : ""}
             </span>
           </li>
         ))}
@@ -156,10 +156,10 @@ export function WorkOrderReviews({ items, recent, now }: { items: WorkOrderRevie
           <ul className="mt-2 flex flex-col gap-1.5">
             {recent.map((r) => (
               <li key={r.displayId}>
-                <span className="id-mono font-medium">{r.displayId}</span> · {r.accessionNumber} · {r.decision?.replace(/_/g, " ")} by {r.reviewedBy ?? "Unknown"}{" "}
+                <span className="id-mono font-medium">{r.displayId}</span> for <span className="id-mono">{r.accessionNumber}</span>: {r.decision?.replace(/_/g, " ")} by {r.reviewedBy ?? "Unknown"}{" "}
                 {r.reviewedAt ? <Timestamp iso={r.reviewedAt} now={now} /> : null}
                 <span className="block text-xs text-ink-muted">
-                  {r.slides.map((s) => `${s.label}: ${s.disposition}`).join("; ") || "No slides"} · Note: {r.note}
+                  {r.slides.map((s) => `${s.label}: ${s.disposition}`).join("; ") || "No slides"}. Note: {r.note}
                 </span>
               </li>
             ))}

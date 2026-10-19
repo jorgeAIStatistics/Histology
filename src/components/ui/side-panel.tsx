@@ -34,6 +34,8 @@ export interface SidePanelProps {
   preserveFocus?: boolean;
   /** Sit below the sticky identity bar instead of directly below the top bar. */
   belowIdentityBar?: boolean;
+  /** Keep the title for screen readers only (when `identity` already reads as the heading, e.g. a specimen label). */
+  hideTitle?: boolean;
   footer?: ReactNode;
   children: ReactNode;
   className?: string;
@@ -49,6 +51,7 @@ export function SidePanel({
   focusKey,
   preserveFocus,
   belowIdentityBar,
+  hideTitle,
   footer,
   children,
   className,
@@ -83,6 +86,9 @@ export function SidePanel({
   }, []);
 
   useEffect(() => {
+    // J/K moved the panel to another record: Esc should return to that record's row, not the first opener.
+    const selected = document.querySelector<HTMLElement>('[aria-selected="true"], [data-panel-opener="true"]');
+    if (selected) returnTo.current = selected;
     if (preserveFocus) return;
     headingRef.current?.focus();
   }, [focusKey, preserveFocus]);
@@ -113,13 +119,20 @@ export function SidePanel({
         top,
         height,
         "max-xl:fixed max-xl:right-0 max-xl:w-[min(480px,100vw)] max-xl:shadow-3",
+        // Tablet portrait / 200% zoom / short windows: header and body scroll together so the header never pins half the view.
+        "stacked:overflow-y-auto",
         className,
       )}
     >
-      <div className="flex items-start gap-2 border-b border-line px-4 py-3">
+      <div className="flex items-start gap-2 border-b border-line px-4 py-3 has-[h2.sr-only:focus-visible]:outline-2 has-[h2.sr-only:focus-visible]:-outline-offset-2 has-[h2.sr-only:focus-visible]:outline-focus">
         <div className="min-w-0 flex-1">
           {identity || status ? <div className="mb-1.5 flex flex-wrap items-center gap-2">{identity}{status}</div> : null}
-          <h2 id={headingId} ref={headingRef} tabIndex={-1} className="text-md font-semibold text-ink focus:outline-none focus-visible:outline-2">
+          <h2
+            id={headingId}
+            ref={headingRef}
+            tabIndex={-1}
+            className={cn("w-fit rounded-sm text-md font-semibold text-ink focus-visible:outline-2 focus-visible:outline-offset-1", hideTitle && "sr-only")}
+          >
             {title}
           </h2>
           {fullRecordHref ? (
@@ -134,7 +147,7 @@ export function SidePanel({
             href={closeHref}
             scroll={false}
             aria-label="Close panel"
-            className="inline-flex size-8 shrink-0 items-center justify-center rounded-sm text-ink-muted hover:bg-surface-subtle hover:text-ink"
+            className="inline-flex size-8 min-h-[var(--hlo-target-min)] min-w-[var(--hlo-target-min)] shrink-0 items-center justify-center rounded-sm text-ink-muted hover:bg-surface-subtle hover:text-ink"
           >
             <X className="size-4" aria-hidden />
           </Link>
@@ -143,13 +156,13 @@ export function SidePanel({
             type="button"
             onClick={() => closeRef.current()}
             aria-label="Close panel"
-            className="inline-flex size-8 shrink-0 items-center justify-center rounded-sm text-ink-muted hover:bg-surface-subtle hover:text-ink"
+            className="inline-flex size-8 min-h-[var(--hlo-target-min)] min-w-[var(--hlo-target-min)] shrink-0 items-center justify-center rounded-sm text-ink-muted hover:bg-surface-subtle hover:text-ink"
           >
             <X className="size-4" aria-hidden />
           </button>
         )}
       </div>
-      <div className="relative min-h-0 flex-1 overflow-y-auto px-4 py-3 text-sm">{children}</div>
+      <div className="relative min-h-0 flex-1 overflow-y-auto px-4 py-3 text-sm stacked:flex-none stacked:overflow-visible">{children}</div>
       {footer ? <div className="border-t border-line bg-surface-subtle px-4 py-3">{footer}</div> : null}
     </aside>
   );

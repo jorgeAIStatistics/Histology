@@ -2,7 +2,7 @@ import type { DB } from "@/server/db/db";
 import type { Actor } from "@/server/core/context";
 import { readClock } from "@/server/core/clock";
 import { roleCan } from "@/lib/roles";
-import { labDay } from "@/lib/time";
+import { fmtDate, labDay } from "@/lib/time";
 import { activeHolds, blockedTransitions, scopesForIntake, type HoldRow } from "@/server/domain/holds";
 import {
   type CompareField,
@@ -25,6 +25,9 @@ import { accessionBlockers, latestRequestFor, type Blocker } from "@/server/doma
 import { accessionSourceStatus } from "@/server/sim/authoritative";
 import { countUnreceived, labelText } from "@/server/sim/courier";
 import { CORRECTION_KIND_LABEL, CORRECTION_STATUS_LABEL } from "@/server/domain/correction";
+import { assistantMode } from "@/server/assist/drafter";
+import { genericBody, SIMULATED_TAG } from "@/server/sim/notifications";
+import { buildPlan, openOrder, partsOf, queueFlags, type IntakePlan, type QueueFlag } from "@/components/intake/plan";
 
 /**
  * Read side of the intake bench (server components call these directly).
@@ -66,7 +69,16 @@ export interface DeliveryView {
   lines: ManifestLineView[];
   /** Received containers from offices with no manifest line. */
   offManifest: { officeName: string; received: number; items: string[] }[];
-  totals: { expected: number | null; expectedKnownPart: number; received: number; missing: number | null; extra: number; unknownLines: number };
+  totals: {
+    expected: number | null;
+    expectedKnownPart: number;
+    received: number;
+    missing: number | null;
+    extra: number;
+    unknownLines: number;
+    /** Received containers that a person has checked against the order (verified or discrepancy recorded). */
+    checked: number;
+  };
   /** SIMULATOR: requisitions still in the courier bag (demo unpack controls only). */
   simRemaining: number;
   simTotal: number;
@@ -93,6 +105,10 @@ export interface QueueItem {
   pathologistName: string | null;
   pathologistColor: string | null;
   ownerName: string | null;
+  /** Lane reasons ranked by the severity ladder (identity, field differs, hold, waiting on a named owner). */
+  flags: QueueFlag[];
+  /** The related-order review this item is part of (never a merge). */
+  related: { displayId: string; status: string; ownerName: string | null } | null;
 }
 
 export interface OrderPartView {
@@ -198,6 +214,22 @@ export interface RelatedView {
   decisionReason: string | null;
   orders: { id: string; sourceOrderId: string; tenantName: string }[];
   otherItems: { id: string; displayId: string; status: string }[];
+  /** The two submissions as the lead's A | B columns read them (derived, read-only; nothing is joined). */
+  sides: RelatedSide[];
+}
+
+/**
+ * One submission of a related-order candidate, read from its own records, so each
+ * reason and conflict can be shown for both submissions in aligned columns.
+ */
+export interface RelatedSide {
+  orderId: string;
+  sourceOrderId: string;
+  /** The intake item that received this order (null if none on the bench). */
+  intakeDisplayId: string | null;
+  parts: string[];
+  /** What this submission's own record says for each reason or conflict code; null = not stated. */
+  values: Record<string, string | null>;
 }
 
 export interface HoldView {
@@ -217,6 +249,10 @@ export interface HoldView {
 export interface ClarificationView {
   id: string;
   displayId: string;
+  /** Row version, sent back with a send (stale-safe). */
+  version: number;
+  /** For a drafted question: the generic notice the office would receive (no patient details). */
+  noticePreview: string | null;
   category: string;
   state: string;
   subjectLabel: string;
@@ -327,6 +363,26 @@ export interface BenchPermissions {
   openCorrection: boolean;
   closeCorrection: boolean;
   print: boolean;
+  sendClarification: boolean;
+  reviewClarification: boolean;
+}
+
+/**
+ * A possibly related item shown beside this one (never merged): just what the
+ * screen needs to state the hold scope for every part and draw the A | B plates.
+ */
+export interface SiblingView {
+  id: string;
+  displayId: string;
+  status: string;
+  part: string | null;
+  orderRef: string | null;
+  site: string | null;
+  procedure: string | null;
+  verification: "unverified" | "verified" | "discrepancy" | "none";
+  differing: string[];
+  holds: { displayId: string; scopeType: string; scopeLabel: string; blocks: string[]; blocksAccession: boolean }[];
+  accession: string | null;
 }
 
 export interface IntakeBench {
@@ -342,6 +398,15 @@ export interface IntakeBench {
   pathologists: { id: string; name: string; shortName: string; color: string | null }[];
   selected: ItemDetail | null;
   selectedNotFound: string | null;
+  /** Read-only demo roles (Director, Medical director). */
+  readOnly: boolean;
+  assistantMode: "deterministic" | "unavailable";
+  /** Possibly related items of the selected item (context only). */
+  siblings: SiblingView[];
+  /** For the selected item and this actor: finding, hold scope, five steps, next step, waiting on, accession reason. */
+  plan: IntakePlan | null;
+  /** The first open item in working order (exceptions, then routine review), for the empty state. */
+  firstOpen: { displayId: string; patientName: string | null; reason: string | null } | null;
 }
 
 // ---------------------------------------------------------------- helpers
@@ -384,6 +449,8 @@ function permissionsFor(role: Actor["role"]): BenchPermissions {
     openCorrection: roleCan(role, "correction.open"),
     closeCorrection: roleCan(role, "correction.close"),
     print: roleCan(role, "print.request"),
+    sendClarification: roleCan(role, "clarification.send"),
+    reviewClarification: roleCan(role, "clarification.review"),
   };
 }
 
@@ -403,10 +470,11 @@ export function deliveriesForDay(db: DB, day: string): DeliveryView[] {
     }[];
     const items = db
       .prepare(
-        `SELECT ii.id, ii.display_id, ii.office_id, ii.observed_office_text, (SELECT COUNT(*) FROM container c WHERE c.intake_item_id = ii.id) n
+        `SELECT ii.id, ii.display_id, ii.office_id, ii.observed_office_text, (SELECT COUNT(*) FROM container c WHERE c.intake_item_id = ii.id) n,
+                (SELECT COUNT(*) FROM container c WHERE c.intake_item_id = ii.id AND c.verification_state <> 'unverified') checked
            FROM intake_item ii WHERE ii.delivery_id = ? ORDER BY ii.received_at`,
       )
-      .all(d.id) as { id: string; display_id: string; office_id: string | null; observed_office_text: string | null; n: number }[];
+      .all(d.id) as { id: string; display_id: string; office_id: string | null; observed_office_text: string | null; n: number; checked: number }[];
     const officeNames = new Map((db.prepare("SELECT id, name FROM office").all() as { id: string; name: string }[]).map((o) => [o.id, o.name]));
     const missingRows = db
       .prepare(
@@ -474,6 +542,7 @@ export function deliveriesForDay(db: DB, day: string): DeliveryView[] {
         missing: unknownLines ? null : lineViews.reduce((s, l) => s + (l.missing ?? 0), 0),
         extra,
         unknownLines,
+        checked: items.reduce((n, it) => n + it.checked, 0),
       },
       simRemaining: countUnreceived(db, d.id),
       simTotal,
@@ -554,6 +623,21 @@ export function intakeQueue(db: DB, now: string): QueueItem[] {
     }
     const finalId = routing ? routing.final_pathologist_id ?? routing.suggested_pathologist_id : null;
     const p = finalId ? staff.get(finalId) : undefined;
+    const cands = candidatesForIntake(db, r.id);
+    const cand = cands.find((c) => c.status === "pending_review" || c.status === "escalated_to_office") ?? cands[0] ?? null;
+    const relOwner = cand
+      ? (db
+          .prepare("SELECT owner_id FROM task WHERE status IN ('open','in_progress') AND entity_type = 'related_order_candidate' AND entity_id = ? ORDER BY created_at LIMIT 1")
+          .get(cand.id) as { owner_id: string | null } | undefined)
+      : undefined;
+    const related = cand ? { displayId: cand.display_id, status: cand.status, ownerName: nameOf(staff, relOwner?.owner_id) } : null;
+    // Derived, read-only: who the routing exception waits on (named on the queue flag).
+    const routingOwner =
+      routing?.status === "exception"
+        ? (db
+            .prepare("SELECT owner_id FROM task WHERE kind = 'routing_exception' AND entity_id = ? AND status IN ('open','in_progress') ORDER BY created_at LIMIT 1")
+            .get(r.id) as { owner_id: string | null } | undefined)
+        : undefined;
     out.push({
       id: r.id,
       displayId: r.display_id,
@@ -573,6 +657,8 @@ export function intakeQueue(db: DB, now: string): QueueItem[] {
       pathologistName: p?.display_name ?? null,
       pathologistColor: p?.color_token ?? null,
       ownerName: nameOf(staff, r.current_owner_id),
+      flags: queueFlags(lf.reasons, related, nameOf(staff, routingOwner?.owner_id)),
+      related,
     });
   }
   // Exceptions first within the open lanes; newest first in Done.
@@ -624,6 +710,56 @@ function holdView(staff: Map<string, StaffRow>, h: HoldRow): HoldView {
     placedAt: h.placed_at,
     version: h.version,
   };
+}
+
+/**
+ * One submission of a related-order candidate, read from its own order, patient
+ * reference, encounter, office, clinician, parts and courier delivery. Keyed by
+ * the reason and conflict codes of the detection rule (src/server/domain/related.ts),
+ * so the lead sees what each record says side by side. Read-only; joins nothing.
+ */
+function relatedSide(db: DB, orderId: string): RelatedSide {
+  const o = db
+    .prepare(
+      `SELECT so.source_order_id, pr.source_mrn, pr.family_name, pr.given_name, pr.birth_date, e.source_encounter_id enc_src,
+              off.name office_name, c.display_name clinician_name
+         FROM source_order so
+         JOIN patient_ref pr ON pr.id = so.patient_ref_id
+         JOIN office off ON off.id = so.office_id
+         LEFT JOIN encounter e ON e.id = so.encounter_id
+         LEFT JOIN clinician c ON c.id = so.ordering_clinician_id
+        WHERE so.id = ?`,
+    )
+    .get(orderId) as
+    | { source_order_id: string; source_mrn: string; family_name: string; given_name: string; birth_date: string; enc_src: string | null; office_name: string; clinician_name: string | null }
+    | undefined;
+  const parts = db.prepare("SELECT designation, collected_at FROM source_order_part WHERE source_order_id = ? AND status = 'active' ORDER BY designation").all(orderId) as {
+    designation: string;
+    collected_at: string | null;
+  }[];
+  const items = intakeItemsForOrder(db, orderId);
+  const delivery = items[0]
+    ? ((db.prepare("SELECT d.display_id FROM intake_item ii JOIN courier_delivery d ON d.id = ii.delivery_id WHERE ii.id = ?").get(items[0].id) as { display_id: string } | undefined)?.display_id ?? null)
+    : null;
+  const days = [...new Set(parts.map((p) => (p.collected_at ? labDay(p.collected_at) : null)).filter((d): d is string => !!d))];
+  const designations = parts.map((p) => p.designation);
+  const values: Record<string, string | null> = o
+    ? {
+        same_patient_reference: `MRN ${o.source_mrn}`,
+        different_patient_reference: `MRN ${o.source_mrn}`,
+        same_encounter: o.enc_src,
+        encounter_unknown: o.enc_src,
+        same_office: o.office_name,
+        same_collection_day: days.length ? days.map((d) => fmtDate(`${d}T16:00:00.000Z`)).join(", ") : null,
+        collection_unknown: days.length ? days.map((d) => fmtDate(`${d}T16:00:00.000Z`)).join(", ") : null,
+        same_clinician: o.clinician_name,
+        same_delivery: delivery,
+        separate_orders: o.source_order_id,
+        designation_clash: designations.length ? `Part ${designations.join(", ")}` : null,
+        same_name_dob: `${o.family_name}, ${o.given_name}, ${o.birth_date}`,
+      }
+    : {};
+  return { orderId, sourceOrderId: o?.source_order_id ?? orderId, intakeDisplayId: items[0]?.display_id ?? null, parts: designations, values };
 }
 
 export function intakeItemDetail(db: DB, displayIdOrId: string): ItemDetail | null {
@@ -716,7 +852,7 @@ export function intakeItemDetail(db: DB, displayIdOrId: string): ItemDetail | nu
     )
     .all(item.id, item.id, item.id, item.id, item.accession_id, item.accession_id) as {
     id: string; display_id: string; category: string; state: string; subject_label: string; question: string; lab_owner_id: string;
-    next_follow_up_at: string | null; created_at: string; container_id: string | null; order_part_id: string | null;
+    next_follow_up_at: string | null; created_at: string; container_id: string | null; order_part_id: string | null; version: number;
   }[];
 
   const openDisc = db.prepare("SELECT * FROM intake_discrepancy WHERE intake_item_id = ? AND status = 'open' ORDER BY detected_at").all(item.id) as DiscrepancyRow[];
@@ -843,6 +979,7 @@ export function intakeItemDetail(db: DB, displayIdOrId: string): ItemDetail | nu
       decisionReason: c.decision_reason,
       orders: orderIds.map((oid) => ({ id: oid, sourceOrderId: tenantOf.get(oid)?.source_order_id ?? oid, tenantName: tenantOf.get(oid)?.name ?? "Unknown tenant" })),
       otherItems: [...new Map(others.map((o) => [o.id, { id: o.id, displayId: o.display_id, status: o.status }])).values()],
+      sides: orderIds.map((oid) => relatedSide(db, oid)),
     };
   });
 
@@ -964,6 +1101,8 @@ export function intakeItemDetail(db: DB, displayIdOrId: string): ItemDetail | nu
     clarifications: clarRows.map((q) => ({
       id: q.id,
       displayId: q.display_id,
+      version: q.version,
+      noticePreview: q.state === "drafted" ? genericBody("initial", q.display_id).replace(` ${SIMULATED_TAG}`, "") : null,
       category: q.category,
       state: q.state,
       subjectLabel: q.subject_label,
@@ -1013,11 +1152,30 @@ export function intakeBench(db: DB, actor: Actor, opts: { item?: string | null }
     selected = intakeItemDetail(db, opts.item);
     if (!selected) selectedNotFound = opts.item;
   }
+  const permissions = permissionsFor(actor.role);
+  const readOnly = actor.role === "director" || actor.role === "medical_director";
+  const siblings = selected ? siblingsOf(db, selected) : [];
+  const order = openOrder(queue);
+  const firstOpen = order[0] ? { displayId: order[0].displayId, patientName: order[0].patientName, reason: order[0].flags[0]?.text ?? null } : null;
+  let plan: IntakePlan | null = null;
+  if (selected) {
+    const at = order.findIndex((q) => q.id === selected!.id);
+    const after = [...order.slice(at + 1), ...order.slice(0, Math.max(0, at))].find((q) => q.id !== selected!.id) ?? null;
+    plan = buildPlan({
+      item: selected,
+      siblings,
+      actor: { id: actor.id, name: actor.name, role: actor.role },
+      permissions,
+      sourceAvailable: src.available,
+      readOnly,
+      nextItem: after ? { displayId: after.displayId, patientName: after.patientName } : null,
+    });
+  }
   return {
     now,
     demoDay: day,
     actor: { id: actor.id, name: actor.name, role: actor.role },
-    permissions: permissionsFor(actor.role),
+    permissions,
     source: { available: src.available, status: src.status, name: src.name, lastSuccessAt: src.lastSuccessAt },
     deliveries,
     activeDeliveryId: active?.id ?? null,
@@ -1026,7 +1184,39 @@ export function intakeBench(db: DB, actor: Actor, opts: { item?: string | null }
     pathologists,
     selected,
     selectedNotFound,
+    readOnly,
+    assistantMode: assistantMode(db),
+    siblings,
+    plan,
+    firstOpen,
   };
+}
+
+/** Possibly related items of `item`, summarized for the hold scope line and the A | B plates (context only, never merged). */
+export function siblingsOf(db: DB, item: ItemDetail): SiblingView[] {
+  const ids = [...new Set(item.related.flatMap((r) => r.otherItems.map((o) => o.displayId)))].filter((d) => d !== item.displayId);
+  const out: SiblingView[] = [];
+  for (const displayId of ids) {
+    const d = intakeItemDetail(db, displayId);
+    if (!d) continue;
+    const c = d.containers[0];
+    const part = c?.orderPartId ? d.orders.flatMap((o) => o.parts).find((p) => p.id === c.orderPartId) : d.orders[0]?.parts[0];
+    const states = d.containers.map((x) => x.verificationState);
+    out.push({
+      id: d.id,
+      displayId: d.displayId,
+      status: d.status,
+      part: partsOf(d).join(" ") || null,
+      orderRef: d.orders[0]?.sourceOrderId ?? null,
+      site: part?.siteText ?? null,
+      procedure: part?.procedure ?? null,
+      verification: !states.length ? "none" : states.includes("unverified") ? "unverified" : states.includes("discrepancy") ? "discrepancy" : "verified",
+      differing: [...new Set(d.containers.flatMap((x) => x.comparison.filter((r) => r.status === "differs").map((r) => r.label)))],
+      holds: d.holds.map((h) => ({ displayId: h.displayId, scopeType: h.scopeType, scopeLabel: h.scopeLabel, blocks: h.blocks, blocksAccession: h.blocksAccession })),
+      accession: d.accession?.number ?? null,
+    });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- scan resolution

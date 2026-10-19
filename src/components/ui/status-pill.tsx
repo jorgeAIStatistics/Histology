@@ -40,7 +40,9 @@ export function StatusPill({ tone = "neutral", children, icon, size = "md", clas
 }
 
 /* ------------------------------------------------------------------ */
-/* State vocabulary for pills (spec §7, same wording everywhere)       */
+/* State vocabulary for pills (spec §7, same wording everywhere).     */
+/* Severity ladder (docs/redesign/visual-system.md): red is reserved   */
+/* for patient identity; failures and missing material are amber.      */
 /* ------------------------------------------------------------------ */
 
 type PillDef = { label: string; tone: Tone };
@@ -50,7 +52,7 @@ export const PILL_STATES = {
     drafted: { label: "Drafted", tone: "neutral" },
     sent: { label: "Sent", tone: "info" },
     delivery_unknown: { label: "Delivery unknown", tone: "warning" },
-    delivery_failed: { label: "Delivery failed", tone: "danger" },
+    delivery_failed: { label: "Delivery failed", tone: "warning" },
     delivered: { label: "Delivered", tone: "info" },
     acknowledged: { label: "Acknowledged", tone: "info" },
     answered: { label: "Answered", tone: "info" },
@@ -70,7 +72,7 @@ export const PILL_STATES = {
     pending_entry: { label: "Source update pending", tone: "warning" },
     entered_attested: { label: "Source update pending", tone: "warning" },
     source_acknowledged: { label: "Source update acknowledged", tone: "success" },
-    failed: { label: "Source update failed", tone: "danger" },
+    failed: { label: "Source update failed", tone: "warning" },
   },
   print: {
     planned: { label: "Planned", tone: "neutral" },
@@ -78,14 +80,14 @@ export const PILL_STATES = {
     submitted: { label: "Submitted", tone: "info" },
     acknowledged: { label: "Acknowledged", tone: "info" },
     completion_confirmed: { label: "Completion confirmed", tone: "success" },
-    failed: { label: "Failed", tone: "danger" },
+    failed: { label: "Failed", tone: "warning" },
     unknown_outcome: { label: "Unknown outcome", tone: "warning" },
     canceled: { label: "Canceled", tone: "neutral" },
   },
   traySlide: {
     expected: { label: "Expected", tone: "neutral" },
     scanned_match: { label: "Scanned, matches", tone: "success" },
-    missing: { label: "Missing", tone: "danger" },
+    missing: { label: "Missing", tone: "warning" },
     unexpected: { label: "Unexpected", tone: "warning" },
     duplicate: { label: "Duplicate", tone: "warning" },
     canceled: { label: "Canceled", tone: "neutral" },
@@ -124,7 +126,7 @@ export const PILL_STATES = {
   sync: {
     synced: { label: "Synced", tone: "success" },
     delayed: { label: "Delayed", tone: "warning" },
-    offline: { label: "Offline", tone: "danger" },
+    offline: { label: "Offline", tone: "warning" },
     unknown: { label: "Unknown", tone: "neutral" },
   },
 } as const satisfies Record<string, Record<string, PillDef>>;

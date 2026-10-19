@@ -12,74 +12,105 @@
   --color-black: #000000;
 }
 
-/* ---------- Histology Lab OS design tokens (light only, v1) ---------- */
+/* ---------- Histology Lab OS design tokens: the H&E stain world (v2, 2026-10-14) ----------
+ * Hematoxylin (blue-black) carries the shell and the ink; eosin (magenta) is
+ * reserved for keyboard focus and the brand mark. Severity ladder: patient
+ * identity = danger red, a field that differs between sources = amber, a hold =
+ * hatched ink, waiting on someone = neutral with the owner's name. Yellow is
+ * PAS only. Contrast of every text pair was computed (all >= 4.5:1).
+ */
 :root {
   color-scheme: light;
 
-  /* Neutrals */
-  --hlo-canvas: #F4F6F8;
+  /* Neutrals: cool bench ground, white evidence sheets, hematoxylin ink */
+  --hlo-canvas: #ECEEF3;
   --hlo-surface: #FFFFFF;
-  --hlo-surface-subtle: #EDF1F4;
-  --hlo-surface-sunken: #E4E9ED;
-  --hlo-border: #D5DDE3;
-  --hlo-border-strong: #7A8894;
-  --hlo-text: #0F1A23;
-  --hlo-text-secondary: #3E4C59;
-  --hlo-text-muted: #56636F;
-  --hlo-text-disabled: #8A95A0;
+  --hlo-surface-subtle: #F4F5F8;
+  --hlo-surface-sunken: #E3E6EE;
+  --hlo-border: #D8DBE5;
+  --hlo-border-strong: #878DA8;
+  --hlo-text: #151A30;
+  --hlo-text-secondary: #383E5C;
+  --hlo-text-muted: #565C78;
+  --hlo-text-disabled: #8C91A8;
 
-  /* Brand + focus */
-  --hlo-brand: #0D5F87;
-  --hlo-brand-hover: #0A4D6E;
-  --hlo-brand-ink: #0A4A6A;
-  --hlo-brand-50: #E8F2F7;
-  --hlo-brand-100: #CFE5EF;
-  --hlo-brand-900: #0E2F42;
-  --hlo-focus: #1F5FD1;
+  /* Shell (hematoxylin) + brand/focus (eosin) */
+  --hlo-shell: #1B1F47;
+  --hlo-shell-2: #272C5E;
+  --hlo-shell-line: #3A4078;
+  --hlo-shell-fg: #FFFFFF;
+  --hlo-shell-muted: #B9BCE0;
+  --hlo-eosin: #C2336F;
+  --hlo-eosin-light: #F07AAA;
 
-  /* Alert tones: fg = text, bg = tint, border, solid = stripe/icon */
-  --hlo-info-fg: #1D4E89;    --hlo-info-bg: #EAF2FB;    --hlo-info-border: #9DBBE3;    --hlo-info-solid: #2A64B0;
-  --hlo-success-fg: #016807; --hlo-success-bg: #E8F5EB; --hlo-success-border: #9CCDA8; --hlo-success-solid: #016807;
-  --hlo-warning-fg: #8C3A06; --hlo-warning-bg: #FFF5EE; --hlo-warning-border: #EFB283; --hlo-warning-solid: #E36A22; /* solid: stripes/icons only, never text */
-  --hlo-danger-fg: #A1161D;  --hlo-danger-bg: #FDECEC;  --hlo-danger-border: #EEA4A7;  --hlo-danger-solid: #C4232B;
-  --hlo-hold-fg: #6E2B66;    --hlo-hold-bg: #F7ECF5;    --hlo-hold-border: #CFA3C6;    --hlo-hold-solid: #6E2B66;
+  --hlo-brand: #3A3F9E;
+  --hlo-brand-hover: #2E3384;
+  --hlo-brand-ink: #2E3384;
+  --hlo-brand-50: #EEEFFA;
+  --hlo-brand-100: #DCDEF4;
+  --hlo-brand-900: #1B1F47;
+  --hlo-focus: #C2336F;
+
+  /* Severity ladder: fg = text, bg = tint, border, solid = icon/marker */
+  --hlo-info-fg: #2C4A86;    --hlo-info-bg: #EDF2FB;    --hlo-info-border: #AFC2E6;    --hlo-info-solid: #3D63B5;
+  --hlo-success-fg: #1E6B3B; --hlo-success-bg: #EAF5EE; --hlo-success-border: #A6D2B5; --hlo-success-solid: #1E6B3B;
+  --hlo-warning-fg: #9A4304; --hlo-warning-bg: #FFF2E5; --hlo-warning-border: #F0B47F; --hlo-warning-solid: #D9650F;
+  --hlo-danger-fg: #A3221B;  --hlo-danger-bg: #FCEBEA;  --hlo-danger-border: #EBA19C;  --hlo-danger-solid: #B42318;
+  /* Hold: hatched ink, never a hue (stays apart from doctor violet and danger red) */
+  --hlo-hold-fg: #2F3450;    --hlo-hold-bg: #EEF0F5;    --hlo-hold-border: #9EA3BC;    --hlo-hold-solid: #2F3450;
+  --hlo-hatch: repeating-linear-gradient(135deg, rgb(47 52 80 / 0.13) 0 2px, transparent 2px 7px);
 
   /* Doctor identity colors (swatch + header tint). Never put text inside a swatch. */
   --hlo-dr-teal: #0F9485;   --hlo-dr-teal-tint: #E3F4F1;
   --hlo-dr-violet: #9A4BD0; --hlo-dr-violet-tint: #F3ECFB;
-  --hlo-dr-amber: #916A0B;  --hlo-dr-amber-tint: #FAF1DC;
+  --hlo-dr-amber: #916A0B;  --hlo-dr-amber-tint: #F1EEE9;
 
-  /* PAS (explicit text + icon; yellow echoes the paper system) */
+  /* PAS (explicit text + icon; yellow echoes the paper system; yellow means PAS only) */
   --hlo-pas-bg: #FFE45C;
   --hlo-pas-fg: #1C1700;
   --hlo-pas-border: #8A7300;
   --hlo-pas-row: #FFF8D6;
 
   /* Honesty labels */
-  --hlo-sim-fg: #46525D;
-  --hlo-sim-bg: #F0F2F4;
-  --hlo-sim-border: #7F8B96;
+  --hlo-sim-fg: #4A5070;
+  --hlo-sim-bg: #F1F2F7;
+  --hlo-sim-border: #878DA8;
 
   /* Charts */
-  --hlo-chart-grid: #E4E9ED;
-  --hlo-chart-axis: #7A8894;
-  --hlo-age-1: #62AEDB; /* under 1 h */
-  --hlo-age-2: #3B89B4; /* 1 to 4 h */
-  --hlo-age-3: #235E7F; /* 4 to 8 h */
-  --hlo-age-4: #163F56; /* over 8 h */
+  --hlo-chart-grid: #E3E6EE;
+  --hlo-chart-axis: #878DA8;
+  --hlo-age-1: #8F94D6; /* under 1 h */
+  --hlo-age-2: #5D63BC; /* 1 to 4 h */
+  --hlo-age-3: #3A3F9E; /* 4 to 8 h */
+  --hlo-age-4: #1B1F47; /* over 8 h */
 
-  /* Layout */
-  --hlo-banner-h: 28px;
+  /* Layout: no banner strip (demo status lives in the top bar); one top bar, no side rail */
+  --hlo-banner-h: 0px;
   --hlo-topbar-h: 52px;
-  --hlo-nav-w: 216px;
-  --hlo-nav-rail-w: 72px;
-  --hlo-identity-h: 56px;
+  --hlo-identity-h: 68px;
   --hlo-panel-w: 420px;
 
-  /* Motion */
+  /* Motion: state changes only; fast, decelerating arrivals; exits faster */
   --hlo-duration-fast: 120ms;
-  --hlo-duration-base: 180ms;
-  --hlo-ease: cubic-bezier(0.2, 0, 0, 1);
+  --hlo-duration-base: 200ms;
+  --hlo-duration-slow: 320ms;
+  --hlo-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --hlo-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+}
+
+/* "stacked": tablet portrait, 200% browser zoom or a short window. Fixed-frame
+   workstations become one page-scrolling column here. Use as stacked:... */
+@custom-variant stacked {
+  @media (max-width: 1023.98px), (max-height: 560px) {
+    @slot;
+  }
+}
+
+/* Below 1024px (tablet portrait, 200% browser zoom) the top bar wraps to two
+   rows; sticky offsets follow. On short viewports the identity bar stops
+   being sticky so pinned chrome never covers more than a third of the view. */
+@media (max-width: 1023.98px) {
+  :root { --hlo-topbar-h: 102px; }
 }
 
 /* Map tokens into Tailwind utilities, e.g. bg-surface, text-ink, text-ink-muted, border-line-strong, bg-hold-bg, rounded-pill, shadow-2 */
@@ -111,27 +142,35 @@
   --color-dr-amber: var(--hlo-dr-amber);     --color-dr-amber-tint: var(--hlo-dr-amber-tint);
   --color-pas-bg: var(--hlo-pas-bg); --color-pas-fg: var(--hlo-pas-fg); --color-pas-border: var(--hlo-pas-border); --color-pas-row: var(--hlo-pas-row);
   --color-sim-fg: var(--hlo-sim-fg); --color-sim-bg: var(--hlo-sim-bg); --color-sim-border: var(--hlo-sim-border);
+  --color-shell: var(--hlo-shell); --color-shell-2: var(--hlo-shell-2); --color-shell-line: var(--hlo-shell-line);
+  --color-shell-fg: var(--hlo-shell-fg); --color-shell-muted: var(--hlo-shell-muted);
+  --color-eosin: var(--hlo-eosin); --color-eosin-light: var(--hlo-eosin-light);
+  /* Status text on the hematoxylin bar (AA on --hlo-shell). */
+  --color-warning-on-dark: #FFC48F; --color-danger-on-dark: #FFB3AC;
 
-  /* next/font exposes --font-plex-sans and --font-plex-mono on <html> */
-  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-plex-mono), ui-monospace, "SFMono-Regular", Menlo, monospace;
+  /* next/font exposes --font-hlo-sans / --font-hlo-mono on <html>: Atkinson
+     Hyperlegible Next for words, Atkinson Hyperlegible Mono for identifiers. */
+  --font-sans: var(--font-hlo-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-hlo-mono), ui-monospace, "SFMono-Regular", Menlo, monospace;
 
-  --text-xs: 0.75rem;    --text-xs--line-height: 1rem;
-  --text-sm: 0.8125rem;  --text-sm--line-height: 1.125rem;
-  --text-base: 0.9375rem; --text-base--line-height: 1.375rem;
-  --text-md: 1.0625rem;  --text-md--line-height: 1.5rem;
-  --text-lg: 1.25rem;    --text-lg--line-height: 1.75rem;
-  --text-xl: 1.5rem;     --text-xl--line-height: 2rem;
-  --text-2xl: 1.875rem;  --text-2xl--line-height: 2.25rem;
+  /* Type scale (Operate: ~1.2 ratio between working steps, display steps for identity) */
+  --text-xs: 0.8125rem;   --text-xs--line-height: 1.125rem; /* 13px floor: bench reading distance */
+  --text-sm: 0.84375rem;  --text-sm--line-height: 1.25rem;
+  --text-base: 0.9375rem; --text-base--line-height: 1.4rem;
+  --text-md: 1.0625rem;   --text-md--line-height: 1.5rem;
+  --text-lg: 1.3125rem;   --text-lg--line-height: 1.75rem;
+  --text-xl: 1.625rem;    --text-xl--line-height: 2.05rem;
+  --text-2xl: 2rem;       --text-2xl--line-height: 2.4rem;
+  --text-3xl: 2.75rem;    --text-3xl--line-height: 1;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
   --radius-pill: 999px;
 
-  --shadow-1: 0 1px 2px rgb(15 26 35 / 0.06), 0 1px 1px rgb(15 26 35 / 0.04);
-  --shadow-2: 0 4px 12px rgb(15 26 35 / 0.10), 0 1px 3px rgb(15 26 35 / 0.06);
-  --shadow-3: 0 12px 32px rgb(15 26 35 / 0.18), 0 2px 6px rgb(15 26 35 / 0.08);
+  --shadow-1: 0 1px 2px rgb(21 26 48 / 0.07);
+  --shadow-2: 0 6px 16px -4px rgb(21 26 48 / 0.16), 0 1px 3px rgb(21 26 48 / 0.08);
+  --shadow-3: 0 18px 40px -8px rgb(21 26 48 / 0.28), 0 2px 8px rgb(21 26 48 / 0.10);
 }
 
 @layer base {
@@ -140,10 +179,21 @@
     background: var(--hlo-canvas);
     color: var(--hlo-text);
     /* keep focused rows clear of sticky bars (WCAG 2.4.11) */
-    scroll-padding-top: calc(var(--hlo-banner-h) + var(--hlo-topbar-h) + var(--hlo-identity-h) + 40px);
+    scroll-padding-top: calc(var(--hlo-chrome-h) + 24px);
+  }
+  /* Pages with a sticky identity bar keep focused rows clear of it too (not on short windows, where it scrolls away). */
+  @media (min-height: 560.02px) {
+    html:has([data-identity-sticky]) { scroll-padding-top: calc(var(--hlo-chrome-h) + var(--hlo-identity-h) + 24px); }
   }
   body { background: var(--hlo-canvas); font-size: var(--text-base); line-height: var(--text-base--line-height); }
   :focus-visible { outline: 2px solid var(--hlo-focus); outline-offset: 2px; }
+  [data-on-dark] :focus-visible, [data-on-dark]:focus-visible { outline-color: var(--hlo-eosin-light); }
+  /* Browser surfaces carry the design too: selection, caret, scrollbars, tabular data. */
+  ::selection { background: var(--hlo-brand-100); color: var(--hlo-text); }
+  input, textarea { caret-color: var(--hlo-eosin); }
+  * { scrollbar-color: var(--hlo-border-strong) transparent; scrollbar-width: thin; }
+  td, th { font-variant-numeric: tabular-nums; }
+  h1, h2, h3 { text-wrap: balance; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
       animation-duration: 0.01ms !important; animation-iteration-count: 1 !important;
@@ -163,18 +213,6 @@
 
 /* ---------- Additions beyond spec §3.2 (shared UI foundation) ---------- */
 
-/*
- * `rail:` variant — the left nav shows as a 72px icon rail when the user
- * collapses it (data-rail="true" on an ancestor) or below 1280px (tablet).
- */
-@custom-variant rail {
-  &:where([data-rail="true"], [data-rail="true"] *) {
-    @slot;
-  }
-  @media (width < 1280px) {
-    @slot;
-  }
-}
 
 /*
  * Density (spec §3.1): Compact is the default at 1280px and wider; Comfortable
@@ -207,14 +245,44 @@
 
 /* Native <dialog> backdrop (tokens only). */
 dialog.hlo-dialog::backdrop {
-  background: rgb(15 26 35 / 0.45);
+  background: rgb(27 31 71 / 0.45); /* hematoxylin shell */
 }
 
-/* Context-change highlight on the identity bar: static outline, no motion. */
+/* Context-change highlight on the identity bar: a short ink fade, no movement. */
 .hlo-identity-flash {
   outline: 2px solid var(--hlo-brand);
   outline-offset: -2px;
 }
+
+/* Hold: diagonal hatch on a neutral ground (meaning never depends on color). */
+/* Drawn select chevron in muted ink (replaces the OS default). */
+@utility select-chevron {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M4 6l4 4 4-4' fill='none' stroke='%23565C78' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  background-size: 1rem;
+}
+@utility hatch {
+  background-image: var(--hlo-hatch);
+  background-color: var(--hlo-hold-bg);
+}
+
+/* Motion utilities: state changes only, respecting reduced motion (base layer). */
+@keyframes hlo-rise-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes hlo-swap-in {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+@keyframes hlo-ping {
+  0% { box-shadow: 0 0 0 2px rgb(194 51 111 / 0.9), 0 0 0 2px rgb(194 51 111 / 0.45); }
+  100% { box-shadow: 0 0 0 2px rgb(194 51 111 / 0), 0 0 0 12px rgb(194 51 111 / 0); }
+}
+@utility animate-rise-in { animation: hlo-rise-in var(--hlo-duration-base) var(--hlo-ease) both; }
+@utility animate-swap-in { animation: hlo-swap-in var(--hlo-duration-base) var(--hlo-ease) both; }
+@utility animate-scan-ping { animation: hlo-ping 700ms var(--hlo-ease) 2; }
 
 /* Windows High Contrast / forced colors: keep the signals that rely on fills visible. */
 @media (forced-colors: active) {
@@ -223,10 +291,6 @@ dialog.hlo-dialog::backdrop {
   .hlo-chip,
   .hlo-banner {
     border: 1px solid CanvasText !important;
-  }
-  .hlo-hold-stripe,
-  .hlo-stripe {
-    forced-color-adjust: none;
   }
   .hlo-swatch {
     forced-color-adjust: none;

@@ -27,6 +27,19 @@ export interface TrackStep {
   label: string;
   state: StepState;
   detail?: string;
+  /** Physical evidence shown whatever the state, e.g. "Loaded on P1" (last confirmed location, not live). */
+  note?: string;
+  /** Why this step cannot start yet, when that is not a hold (holds are drawn from the hold records). */
+  blocked?: string;
+}
+
+/** The part's current gross record, as the case page names it (derived, read-only). */
+export interface CasePartGross {
+  version: number | null;
+  state: string;
+  grosserName: string | null;
+  reviewedByName: string | null;
+  approvedByName: string | null;
 }
 
 export interface CaseTask {
@@ -68,6 +81,9 @@ export interface CasePart {
   explanation: string[];
   stains: StainEntry[];
   owner: CaseTask | null;
+  /** Every open task for this part, oldest first (owner is the first). */
+  openTasks: CaseTask[];
+  gross: CasePartGross | null;
 }
 
 export interface MaterialSlide {
@@ -345,6 +361,15 @@ function physicalSteps(p: PartReadiness): TrackStep[] {
   const grossed = p.physicalState === "grossed" || nb > 0;
   const processingStep = blockStep("processing", "Processed", "processed");
   if (nb && processingStep.state !== "done" && blocks.some((b) => b.state === "processing")) processingStep.state = "current";
+  // A cassette waiting on the processor is shown on the step it waits for, with the reason it may not start (a hold is drawn separately).
+  const loaded = blocks.filter((b) => b.state === "cassette_loaded");
+  if (loaded.length && processingStep.state !== "done") {
+    const locs = [...new Set(loaded.map((b) => b.locationCode).filter((x): x is string => !!x))];
+    const where = locs.length === 1 ? ` on ${locs[0].split("/").pop()}` : "";
+    processingStep.note = `${loaded.length === nb ? "Loaded" : `${loaded.length} of ${nb} loaded`}${where}`;
+    const policy = p.blockedBy.map((b) => /loaded but not eligible for processing: (.+?)(?: \(local policy setting\))?$/.exec(b)?.[1]).find(Boolean);
+    if (policy) processingStep.blocked = policy.charAt(0).toUpperCase() + policy.slice(1);
+  }
   return [
     { key: "received", label: "Received", state: p.status === "canceled" ? "na" : "done" },
     { key: "grossed", label: "Grossed", state: grossed ? "done" : "todo", detail: grossed ? plural(nb, "cassette") : "Not grossed yet" },
@@ -357,7 +382,7 @@ function physicalSteps(p: PartReadiness): TrackStep[] {
   ];
 }
 
-function documentationSteps(p: PartReadiness): TrackStep[] {
+function documentationSteps(p: PartReadiness, gross: CasePartGross | null): TrackStep[] {
   const g = p.grossState;
   const has = g !== "not_started";
   const reviewed = g === "operator_reviewed" || g === "approved_for_downstream";
@@ -370,10 +395,14 @@ function documentationSteps(p: PartReadiness): TrackStep[] {
     : su === "source_acknowledged" ? "Source-system update: acknowledged (simulated)"
     : "Source-system update: failed";
   return [
-    { key: "draft", label: "Gross record started", state: has ? "done" : "todo", detail: has ? `${GROSS_STATE[g as keyof typeof GROSS_STATE] ?? g}${p.grossRecordVersion ? `, v${p.grossRecordVersion}` : ""}` : undefined },
+    // The started step names the record (its version), never a later step's state.
+    { key: "draft", label: "Gross record started", state: has ? "done" : "todo", detail: has ? `${g === "draft" ? "Draft" : "Record"}${p.grossRecordVersion ? ` v${p.grossRecordVersion}` : ""}` : undefined },
     // "Operator reviewed" is the stored state name; on screen it says who reviews: the person who grossed it.
-    { key: "reviewed", label: "Reviewed by the grosser", state: reviewed ? "done" : g === "needs_clarification" ? "current" : "todo", detail: g === "needs_clarification" ? "Needs clarification" : undefined },
-    { key: "approved", label: "Approved for downstream use", state: approved ? "done" : "todo" },
+    {
+      key: "reviewed", label: "Reviewed by the grosser", state: reviewed ? "done" : g === "needs_clarification" ? "current" : "todo",
+      detail: g === "needs_clarification" ? "Needs clarification" : reviewed && gross?.reviewedByName ? `By ${gross.reviewedByName}` : undefined,
+    },
+    { key: "approved", label: "Approved for downstream use", state: approved ? "done" : "todo", detail: approved && gross?.approvedByName ? `By ${gross.approvedByName}` : undefined },
     { key: "source", label: sourceLabel, state: su === "source_acknowledged" ? "done" : approved && (su === "pending_entry" || su === "entered_attested" || su === "not_started") ? "current" : su === "failed" ? "current" : "todo" },
   ];
 }
@@ -605,7 +634,16 @@ export function getCase(db: DB, idOrNumber: string): CaseDetail | null {
     const row = partRows.find((r) => r.id === p.partId)!;
     const wp = worklistRow?.parts.find((x) => x.partId === p.partId);
     const physical = physicalSteps(p);
-    const documentation = documentationSteps(p);
+    const gr = p.grossRecordId
+      ? (db.prepare("SELECT grosser_id, reviewed_by, approved_by FROM gross_record WHERE id = ?").get(p.grossRecordId) as
+          | { grosser_id: string | null; reviewed_by: string | null; approved_by: string | null }
+          | undefined)
+      : undefined;
+    const gross: CasePartGross | null =
+      p.grossState === "not_started"
+        ? null
+        : { version: p.grossRecordVersion, state: p.grossState, grosserName: nameOf(gr?.grosser_id), reviewedByName: nameOf(gr?.reviewed_by), approvedByName: nameOf(gr?.approved_by) };
+    const documentation = documentationSteps(p, gross);
     const partTasks = openTasks.filter((t) => t.partDesignation === p.designation);
     const owner = partTasks[0] ?? null;
     const explanation: string[] = [];
@@ -630,7 +668,7 @@ export function getCase(db: DB, idOrNumber: string): CaseDetail | null {
         summary: p.grossState === "not_started" ? "No gross record yet" : `${GROSS_STATE[p.grossState as keyof typeof GROSS_STATE] ?? p.grossState}; ${SOURCE_UPDATE_STATE[p.sourceUpdateState as keyof typeof SOURCE_UPDATE_STATE] ?? p.sourceUpdateState}`,
       },
       holds: wp?.holds ?? p.holds.map((h) => ({ ...h, blocks: h.blocks as string[] })), eligible: p.eligible, blockedBy: p.blockedBy, explanation,
-      stains: wp?.stains ?? [], owner,
+      stains: wp?.stains ?? [], owner, openTasks: partTasks, gross,
     };
   });
 

@@ -34,23 +34,25 @@ test("guided demo step 3 as scripted: one simulator run brings the office answer
   // Maya verifies container B: the laterality differs. She raises the clarification with a hold on Part B only.
   await actAs(context, STAFF.maya);
   await page.goto(`/intake?item=${INTAKE_B}`);
-  const containerB = page.getByRole("region", { name: /^Container 1 · Part B Order ORD-77121/ });
-  await containerB.getByRole("button", { name: "Staff verified against physical container" }).click();
-  await expect(page.getByRole("heading", { level: 3, name: /^Container 1 · Part B Order ORD-77121 .* Discrepancy recorded$/ })).toBeVisible();
+  await expect(page.getByRole("region", { name: /^Container 1 of Part B Order ORD-77121/ })).toContainText("Not yet verified");
+  await page.getByRole("complementary", { name: "Decision" }).getByRole("button", { name: "Record: I checked this bottle against the order" }).click();
+  await expect(page.getByRole("heading", { level: 3, name: /^Container 1 of Part B Order ORD-77121 Discrepancy recorded$/ })).toBeVisible();
   await page.getByRole("button", { name: "Raise clarification for laterality on container 1" }).click();
   const raise = page.getByRole("dialog", { name: "Raise clarification" });
   await expect(raise.getByRole("checkbox", { name: /Place a scoped hold Hold: Part B \(ORD-77121 · B\)/ })).toBeChecked();
   await raise.getByRole("button", { name: "Raise clarification", exact: true }).click();
   await expect(raise.getByRole("link", { name: `Open ${CLR} in Clarifications` })).toBeVisible();
   await raise.getByRole("button", { name: "Done" }).click();
-  await expect(page.getByRole("region", { name: "Holds, questions and next steps" })).toContainText(loose(`Hold ${HOLD}`));
+  await expect(page.getByRole("region", { name: "Holds, questions and tasks" })).toContainText(loose(`Hold ${HOLD}`));
 
   // On Clarifications, Maya sends it (simulated notification).
   await page.goto(`/clarifications?selected=${CLR}`);
-  const panel = page.getByRole("complementary", { name: /^Laterality question: INT-1014-032 · ORD-77121 Part B/ });
+  const panel = page.getByRole("region", { name: /^Laterality question: INT-1014-032 · ORD-77121 Part B/ });
+  const decision = panel.getByRole("complementary", { name: "Decision" });
   await expect(panel).toContainText(loose("Drafted"));
-  await panel.getByRole("button", { name: "Send (simulated)" }).click();
-  await expect(panel.getByRole("heading", { level: 3, name: "Next step: Record office answer" })).toBeVisible();
+  await expect(panel).toContainText(loose("Drafted, not sent."));
+  await decision.getByRole("button", { name: "Send (simulated)" }).click();
+  await expect(decision.getByRole("heading", { level: 3, name: "Record the answer from Harbor Point Dermatology" })).toBeVisible();
 
   // Back on the guide: one simulator run delivers the office's answer AND the amended order.
   const { result, actions } = await runSimulatorEvents(page, 3);
@@ -69,11 +71,11 @@ test("guided demo step 3 as scripted: one simulator run brings the office answer
   const source = page.getByRole("region", { name: /^Source order/ });
   await expect(source).toContainText(loose("v2 · amended"));
   await expect(source.getByRole("row", { name: /^B Left dorsal forearm Left Punch/ })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Holds, questions and next steps" })).toContainText(loose(`Hold ${HOLD}`));
+  await expect(page.getByRole("region", { name: "Holds, questions and tasks" })).toContainText(loose(`Hold ${HOLD}`));
 
   await actAs(context, STAFF.kim);
   await page.goto(`/clarifications?selected=${CLR}`);
-  await expect(panel.getByRole("heading", { level: 3, name: "Next step: Review answer" })).toBeVisible();
+  await expect(decision.getByRole("heading", { level: 3, name: "Review the answer from Harbor Point Dermatology" })).toBeVisible();
   await expect(panel).toContainText(loose("Simulated office reply: The container is correct. Part B was taken from the LEFT dorsal forearm."));
   await expect(panel).toContainText(loose("Not resolved: a lead or supervisor must review this answer."));
   await expect(panel).toContainText(loose("The source order was amended: ORD-77121 v2 received from the simulated source"));
@@ -83,10 +85,19 @@ test("guided demo step 3 as scripted: one simulator run brings the office answer
   await expect(panel).toContainText(loose(`Resolve ${CLR} first.`));
 
   // Kim reviews, resolves (keeping the hold), then releases it with a reason: three separate steps.
-  await panel.getByLabel("Review note").fill("Office says the bottle (left dorsal forearm) is correct; amended order ORD-77121 v2 is already in.");
-  await panel.getByRole("button", { name: "Mark answer reviewed" }).click();
-  await expect(panel.getByRole("heading", { level: 3, name: "Next step: Resolve" })).toBeVisible();
-  await panel.getByRole("button", { name: "Resolve", exact: true }).click();
+  // The review note is written in the conversation's review slot, under the office answer; the commit is docked.
+  const reviewSlot = panel
+    .getByRole("list", { name: /^Conversation with Harbor Point Dermatology/ })
+    .getByRole("listitem")
+    .filter({ hasText: loose("Review by Kim Nguyen") });
+  await expect(decision.getByLabel("Review note")).toHaveCount(0);
+  // With no note yet, the dock's primary takes Kim to the note; it never names a commit that cannot run.
+  await expect(decision.getByRole("button", { name: "Write review note" })).toBeVisible();
+  await expect(decision.getByRole("button", { name: "Mark answer reviewed" })).toHaveCount(0);
+  await reviewSlot.getByLabel("Review note").fill("Office says the bottle (left dorsal forearm) is correct; amended order ORD-77121 v2 is already in.");
+  await decision.getByRole("button", { name: "Mark answer reviewed" }).click();
+  await expect(decision.getByRole("heading", { level: 3, name: `Resolve ${CLR}` })).toBeVisible();
+  await decision.getByRole("button", { name: "Resolve", exact: true }).click();
   const resolve = page.getByRole("dialog", { name: `Resolve ${CLR}?` });
   await resolve.getByRole("textbox", { name: /^Resolution note/ }).fill("Left side confirmed by the office.");
   await expect(resolve.getByRole("checkbox", { name: new RegExp(`^Also release ${HOLD}`) })).not.toBeChecked();
@@ -94,13 +105,20 @@ test("guided demo step 3 as scripted: one simulator run brings the office answer
   await expect(resolve).toBeHidden();
   await expect(panel).toContainText(loose("Resolved by Kim Nguyen: Office confirmed what we observed (container is correct)."));
   await expect(panel.getByRole("heading", { level: 3, name: /^Part B on hold:/ })).toBeVisible();
+  // Resolved with the hold kept, it stays in Kim's queue as a hold she still has to release.
+  const queue = page.getByRole("complementary", { name: "Clarification queue" });
+  const heldRow = queue.getByRole("link", { name: new RegExp(`^${CLR}, .*Hold to release · Kim Nguyen, on hold: Part B, Resolved$`) });
+  await expect(heldRow).toBeVisible();
 
+  // Once resolved, releasing the hold is the docked next step.
+  await expect(decision.getByRole("heading", { level: 3, name: `Release ${HOLD} on Part B` })).toBeVisible();
   await release.click();
   const releaseDialog = page.getByRole("alertdialog", { name: `Release ${HOLD} on Part B?` });
   await releaseDialog.getByLabel("Release reason").fill("Amended order ORD-77121 v2 received (laterality left), matching the bottle.");
   await releaseDialog.getByRole("button", { name: "Release hold" }).click();
   await expect(toasts(page)).toContainText(loose(`${HOLD} released. The release and its reason are in History.`));
   await expect(panel.getByRole("heading", { level: 3, name: /^Part B on hold:/ })).toHaveCount(0);
+  await expect(heldRow).toHaveCount(0);
 
   await openGuideStep(page, 3);
   await expect(page.getByText(loose("Done: Hold released after the amended order arrived"))).toBeVisible();

@@ -19,12 +19,6 @@ export const DOCTOR_TINT: Record<PathologistColor, string> = {
   amber: "bg-dr-amber-tint",
 };
 
-export const DOCTOR_STRIPE: Record<PathologistColor, string> = {
-  teal: "border-l-dr-teal",
-  violet: "border-l-dr-violet",
-  amber: "border-l-dr-amber",
-};
-
 export function isPathologistColor(v: unknown): v is PathologistColor {
   return v === "teal" || v === "violet" || v === "amber";
 }

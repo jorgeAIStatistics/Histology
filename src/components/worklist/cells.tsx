@@ -54,7 +54,6 @@ export function StainList({
   max = 2,
   detailed = true,
   compact = false,
-  narrow = false,
   className,
 }: {
   stains: StainEntry[];
@@ -62,8 +61,6 @@ export function StainList({
   detailed?: boolean;
   /** Table cells: work order and material only; where the request came from stays in the tooltip, panel and print. */
   compact?: boolean;
-  /** Narrow table column (side panel open): the work order moves out of the tag so the column can shrink. */
-  narrow?: boolean;
   className?: string;
 }) {
   if (!stains.length) return <span className="text-ink-muted">None</span>;
@@ -73,14 +70,13 @@ export function StainList({
     <span className={cn("inline-flex flex-wrap items-center gap-1", className)}>
       {shown.map((s, i) =>
         s.isPas && compact ? (
-          // Table cells: the tag carries the work order; material and "Canceled" follow as text that may wrap
-          // under the tag, so a narrow column (side panel open) never clips them.
+          // Table cells: PAS and its work order are one tag, always ("PAS (WO-2141)"); the material and "Canceled"
+          // follow as text that may wrap under the tag, never between PAS and its work order.
           <span key={`${s.workOrder ?? "req"}-${i}`} className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5" title={s.text}>
             <span className={cn(s.canceled && "[&_.hlo-pas-tag]:line-through [&_.hlo-pas-tag]:decoration-2")}>
-              <PasTag workOrder={detailed && !narrow ? s.workOrder ?? undefined : undefined} />
+              <PasTag workOrder={detailed ? s.workOrder ?? undefined : undefined} />
             </span>
-            {detailed && s.workOrder && narrow ? <span className="id-mono text-xs font-medium text-ink">{s.workOrder}</span> : null}
-            {detailed && s.workOrder ? <span className="id-mono text-xs text-ink-secondary">{s.target.replace(" (block not yet assigned)", "")}</span> : null}
+            {detailed && s.workOrder ? <StainTarget target={s.target} /> : null}
             {!s.workOrder ? <span className="text-xs text-ink-muted">on order</span> : null}
             {s.canceled ? <span className="text-xs font-semibold text-ink-secondary">Canceled</span> : null}
             {s.needsReview ? <ReviewFlag /> : null}
@@ -116,6 +112,12 @@ export function StainList({
       {more > 0 ? <span className="text-xs text-ink-muted">+{more} more</span> : null}
     </span>
   );
+}
+
+/** The material a work order is for: a block or slide id in the identifier mono ("A1-5"), a part in words ("Part A"). */
+function StainTarget({ target }: { target: string }) {
+  const text = target.replace(" (block not yet assigned)", "");
+  return <span className={cn("whitespace-nowrap text-xs text-ink-secondary", /^Part\b/.test(text) ? "" : "id-mono")}>{text}</span>;
 }
 
 /**
@@ -159,23 +161,23 @@ export function StainText({ stain, className }: { stain: StainEntry; className?:
   );
 }
 
-export function HoldList({ holds, max = 2, stacked = false }: { holds: HoldEntry[]; max?: number; /** Table cell: the pill, with what it holds as text beside or under it. */ stacked?: boolean }) {
+/** A hold as the shared hatched chip with its scope ("Hold: Part B"); its id and reason in the tooltip. */
+export function HoldChip({ hold }: { hold: Pick<HoldEntry, "displayId" | "scopeLabel" | "reasonText"> }) {
+  return (
+    <span title={`${hold.displayId}: ${hold.reasonText}`} className="inline-flex">
+      <HoldPill scope={shortScope(hold.scopeLabel)} />
+    </span>
+  );
+}
+
+export function HoldList({ holds, max = 2, stacked = false }: { holds: HoldEntry[]; max?: number; /** Table cell: one chip per line. */ stacked?: boolean }) {
   if (!holds.length) return <span className="text-ink-muted">None</span>;
   const shown = holds.slice(0, max);
   return (
     <span className={cn("inline-flex flex-wrap items-center gap-1", stacked && "flex-col items-start")}>
-      {shown.map((h) =>
-        stacked ? (
-          <span key={h.id} title={`${h.displayId}: ${h.reasonText}`} className="inline-flex flex-wrap items-center gap-x-1 gap-y-0.5">
-            <HoldPill />
-            <span className="text-xs font-medium text-hold-fg">{shortScope(h.scopeLabel)}</span>
-          </span>
-        ) : (
-          <span key={h.id} title={`${h.displayId}: ${h.reasonText}`}>
-            <HoldPill scope={shortScope(h.scopeLabel)} />
-          </span>
-        ),
-      )}
+      {shown.map((h) => (
+        <HoldChip key={h.id} hold={h} />
+      ))}
       {holds.length > max ? <span className="text-xs text-ink-muted">+{holds.length - max} more</span> : null}
     </span>
   );
@@ -197,7 +199,8 @@ export function UpdateOrigin({ origin }: { origin: WorklistRow["lastUpdate"]["or
     <span
       className={cn(
         "hlo-chip inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded-sm border px-1 text-xs font-medium",
-        simulated ? "border-dashed border-sim-border bg-sim-bg text-sim-fg" : "border-line bg-surface-subtle text-ink-secondary",
+        // Honesty tags take a solid hairline; a dashed outline means "not yet real".
+        simulated ? "border-sim-border bg-sim-bg text-sim-fg" : "border-line bg-surface-subtle text-ink-secondary",
       )}
     >
       <Icon className="size-3 shrink-0" aria-hidden />
@@ -206,10 +209,31 @@ export function UpdateOrigin({ origin }: { origin: WorklistRow["lastUpdate"]["or
   );
 }
 
-/** Blocks prepared / expected, with Unknown never shown as 0. */
-export function BlocksCell({ blocks }: { blocks: WorklistRow["blocks"] }) {
+/**
+ * Blocks prepared / expected, with Unknown never shown as 0. `brief` (the dense grid): the word Unknown on screen,
+ * its reason in the tooltip and for screen readers (the side panel, print and CSV say it in full).
+ */
+export function BlocksCell({ blocks, brief = false }: { blocks: WorklistRow["blocks"]; brief?: boolean }) {
   if (blocks.expected === null && blocks.expectedLowerBound === null && blocks.prepared === 0) {
-    return <UnknownValue reason={/^Unknown \((.+)\)$/.exec(blocks.text)?.[1] ?? "no gross record yet"} />;
+    const reason = /^Unknown \((.+)\)$/.exec(blocks.text)?.[1] ?? "no gross record yet";
+    return brief ? (
+      <span title={`Unknown: ${reason}`} className="text-ink-muted">
+        Unknown<span className="sr-only"> ({reason})</span>
+      </span>
+    ) : (
+      <UnknownValue reason={reason} />
+    );
+  }
+  if (brief && blocks.expected === null) {
+    // "2 of at least 3 (some Unknown)" and "2 prepared, expected Unknown": the total is not known yet.
+    return (
+      <span title={blocks.text} className="num-tabular">
+        <span aria-hidden>
+          {blocks.prepared} of <span className="text-ink-muted">Unknown</span>
+        </span>
+        <span className="sr-only">{blocks.text}</span>
+      </span>
+    );
   }
   return <span className="num-tabular">{blocks.text}</span>;
 }

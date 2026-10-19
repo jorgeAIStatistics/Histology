@@ -39,6 +39,21 @@ export async function openRoleContext(browser: Browser, staffId: StaffId): Promi
   return context;
 }
 
+/**
+ * The demo role in effect, read from the "Acting as" selector inside the
+ * presenter menu (top bar). Opens the menu, reads the value, closes it again.
+ */
+export async function actingAsValue(page: Page): Promise<string> {
+  const trigger = page.getByRole("button", { name: /^Presenter menu: acting as/ });
+  await trigger.click();
+  const menu = page.getByRole("dialog", { name: "Presenter" });
+  await expect(menu).toBeVisible();
+  const value = await menu.getByRole("combobox", { name: /^Acting as/ }).inputValue();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  return value;
+}
+
 /** Replace the e2e database with the reproducible synthetic starting state (10:52 ET, clock paused). */
 export async function resetDemo(request: APIRequestContext): Promise<void> {
   const res = await request.post("/api/demo/reset", { data: { confirm: true } });

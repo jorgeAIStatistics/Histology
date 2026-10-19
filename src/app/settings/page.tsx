@@ -92,8 +92,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     // because the Demo tab itself may not load.
     const outdated = e instanceof Error && /no such table|no such column/i.test(e.message);
     body = (
-      <div className="grid gap-4">
-        <AlertBanner tone="danger" title={outdated ? "The local demo database is from an older version" : "Could not load settings"} blocking>
+      <div className="grid grid-cols-1 gap-4">
+        <AlertBanner tone="warning" title={outdated ? "The local demo database is from an older version" : "Could not load settings"}>
           {outdated
             ? "It is missing tables this version needs, so these settings cannot be shown. Nothing was changed. Reset the demo data to rebuild it with the synthetic starting state."
             : "The local demo database could not be read. Nothing was changed. Reload the page to try again; if it keeps failing, reset the demo data."}

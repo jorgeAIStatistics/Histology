@@ -4,7 +4,7 @@ import { cn } from "@/lib/cn";
 import { TONE_CLASSES, TONE_ICON, type AlertTone } from "./tone";
 
 /**
- * Alert banner (spec §7): full width, 4px left stripe, icon, title, body and
+ * Alert banner (spec §7): full width, tone border and tint (no side stripe), icon, title, body and
  * an optional action. Warning and danger banners are never auto-dismissed.
  * role="status" for info/success/warning; role="alert" only for a danger
  * banner that blocks the current action (`blocking`).
@@ -33,7 +33,7 @@ export function AlertBanner({ tone, title, children, action, blocking, icon, hea
     <div
       id={id}
       role={role}
-      className={cn("hlo-banner hlo-stripe flex items-start gap-3 rounded-md border border-l-4 px-3 py-2.5", c.bg, c.border, c.stripe, className)}
+      className={cn("hlo-banner flex items-start gap-3 rounded-md border px-3 py-2.5", c.bg, c.border, className)}
     >
       <Icon className={cn("mt-0.5 size-4 shrink-0", c.solidText)} aria-hidden />
       <div className="min-w-0 flex-1">

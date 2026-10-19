@@ -10,6 +10,7 @@ import { recordWorklistChange } from "@/server/core/feed";
 import { openTask } from "@/server/core/tasks";
 import { computeReadiness } from "@/server/domain/readiness";
 import { labLocalToIso } from "@/lib/time";
+import { decodeLabel } from "@/lib/identifiers";
 import { getWorklist, findWorklistRow, buildWorklistCsv, listSavedFilters, caseIsComplete, type WorklistRow, type WorklistData } from "@/server/queries/worklist";
 import { getCase, safeDecode } from "@/server/queries/case";
 import { getOperations } from "@/server/queries/operations";
@@ -244,6 +245,32 @@ describe("worklist: printed / downloaded snapshots", () => {
     expect(one<{ n: number }>(db, "SELECT COUNT(*) n FROM worklist_snapshot").n).toBe(1);
   });
 
+  it("remembers each user's last snapshot of a view and counts the rows in scope that changed after it, without changing anything", () => {
+    const db = testDb();
+    clockAt(db, "11:05");
+    const before = getWorklist(db, { staffId: STAFF.priya, view: "histotech" });
+    expect(before.lastSnapshot).toBeNull();
+    const snap = must<{ displayId: string; seq: number }>(db, STAFF.priya, "worklist.snapshot", { view: "histotech", filters: {}, format: "print", expectedSeq: before.seq });
+
+    const after = getWorklist(db, { staffId: STAFF.priya, view: "histotech" });
+    expect(after.lastSnapshot).toMatchObject({ displayId: snap.displayId, seq: snap.seq, generatedAt: at("11:05"), format: "print", changedRows: 0 });
+    // Another person or view has no snapshot of its own.
+    expect(getWorklist(db, { staffId: STAFF.priya, view: "operations" }).lastSnapshot).toBeNull();
+    expect(getWorklist(db, { staffId: STAFF.maya, view: "histotech" }).lastSnapshot).toBeNull();
+
+    // Two changes to one in-scope row count once; a change to a row outside the view's scope does not count.
+    const inScope = rowsOf(after)[0];
+    recordWorklistChange(sysCtx(db), { accessionId: inScope.id, type: "changed", summary: "Level requested" });
+    recordWorklistChange(sysCtx(db), { accessionId: inScope.id, type: "changed", summary: "Level printed" });
+    const outside = rowsOf(getWorklist(db, { staffId: STAFF.priya, view: "operations" })).find((r) => r.kind === "case" && !rowsOf(after).some((x) => x.id === r.id));
+    expect(outside, "the seed has a case outside the histotech scope").toBeTruthy();
+    recordWorklistChange(sysCtx(db), { accessionId: outside!.id, type: "changed", summary: "Outside the histotech scope" });
+    const snapshots = one<{ n: number }>(db, "SELECT COUNT(*) n FROM worklist_snapshot").n;
+    const later = getWorklist(db, { staffId: STAFF.priya, view: "histotech", filters: { pasOnly: true } });
+    expect(later.lastSnapshot?.changedRows).toBe(1);
+    expect(one<{ n: number }>(db, "SELECT COUNT(*) n FROM worklist_snapshot").n).toBe(snapshots);
+  });
+
   it("CSV header lines state generation time in ET, version, source data age and synthetic data", () => {
     const db = testDb();
     const data = getWorklist(db, { staffId: STAFF.priya, view: "operations" });
@@ -419,6 +446,16 @@ describe("worklist: routing exceptions", () => {
     for (const g of data.groups.filter((x) => !x.isException)) expect(g.rows.some((r) => r.provisionalId === "INT-1014-090")).toBe(false);
     // Doctor groups always carry a color name next to the doctor's name.
     for (const g of data.groups.filter((x) => !x.isException)) expect(g.colorName).toMatch(/^(teal|violet|amber)$/);
+    // A provisional item never gets a label code: no DataMatrix before an official number exists.
+    expect(row.labelPayload).toBeNull();
+    // Every accessioned row's label code decodes to that row's own accession number, as a case label.
+    const cases = rowsOf(data).filter((x) => x.kind === "case");
+    expect(cases.length).toBeGreaterThan(0);
+    for (const r of cases) {
+      const decoded = decodeLabel(r.labelPayload!);
+      expect(decoded.ok).toBe(true);
+      if (decoded.ok) expect(decoded.identity).toMatchObject({ kind: "C", accession: r.accessionNumber });
+    }
   });
 
   it("an accessioned case without an active assigned doctor gets its own group, never labeled a routing exception", () => {

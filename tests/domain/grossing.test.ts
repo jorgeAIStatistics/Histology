@@ -728,12 +728,22 @@ describe("S4 grossing screen (server-side smoke render of the client components)
     const { partWorkspace, grossingQueue, sourceEntryQueue } = await import("@/server/queries/grossing");
     const { GrossingWorkspace } = await import("@/components/grossing/workspace");
     const { GrossingQueue } = await import("@/components/grossing/queue");
+    const { ShellContextProvider } = await import("@/lib/client/shell-context");
+    const { TooltipProvider } = await import("@/components/ui/tooltip");
+    /** The shell provides tooltips (the icon-only "Open case" action below 1280px carries one). */
+    const tips = (children: ReturnType<typeof createElement>) => createElement(TooltipProvider, null, children);
+    type Actor = { id: string; name: string; role: "grosser" | "histology_assistant" | "director" };
+    const DANA: Actor = { id: STAFF.dana, name: "Dana Whitfield", role: "grosser" };
+    const SAM: Actor = { id: STAFF.sam, name: "Sam Ortiz", role: "histology_assistant" };
+    const DIRECTOR: Actor = { id: STAFF.director, name: "Director of Operations (demo)", role: "director" };
+    /** Render the workspace as a given demo role (the shell normally provides it). */
+    const renderAs = (actor: Actor, ws: NonNullable<ReturnType<typeof partWorkspace>>) =>
+      text(renderToString(tips(createElement(ShellContextProvider, { actor, staff: [], children: createElement(GrossingWorkspace, { ws }) }))));
     const db = testDb();
-    const { partA } = twoPartCaseAwaitingGross(db);
+    const { partA, partB } = twoPartCaseAwaitingGross(db);
     must(db, STAFF.dana, "gross.loadTranscript", { specimenPartId: partA, transcriptKey: "ambiguous-decimal" });
-    const draft = text(renderToString(createElement(GrossingWorkspace, { ws: partWorkspace(db, partA)! })));
+    const draft = text(renderToString(tips(createElement(GrossingWorkspace, { ws: partWorkspace(db, partA)! }))));
     expect(draft).toContain("Synthetic transcript. Extraction is a deterministic demo.");
-    expect(draft).toContain("Microphone input: not configured in this demo.");
     expect(draft).toMatch(/Cannot approve yet: \d+ items need attention/);
     expect(draft).toContain("Possible missed decimal: 4 vs 0.4.");
     expect(draft).toContain("Choose unit…");
@@ -753,17 +763,53 @@ describe("S4 grossing screen (server-side smoke render of the client components)
     expect(text(rowHtml)).toContain("Checked: keep as dictated…");
     expect(text(rowHtml)).toContain("does not accept it as shown");
     expect(draft).toContain("Part B : Awaiting grossing");
+    // The docked next step names the step and states, in words, why review and approval are disabled (the smoke render
+    // runs as the fallback demo role, an accessioner).
+    expect(draft).toContain("Your next step");
+    expect(draft).toMatch(/Not allowed for Accessioner\. Review and approval need a grosser or supervisor\./);
+    // Field rows state their status on the ladder in words: nothing proposed reads as confirmed.
+    expect(draft).toContain("Needs review");
+    expect(draft).not.toMatch(/Confirmed by /);
+    // As the grosser: each disabled step has its own reason, and the open items are counted once (the list heading).
+    const draftDana = renderAs(DANA, partWorkspace(db, partA)!);
+    expect(draftDana).toContain("Microphone input: not configured in this demo.");
+    expect(draftDana).toContain("Mark operator reviewed Waits for the items listed below.");
+    expect(draftDana).toContain("Approve for downstream use Comes after operator review.");
+    expect(draftDana.match(/Cannot approve yet: \d+ items need attention/g)).toHaveLength(1);
+    expect(draftDana).not.toContain("Not ready for review");
+    // A read-only role is told why it cannot attach a dictation instead of being offered the control.
+    const draftDirector = renderAs(DIRECTOR, partWorkspace(db, partA)!);
+    expect(draftDirector).toContain("Read only role: attaching a dictation needs a grosser, histology assistant or supervisor.");
+    expect(draftDirector).not.toContain("Replace the dictation…");
+    expect(draftDirector).not.toContain("Replace transcript and re-extract");
+    // Instruction-like dictation sentences are named in the finding sentence, not only in the dictation sheet.
+    must(db, STAFF.dana, "gross.loadTranscript", { specimenPartId: partB, transcriptKey: "embedded-instruction" });
+    const instructed = renderAs(DANA, partWorkspace(db, partB)!);
+    expect(instructed).toContain("2 instruction-like sentences in the dictation were ignored and changed nothing.");
+    expect(instructed).toContain("Instruction-like text was treated as dictation data");
 
     const reviewed = grossToReviewed(db, partA, "quinlan-A", { container_label_matches: true, piece_count: 2, dimensions: { length: 0.6, width: 0.4, depth: null, unit: "cm" }, specimen_type: "shave" });
     must(db, STAFF.dana, "gross.approve", { grossRecordId: reviewed.id, expectedVersion: reviewed.version });
-    const approved = text(renderToString(createElement(GrossingWorkspace, { ws: partWorkspace(db, partA)! })));
-    expect(approved).toContain("Mark entered in source system (staff attestation)");
-    expect(approved).toContain("Simulate source acknowledgment (demo)");
+    const approved = text(renderToString(tips(createElement(GrossingWorkspace, { ws: partWorkspace(db, partA)! }))));
+    // A role that cannot attest is shown who enters it and that only the simulated source acknowledges, with no controls it could never use.
+    expect(approved).not.toContain("Mark entered in source system (staff attestation)");
+    expect(approved).not.toContain("Simulate source acknowledgment (demo)");
+    expect(approved).toMatch(/Sam Ortiz types it into .+ by hand and attests the entry; only the simulated source can acknowledge it\./);
+    expect(approved).not.toContain("Amend (creates version 2)");
+    expect(approved).toMatch(/A grosser, supervisor or dermatopathologist amends an approved record; that creates version 2 and keeps version 1\s*\./);
+    // The histology assistant gets attestation and the simulated acknowledgment as separate actions.
+    const approvedSam = renderAs(SAM, partWorkspace(db, partA)!);
+    expect(approvedSam).toContain("Mark entered in source system (staff attestation)");
+    expect(approvedSam).toContain("Simulate source acknowledgment (demo)");
+    expect(approvedSam).toContain("The simulated source can only acknowledge an entry that staff have marked as entered.");
     expect(approved).toContain("The case is not complete.");
     expect(approved).toMatch(/Enter approved gross description in source system/);
+    // The six record states stay in order; approval and the source update are separate steps.
+    expect(approved).toMatch(/Approved for downstream use (\(done\))?.*Source update pending \(current step\).*Entered \(staff attested\) \(not yet\).*Source acknowledged \(simulated\) \(not yet\)/);
 
     const queue = text(renderToString(createElement(GrossingQueue, { rows: grossingQueue(db), sourceRows: sourceEntryQueue(db), view: "bench", now: new Date().toISOString() })));
-    expect(queue).toContain("H-0089: Suture orientation not stated");
+    // The hold id is set whole in the identifier mono (its own element), followed by the reason.
+    expect(queue).toMatch(/H-0089\s*: Suture orientation not stated/);
   });
 });
 

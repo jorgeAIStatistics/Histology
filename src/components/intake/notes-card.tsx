@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { Users } from "lucide-react";
 import type { ItemDetail, BenchPermissions } from "@/server/queries/intake";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CommandButton, CommandError } from "@/components/ui/command-button";
 import { Field, Select, Textarea } from "@/components/ui/field";
@@ -13,6 +12,7 @@ import { useCommand } from "@/lib/client/command";
 import { useConflict } from "@/lib/client/conflict";
 import { useStaff } from "@/lib/client/shell-context";
 import { useUnsavedChanges } from "@/lib/client/unsaved";
+import { RecordSection, useBackToScan } from "./bits";
 
 interface Draft {
   baseVersion: number;
@@ -21,12 +21,35 @@ interface Draft {
 }
 
 /**
+ * Presenter control (demo): a simulated colleague (Luis Benitez) saves a change
+ * to this item, so the stale-save protection can be shown. Lives in the
+ * "Presenter controls (demo)" disclosure, not on the bench surface; the server
+ * still checks the role (the read-only director is refused inline).
+ */
+export function ColleagueEditControl({ item }: { item: ItemDetail }) {
+  return (
+    <CommandButton
+      command="intake.simulateColleagueEdit"
+      input={{ intakeItemId: item.id }}
+      size="sm"
+      variant="secondary"
+      pendingLabel="Simulating..."
+      successToast="Demo: Luis Benitez (simulated colleague) edited this item"
+      disabled={item.status === "canceled"}
+    >
+      Simulate a colleague editing this item (demo control)
+    </CommandButton>
+  );
+}
+
+/**
  * Owner and working note for the intake item. Saving sends the version the
  * user started from (expectedVersion); if a colleague saved first, the server
  * returns CONFLICT and the conflict dialog shows both values. No overwrite.
  */
-export function NotesCard({ item, permissions, now }: { item: ItemDetail; permissions: BenchPermissions; now: string }) {
+export function NotesSection({ item, permissions, now }: { item: ItemDetail; permissions: BenchPermissions; now: string }) {
   const staff = useStaff();
+  const backToScan = useBackToScan();
   const conflict = useConflict();
   const [draft, setDraft] = useState<Draft | null>(null);
   const owners = staff.filter((s) => s.role === "accessioner" || s.role === "accessioning_lead" || s.role === "supervisor");
@@ -39,7 +62,10 @@ export function NotesCard({ item, permissions, now }: { item: ItemDetail; permis
       successToast: "Owner and note saved",
       conflict: false,
       errorToast: false,
-      onSuccess: () => setDraft(null),
+      onSuccess: () => {
+        setDraft(null);
+        backToScan();
+      },
       onError: (err) => {
         if (err.code !== "CONFLICT" || !draft) return;
         const current = ((err.details as { current?: Record<string, unknown> } | undefined)?.current ?? {}) as Record<string, unknown>;
@@ -73,9 +99,8 @@ export function NotesCard({ item, permissions, now }: { item: ItemDetail; permis
   const staleSinceStart = draft && item.version !== draft.baseVersion;
 
   return (
-    <Card
+    <RecordSection
       id="owner-note"
-      headingLevel={3}
       title={
         <span className="inline-flex items-center gap-2">
           <Users className="size-4 text-ink-muted" aria-hidden />
@@ -83,20 +108,6 @@ export function NotesCard({ item, permissions, now }: { item: ItemDetail; permis
         </span>
       }
       description="Two accessioners can open the same item. A stale save is detected and shown, never applied over a colleague's work."
-      actions={
-        <CommandButton
-          command="intake.simulateColleagueEdit"
-          input={{ intakeItemId: item.id }}
-          size="sm"
-          variant="quiet"
-          pendingLabel="Simulating..."
-          successToast="Demo: Luis Benitez (simulated colleague) edited this item"
-          disabled={item.status === "canceled"}
-        >
-          Simulate a colleague editing this item (demo control)
-        </CommandButton>
-      }
-      bodyClassName="space-y-2"
     >
       {draft ? (
         <div className="space-y-2">
@@ -140,7 +151,7 @@ export function NotesCard({ item, permissions, now }: { item: ItemDetail; permis
             <Button size="sm" variant="secondary" onClick={() => setDraft(null)}>
               Discard my edits
             </Button>
-            <span className="text-xs text-ink-muted">Editing from version {draft.baseVersion}</span>
+            <span className="text-sm text-ink-muted">Editing from version {draft.baseVersion}</span>
           </div>
           <CommandError error={save.error && save.error.code !== "CONFLICT" ? save.error : null} />
         </div>
@@ -154,7 +165,7 @@ export function NotesCard({ item, permissions, now }: { item: ItemDetail; permis
             <span className="text-ink-muted">Note: </span>
             {item.notes ?? <span className="text-ink-muted">None</span>}
           </p>
-          <p className="text-xs text-ink-muted">
+          <p className="text-sm text-ink-muted">
             Version {item.version} · last saved by {item.updatedByName ?? "Unknown"} at <Timestamp iso={item.updatedAt} now={now} />
           </p>
           {permissions.edit && item.status !== "canceled" ? (
@@ -164,6 +175,6 @@ export function NotesCard({ item, permissions, now }: { item: ItemDetail; permis
           ) : null}
         </div>
       )}
-    </Card>
+    </RecordSection>
   );
 }

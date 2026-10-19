@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Clock, Pause, Play, RotateCcw, Unplug, Plug, RefreshCw } from "lucide-react";
+import { Check, CircleCheck, Clock, Pause, Play, RotateCcw, Unplug, Plug, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,6 @@ import { Input, Label } from "@/components/ui/field";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { useToast } from "@/components/ui/toast";
-import { SimulatedLabel } from "@/components/domain/honesty";
 import { Timestamp } from "@/components/domain/timestamp";
 import { useCommand } from "@/lib/client/command";
 import { useDemoNow, useLive, useLiveActions } from "@/lib/client/live";
@@ -27,19 +26,19 @@ type Outcome = { messageId: string; outcome: string; detail: string };
 
 export function DemoTab({ data }: { data: DemoSettings }) {
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       <AlertBanner tone="info" title="Demo controls change the simulated world, not lab records">
         The clock, connector outages and fault injection exist only in this local demonstration. Nothing here contacts a real system. Each change is recorded in the local audit
         history with your demo role.
       </AlertBanner>
-      <div className="grid items-start gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
         <ResetCard />
         <ClockCard />
       </div>
       <SourcesCard data={data} />
-      <div className="grid items-start gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
         <PrintersCard printers={data.printers} />
-        <div className="grid gap-4">
+        <div className="grid grid-cols-1 gap-4">
           <NotificationsCard status={data.notifyStatus} />
           <AssistantCard mode={data.assistantMode} />
         </div>
@@ -65,7 +64,7 @@ export function ResetCard() {
       const json = (await res.json().catch(() => null)) as { ok?: boolean; result?: { message?: string }; error?: { message?: string } } | null;
       if (!res.ok || !json?.ok) throw new Error(json?.error?.message ?? `Reset failed (HTTP ${res.status}).`);
       setOpen(false);
-      toast.show({ tone: "success", title: "Demo data reset", body: json.result?.message ?? "Back to the 10:52 ET starting state (synthetic)." });
+      toast.show({ tone: "info", title: "Demo data reset", body: json.result?.message ?? "Back to the 10:52 ET starting state (synthetic)." });
       router.refresh();
       pollNow();
     } catch (e) {
@@ -80,12 +79,12 @@ export function ResetCard() {
         Replaces every record with the reproducible synthetic starting state (demo clock 10:52 ET, paused). Demo changes and the local audit history are discarded. The acting-as role is kept.
       </p>
       <div className="mt-3">
-        <Button variant="destructive" icon={<RotateCcw />} onClick={() => setOpen(true)}>
+        <Button variant="secondary" icon={<RotateCcw />} onClick={() => setOpen(true)}>
           Reset demo data
         </Button>
       </div>
       {error ? (
-        <AlertBanner tone="danger" title="Could not reset the demo data" className="mt-3" blocking>
+        <AlertBanner tone="warning" title="Could not reset the demo data" className="mt-3">
           {error}
         </AlertBanner>
       ) : null}
@@ -125,7 +124,7 @@ function ClockCard() {
   const customPast = customIso ? Date.parse(customIso) <= Date.parse(now) : false;
   const toast = (r: unknown) => {
     const x = r as { now: string; delivered: number };
-    return `Demo clock ${fmtTime(x.now)} ET${x.delivered ? ` · ${x.delivered} simulated source message${x.delivered === 1 ? "" : "s"} delivered` : ""}`;
+    return `Demo clock ${fmtTime(x.now)} ET.${x.delivered ? ` ${x.delivered} simulated source message${x.delivered === 1 ? "" : "s"} delivered.` : ""}`;
   };
   return (
     <Card title="Demo clock" actions={<DemoControlTag />}>
@@ -182,8 +181,7 @@ function ClockCard() {
           command={DEMO_CLOCK_COMMAND}
           input={() => ({ iso: customIso })}
           size="sm"
-          disabledReason={customIso && customPast ? "That time has already passed; the clock does not move backwards." : undefined}
-          disabled={!customIso}
+          disabledReason={!customIso ? "Enter a time first." : customPast ? "That time has already passed; the clock does not move backwards." : undefined}
           pendingLabel="Jumping..."
           successToast={toast}
         >
@@ -232,7 +230,6 @@ function SourcesCard({ data }: { data: DemoSettings }) {
     <Card
       title="Source systems (simulated adapters)"
       description="Outage, duplicate, out-of-order and failure scenarios for acceptance checks 11, 13 and 14. Data comes only from the simulated source outbox below."
-      actions={<SimulatedLabel connector="source adapters" />}
       flush
     >
       <ul className="divide-y divide-line">
@@ -248,7 +245,7 @@ function SourcesCard({ data }: { data: DemoSettings }) {
               <p className="text-xs text-ink-muted">
                 Ready but not delivered: <span className="num-tabular">{s.backlog}</span>
                 {s.status === "offline" && s.backlog ? " (delivered once, through the same idempotent importer, after the connection is restored)" : ""}
-                {s.lastAttemptAt ? <> · last attempt {fmtTime(s.lastAttemptAt)} ET</> : null}
+                {s.lastAttemptAt ? <>. Last attempt {fmtTime(s.lastAttemptAt)} ET.</> : null}
               </p>
             </div>
             <div className="flex flex-wrap items-start gap-2">
@@ -332,9 +329,23 @@ function SourcesCard({ data }: { data: DemoSettings }) {
             )
           }
         >
-          <Button size="sm" loading={deliver.pending} loadingLabel="Delivering..." disabled={!pending.length} onClick={() => void deliver.run({})}>
-            Deliver now ({pending.length})
-          </Button>
+          <div className="flex max-w-[16rem] flex-col items-end gap-1">
+            <Button
+              size="sm"
+              loading={deliver.pending}
+              loadingLabel="Delivering..."
+              disabled={!pending.length}
+              reasonId={pending.length ? undefined : "deliver-now-reason"}
+              onClick={() => void deliver.run({})}
+            >
+              Deliver now ({pending.length})
+            </Button>
+            {pending.length ? null : (
+              <p id="deliver-now-reason" className="text-right text-sm text-ink-secondary">
+                Nothing is waiting in the simulated outbox.
+              </p>
+            )}
+          </div>
         </ControlRow>
         <ControlRow
           title="Replay a duplicate message"
@@ -362,7 +373,7 @@ function SourcesCard({ data }: { data: DemoSettings }) {
               Replay duplicate
             </Button>
             {ema?.status === "offline" ? (
-              <p id="replay-dup-reason" className="text-right text-xs text-ink-secondary">
+              <p id="replay-dup-reason" className="text-right text-sm text-ink-secondary">
                 {ema.tenantName ?? "The source"} is offline (simulated outage). Restore the connection first.
               </p>
             ) : null}
@@ -418,11 +429,11 @@ function SourcesCard({ data }: { data: DemoSettings }) {
           <TBody>
             {data.outbox.map((o) => (
               <TR key={o.id}>
-                <TD>
+                <TD className="py-2">
                   <span className="id-mono">{o.messageId}</span>
                   <span className="block text-xs text-ink-muted">
                     {o.messageType}
-                    {o.note ? ` · ${o.note}` : ""}
+                    {o.note ? `, ${o.note}` : ""}
                   </span>
                 </TD>
                 <TD className="text-ink-secondary">{data.sources.find((s) => s.sourceId === o.sourceId)?.tenantName ?? o.sourceName}</TD>
@@ -431,7 +442,7 @@ function SourcesCard({ data }: { data: DemoSettings }) {
                 </TD>
                 <TD>
                   {o.deliveredAt ? (
-                    <StatusPill tone="success" size="sm">
+                    <StatusPill tone="neutral" icon={CircleCheck} size="sm">
                       Delivered {fmtTime(o.deliveredAt)}
                     </StatusPill>
                   ) : o.due ? (
@@ -464,9 +475,10 @@ function SourcesCard({ data }: { data: DemoSettings }) {
 
 // ------------------------------------------------------------------ other connectors
 
-const PRINTER_STATUS: Record<string, { label: string; tone: "success" | "danger" | "warning" | "neutral" }> = {
-  online: { label: "Online", tone: "success" },
-  offline: { label: "Offline", tone: "danger" },
+// Severity ladder: a printer that works is a quiet check (never green); offline and timeouts are amber.
+const PRINTER_STATUS: Record<string, { label: string; tone: "warning" | "neutral"; done?: boolean }> = {
+  online: { label: "Online", tone: "neutral", done: true },
+  offline: { label: "Offline", tone: "warning" },
   simulate_timeout: { label: "Times out after submit", tone: "warning" },
 };
 
@@ -526,7 +538,7 @@ function PrinterStateControl({ printer }: { printer: DemoSettings["printers"][nu
 
 function PrintersCard({ printers }: { printers: DemoSettings["printers"] }) {
   return (
-    <Card title="Label printers" description="Offline keeps jobs queued. A timeout after submission leaves the outcome unknown until someone reconciles it." actions={<SimulatedLabel connector="printers" />} flush>
+    <Card title="Label printers" description="Offline keeps jobs queued. A timeout after submission leaves the outcome unknown until someone reconciles it." flush>
       <ul className="divide-y divide-line" aria-label="Simulated printers and their fault settings">
         {printers.map((p) => {
           const st = PRINTER_STATUS[p.status] ?? { label: p.status, tone: "neutral" as const };
@@ -536,16 +548,16 @@ function PrintersCard({ printers }: { printers: DemoSettings["printers"] }) {
                 <div className="min-w-0">
                   <p className="font-medium text-ink">{p.name}</p>
                   <p className="text-xs text-ink-muted">
-                    {p.location} · {p.reportsCompletion ? "reports completion" : "acknowledgement only"}
+                    {p.location}, {p.reportsCompletion ? "reports completion" : "acknowledgement only"}
                   </p>
                 </div>
-                <StatusPill tone={st.tone} size="sm">
+                <StatusPill tone={st.tone} icon={st.done ? CircleCheck : undefined} size="sm">
                   {st.label}
                 </StatusPill>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-ink-secondary">
-                  Queued: <span className="num-tabular font-medium text-ink">{p.queuedJobs}</span> · Unknown outcome:{" "}
+                  Queued: <span className="num-tabular font-medium text-ink">{p.queuedJobs}</span>. Unknown outcome:{" "}
                   <span className={p.unknownJobs ? "num-tabular font-medium text-warning-fg" : "num-tabular font-medium text-ink"}>{p.unknownJobs}</span>
                 </p>
                 <PrinterStateControl printer={p} />
@@ -561,9 +573,9 @@ function PrintersCard({ printers }: { printers: DemoSettings["printers"] }) {
 function NotificationsCard({ status }: { status: string }) {
   const offline = status === "offline";
   return (
-    <Card title="Office notifications" actions={<SimulatedLabel connector="notifications" />}>
+    <Card title="Office notifications">
       <p className="flex flex-wrap items-center gap-2 text-sm">
-        <StatusPill tone={offline ? "danger" : "success"} size="sm">
+        <StatusPill tone={offline ? "warning" : "neutral"} icon={offline ? undefined : CircleCheck} size="sm">
           {offline ? "Offline: sends fail" : "Connected"}
         </StatusPill>
       </p>
@@ -590,9 +602,9 @@ function NotificationsCard({ status }: { status: string }) {
 function AssistantCard({ mode }: { mode: string }) {
   const unavailable = mode === "unavailable";
   return (
-    <Card title="Drafting and extraction assistant" actions={<SimulatedLabel>Deterministic demo output</SimulatedLabel>}>
+    <Card title="Drafting and extraction assistant">
       <p className="flex flex-wrap items-center gap-2 text-sm">
-        <StatusPill tone={unavailable ? "danger" : "info"} size="sm">
+        <StatusPill tone={unavailable ? "warning" : "info"} size="sm">
           {unavailable ? "Unavailable" : "Deterministic demo output (not live AI)"}
         </StatusPill>
       </p>

@@ -2,9 +2,9 @@ import type { ReactNode } from "react";
 import { getDb } from "@/server/db/db";
 import { readClock } from "@/server/core/clock";
 import { getActor } from "@/server/session";
-import { PageBody, PageHeader } from "@/components/ui/page-header";
 import { Tabs } from "@/components/ui/tabs";
 import { AlertBanner } from "@/components/ui/alert-banner";
+import { ReadOnlyTag } from "@/components/domain/honesty";
 import {
   custodyExceptions, getPrintJobDetail, getRetrievalDetail, getTrayDetail, listPrintJobs, listRecentWorkOrderReviews, listRetrievalRequests, listTrays,
   listWorkOrdersInReview, materialsCounts, pathologistsForTrays, printerViews, slidesAwaitingLabel, storedBlocks, type PrintFilter, type RetrievalFilter,
@@ -22,6 +22,12 @@ type SearchParams = Promise<{ tab?: string; selected?: string; filter?: string; 
 
 const READ_ONLY_ROLES = new Set(["director", "medical_director"]);
 
+/**
+ * /materials: the materials bench. ?tab=print|trays|retrieval picks the job;
+ * ?selected=<PJ|TRY|RR id> opens a print job, tray or retrieval request.
+ * Each tab draws the physical thing in hand: the label, the tray as its
+ * positions, the walk to the storage slot.
+ */
 export default async function MaterialsPage({ searchParams }: { searchParams: SearchParams }) {
   const sp = await searchParams;
   const tab: Tab = sp.tab === "trays" || sp.tab === "retrieval" ? sp.tab : "print";
@@ -60,9 +66,7 @@ export default async function MaterialsPage({ searchParams }: { searchParams: Se
       const fallback = trays.find((t) => ["exception", "assembling", "open"].includes(t.status)) ?? null;
       const target = selected ?? fallback?.id ?? null;
       const detail = target ? getTrayDetail(db, target) : null;
-      content = (
-        <TrayTab trays={trays} detail={detail} selectedMissing={selected && !detail ? selected : null} pathologists={pathologistsForTrays(db)} now={now} />
-      );
+      content = <TrayTab trays={trays} detail={detail} selectedMissing={selected && !detail ? selected : null} pathologists={pathologistsForTrays(db)} now={now} />;
     } else {
       const filter: RetrievalFilter = sp.rfilter === "overdue" || sp.rfilter === "outside" || sp.rfilter === "all" ? sp.rfilter : "open";
       const list = listRetrievalRequests(db, filter, now);
@@ -87,28 +91,33 @@ export default async function MaterialsPage({ searchParams }: { searchParams: Se
   }
 
   return (
-    <PageBody>
-      <PageHeader
-        title="Materials"
-        description="Label printing, tray assembly and block retrieval. Printers and scanners are simulated."
-        readOnly={READ_ONLY_ROLES.has(actor.role)}
-      />
-      <Tabs
-        label="Materials sections"
-        active={tab}
-        items={[
-          { key: "print", label: "Print jobs", count: counts.print + counts.reviews || null, href: "/materials?tab=print" },
-          { key: "trays", label: "Trays", count: counts.trays || null, href: "/materials?tab=trays" },
-          { key: "retrieval", label: "Retrieval", count: counts.retrieval || null, href: "/materials?tab=retrieval" },
-        ]}
-      />
+    <div className="flex min-w-0 flex-col">
+      <header className="flex flex-wrap items-end gap-x-8 gap-y-1 border-b border-line bg-surface px-6 pt-2.5 max-xl:gap-x-5 max-xl:px-4">
+        <div className="flex items-center gap-2 pb-2.5">
+          <h1 className="text-lg font-bold tracking-[-0.015em] text-ink">Materials</h1>
+          {READ_ONLY_ROLES.has(actor.role) ? <ReadOnlyTag /> : null}
+        </div>
+        <Tabs
+          label="Materials jobs"
+          active={tab}
+          bare
+          items={[
+            { key: "print", label: "Print labels", count: counts.print + counts.reviews || null, href: "/materials?tab=print" },
+            { key: "trays", label: "Assemble trays", count: counts.trays || null, href: "/materials?tab=trays" },
+            { key: "retrieval", label: "Retrieve blocks", count: counts.retrieval || null, href: "/materials?tab=retrieval" },
+          ]}
+        />
+        <p className="ml-auto pb-2.5 text-sm text-ink-muted max-lg:ml-0 max-lg:basis-full max-lg:pt-0">Printers and scanners on this page are simulated.</p>
+      </header>
       {loadError ? (
-        <AlertBanner tone="danger" title="Could not load this materials view.">
-          Nothing was changed. Reload the page to try again. Detail: {loadError}
-        </AlertBanner>
+        <div className="px-6 py-5 max-xl:px-4">
+          <AlertBanner tone="warning" title="Could not load this materials view.">
+            Nothing was changed. Reload the page to try again. Detail: {loadError}
+          </AlertBanner>
+        </div>
       ) : (
         content
       )}
-    </PageBody>
+    </div>
   );
 }

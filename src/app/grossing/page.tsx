@@ -57,27 +57,23 @@ export default async function GrossingPage({ searchParams }: { searchParams: Pro
     loadError = "Could not load the grossing queue. Nothing was changed. Reload the page to try again.";
   }
   const view = sp.view === "source" ? "source" : "bench";
+  const notice = lookupError ? (
+    <AlertBanner tone="danger" title="Part not opened" blocking>
+      {lookupError}
+      {/[.!?]$/.test(lookupError.trim()) ? "" : "."} Check the number, or scan the cassette label again (for example D26-04817 A).
+    </AlertBanner>
+  ) : null;
 
-  return (
-    <PageBody>
-      <PageHeader
-        title="Grossing"
-        readOnly={isReadOnly}
-        description="One reviewed gross record per part. Approved parts move on; unfinished parts stay visible."
-      />
-      {lookupError ? (
-        <AlertBanner tone="danger" title="Part not opened" blocking>
-          {lookupError}
-          {/[.!?]$/.test(lookupError.trim()) ? "" : "."} Check the number, or scan the cassette label again (for example D26-04817 A).
-        </AlertBanner>
-      ) : null}
-      {loadError ? (
+  if (loadError) {
+    return (
+      <PageBody>
+        <PageHeader title="Grossing" readOnly={isReadOnly} description="One reviewed gross record per part. Approved parts move on; unfinished parts stay visible." />
+        {notice}
         <AlertBanner tone="danger" title="Grossing queue unavailable" blocking>
           {loadError}
         </AlertBanner>
-      ) : (
-        <GrossingQueue rows={rows} sourceRows={sourceRows} view={view} now={now} />
-      )}
-    </PageBody>
-  );
+      </PageBody>
+    );
+  }
+  return <GrossingQueue rows={rows} sourceRows={sourceRows} view={view} now={now} readOnly={isReadOnly} notice={notice} />;
 }

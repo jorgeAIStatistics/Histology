@@ -1,0 +1,22 @@
+## verdict
+1. Delivery outcome: **resolved.** The unknown-1440 capture opens on "Choose what you learned". "Record delivery outcome" is disabled and shows the reason "Choose the delivery outcome you learned first." In `src/components/clarifications/clarification-forms.tsx` (lines 417-425), the button stays blocked until an outcome is chosen, and "Delivered (confirmed)" also needs "How you know".
+2. Review note placement: **resolved.** In answered-1440, "Review note (required)" sits in the "Review by Kim Nguyen" slot. The dock keeps "Mark answer reviewed" and "Answer is insufficient", with the hint pointing to the slot. The copy that pointed to "Your next step" is gone. See regression 1 for what this fix introduced.
+3. Kim's landing: **resolved.** In list-1440 the pane leads with "Overdue or not delivered (3)" (CLR-0455, CLR-0454 and CLR-0451, each in amber words with its own Open action), then "Answers waiting for a lead (1)" for CLR-0453. In empty-1440 there is one message, "Nothing is yours here", with "Open All (12)", and the pane shows the triage. The generic centered card is gone.
+4. Ladder: **resolved.** In unknown-1440, "Not received yet" has a neutral hourglass. In failed-1440, the record's amber is down to the status band, the notice's "Delivery failed (simulated)" chip and the overdue answer step. The state pill and the notice's amber icon are gone, and the send mark is neutral.
+5. Resolved green pill: **resolved on this screen.** resolved-1440 shows a quiet check in the status band and no green pill. The tone change in the shared `src/components/ui/status-pill.tsx` is filed as a shared request and not applied, so other screens still show the green pill.
+6. Selected queue row: **resolved.** The selected row is now a white sheet with a 1px shell-color ring (`ring-shell`, `src/components/clarifications/clarification-queue.tsx` line 121) and no side stripe. It separates clearly from the gray rows in desktop, failed and resolved.
+7. Dashed borders: **resolved for the listed items.** The Simulated chip is now a plug icon with a plain line. The presenter disclosure has a solid hairline (`src/components/clarifications/clarification-record.tsx` line 352). The empty queue message has no box. Inside `src/components/clarifications/`, the only dashed style left is the "Drafted, not sent" flag (an unsent draft) and the provisional labels. The shared SyntheticTag is still dashed and is filed as a shared request.
+8. Sticky docked step: **resolved, confirmed in source only.** `src/components/clarifications/decision-dock.tsx` line 339 has `lg:sticky lg:top-0` on the step block. No recapture shows the column scrolled, so this rests on the code and the fixer's 1024x600 measurement.
+9. 200% zoom: **pass.** At 720x450 (zoom200.png and zoom200-answered-720.jpg) the pinned top bar takes 204 of 900 pixels, about 23%. At 683x384 it takes about 27%. The tabs fit with no visible horizontal overflow, and the identity band (label, patient, office, owner, Intake link) is in the first viewport. The next action is not pinned below 1024px but can be reached by scrolling, and nothing appears cut off.
+
+Regressions:
+1. **Next action unclear at 1366x768** (the user-reported viewport, `.impeccable/review/clarifications/user-1366.png`). In the answered state the required review note is entirely below the fold. The filled primary button in the dock reads "Mark answer reviewed" with a Ctrl badge, but pressing it with no note only scrolls to the note. The label promises a commit that cannot happen yet, against the pinned direction "make the next action clear". To fix this, either label the primary "Write review note" (scrolls to and focuses the slot) until a note exists, or open the answered state with the conversation scrolled so the review slot is in view.
+
+## remaining
+- Regression 1: the dock's primary button in the answered state names a commit that cannot run while the note is empty, and the note is off-screen at 1366x768 and 1024x768.
+- Not counted against this screen, and not blocking it:
+  - The shared StatusPill resolved tone is still "success" (green), and the shared SyntheticTag, honesty chips and EmptyState are still dashed. Both are filed as shared requests.
+  - DESIGN.md is still absent.
+  - The e2e suite has not been run end to end.
+
+disposition: fix

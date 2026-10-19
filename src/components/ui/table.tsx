@@ -6,7 +6,7 @@ import { cn } from "@/lib/cn";
  * Thin data-table primitives (spec §7 "Data table conventions"): native
  * <table>, <th scope>, aria-sort with a visible sort icon, a caption (hidden
  * by default), sticky header, density from Preferences (row height and text
- * size via CSS variables), selectable rows with aria-selected, hold stripe and
+ * size via CSS variables), selectable rows with aria-selected, hold hatch and
  * optional PAS tint. Pair with @tanstack/react-table for sorting/grouping logic.
  *
  * Scrolling: `scroll="container"` (default) scrolls inside the wrapper and the
@@ -104,7 +104,7 @@ export function TH({ children, sort, onSort, align = "left", priority, stickyFir
       data-priority={priority}
       {...rest}
       className={cn(
-        "sticky top-[var(--hlo-th-top)] z-10 h-8 whitespace-nowrap border-b border-line bg-surface-subtle px-3 text-xs font-medium text-ink-secondary",
+        "sticky top-[var(--hlo-th-top)] z-10 h-8 whitespace-nowrap border-b border-line bg-surface-subtle px-3 text-xs font-medium text-ink-secondary [@media(max-height:560px)]:static",
         align === "right" && "text-right",
         align === "center" && "text-center",
         stickyFirst && "left-0 z-[11]",
@@ -131,9 +131,9 @@ export function TH({ children, sort, onSort, align = "left", priority, stickyFir
 }
 
 export interface TRProps extends ComponentProps<"tr"> {
-  /** Selected row: brand-50 fill and a brand left edge; sets aria-selected. */
+  /** Selected row: brand-50 fill (PAS rows keep their tint) and a hairline brand outline on the row, redrawn on a sticky first cell; no side stripe; sets aria-selected. */
   selected?: boolean;
-  /** Hold row: 3px hold stripe on the left edge (pair with a "Hold" pill). */
+  /** Hold row: hatched ink in the first cell (pair with a "Hold" pill). */
   hold?: boolean;
   /** Optional pale PAS tint (never the only signal; keep the PAS tag). */
   pas?: boolean;
@@ -150,14 +150,17 @@ export function TR({ selected, hold, pas, canceled, interactive, className, chil
       {...rest}
       className={cn(
         "group/row",
-        pas && !selected && "bg-pas-row",
-        selected && "bg-brand-50",
-        interactive && !selected && "cursor-pointer hover:bg-surface-subtle",
+        // A PAS row keeps its PAS tint when selected or hovered (the outline marks selection).
+        pas ? "bg-pas-row" : selected && "bg-brand-50",
+        interactive && !selected && (pas ? "cursor-pointer hover:bg-[color-mix(in_srgb,var(--hlo-pas-row)_70%,var(--hlo-pas-bg))]" : "cursor-pointer hover:bg-surface-subtle"),
         interactive && selected && "cursor-pointer",
         canceled && "text-ink-muted",
+        // Focusable rows (roving focus) get the shared focus outline.
+        // An opaque sticky first cell paints over the row outline, so it redraws its share of it.
+        "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus focus-visible:[&>[data-sticky]]:shadow-[inset_2px_0_0_var(--hlo-focus),inset_0_2px_0_var(--hlo-focus),inset_0_-2px_0_var(--hlo-focus)]",
         selected
-          ? "[&>*:first-child]:shadow-[inset_3px_0_0_var(--hlo-brand)]"
-          : hold && "hlo-hold-stripe [&>*:first-child]:shadow-[inset_3px_0_0_var(--hlo-hold-solid)]",
+          ? "not-focus-visible:outline not-focus-visible:outline-1 not-focus-visible:-outline-offset-1 not-focus-visible:outline-brand [&>[data-sticky]]:border-b-brand [&>[data-sticky]]:shadow-[inset_1px_0_0_var(--hlo-brand),inset_0_1px_0_var(--hlo-brand)]"
+          : hold && "[&>*:first-child]:bg-[image:var(--hlo-hatch)]",
         className,
       )}
     >
@@ -179,10 +182,11 @@ export function TD({ numeric, priority, stickyFirst, wrap, className, children, 
   return (
     <td
       data-priority={priority}
+      data-sticky={stickyFirst || undefined}
       {...rest}
       className={cn(
         "h-[var(--hlo-row-h)] border-b border-line px-3 align-middle text-[length:var(--hlo-cell-fs)] leading-[var(--hlo-cell-lh)] text-ink group-last/row:border-b-0",
-        !wrap && "whitespace-nowrap",
+        wrap ? "py-1.5" : "whitespace-nowrap",
         numeric && "num-tabular text-right",
         stickyFirst && "sticky left-0 z-[1] bg-inherit",
         className,

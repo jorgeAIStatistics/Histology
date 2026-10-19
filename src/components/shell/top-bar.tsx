@@ -1,34 +1,43 @@
 import Link from "next/link";
-import type { ShellActor, ShellStaff } from "@/lib/client/types";
-import { ActingAs } from "./acting-as";
-import { DemoClock } from "./demo-clock";
+import type { NavCounts, ShellActor, ShellStaff } from "@/lib/client/types";
+import { BrandMark } from "./brand-mark";
+import { DemoBanner } from "./demo-banner";
+import { JobNav } from "./job-nav";
+import { PresenterMenu } from "./presenter-menu";
 import { ScanField } from "./scan-field";
+import { ShortcutsButton } from "./shortcuts-button";
 import { SourceFreshness } from "./source-freshness";
 
 /**
- * Top bar (spec §5.1), 52px: wordmark, global scan field, source freshness,
- * demo clock, acting-as role selector.
+ * The hematoxylin top bar, the only chrome: mark, job navigation, the scan
+ * field as the widest element (the bench's main input), source freshness (it
+ * affects decisions), the always-visible Synthetic demo status, and one
+ * presenter menu (role switch, demo clock, guided demo, settings, keys).
  */
-export function TopBar({ actor, staff }: { actor: ShellActor; staff: ShellStaff[] }) {
+export function TopBar({ actor, staff, counts }: { actor: ShellActor; staff: ShellStaff[]; counts: NavCounts }) {
   return (
-    <div className="flex h-[var(--hlo-topbar-h)] items-center gap-3 border-b border-line bg-surface px-4">
+    <div
+      data-on-dark
+      className="flex h-[var(--hlo-topbar-h)] min-w-0 items-center gap-3 bg-shell px-3 text-shell-fg max-[1439px]:gap-2 max-lg:flex-wrap max-lg:content-center max-lg:gap-y-1.5"
+    >
       <Link
         href="/"
-        className="flex min-w-[8.5rem] shrink flex-col justify-center rounded-sm leading-tight max-xl:shrink-0"
+        className="flex shrink-0 items-center gap-2 rounded-md px-1 text-shell-fg"
         title="Histology Lab OS · Histology Redesigned · Lumen Bay Dermatopathology Laboratory (fictional)"
       >
-        <span className="truncate text-base font-semibold text-ink">
-          Histology Lab OS
-          <span className="ml-1.5 text-xs font-normal text-ink-muted max-2xl:hidden">· Histology Redesigned</span>
-        </span>
-        <span className="truncate text-xs text-ink-muted max-xl:hidden">Lumen Bay Dermatopathology Laboratory (fictional)</span>
+        <BrandMark className="size-7" />
+        <span className="text-base font-bold tracking-[-0.01em] max-[1719px]:sr-only">Histology Lab OS</span>
       </Link>
-      <ScanField />
-      <div className="ml-auto flex shrink-0 items-center gap-1">
+      <JobNav counts={counts} />
+      {/* Below 1024px (tablet portrait, 200% zoom) the scan field takes its own full-width row. */}
+      <div className="contents max-lg:order-last max-lg:flex max-lg:w-full max-lg:items-center max-lg:gap-2">
+        <ScanField />
         <SourceFreshness />
-        <DemoClock />
-        <span aria-hidden className="mx-1 h-8 w-px bg-line" />
-        <ActingAs actor={actor} staff={staff} />
+        <ShortcutsButton />
+      </div>
+      <div className="contents max-lg:ml-auto max-lg:flex max-lg:items-center max-lg:gap-2">
+        <DemoBanner />
+        <PresenterMenu actor={actor} staff={staff} />
       </div>
     </div>
   );

@@ -31,6 +31,8 @@ export interface TabsProps {
   idBase?: string;
   className?: string;
   size?: "sm" | "md";
+  /** No bottom hairline of its own (tabs that sit on a header band's edge). */
+  bare?: boolean;
 }
 
 export const tabId = (idBase: string, key: string) => `${idBase}-tab-${key}`;
@@ -48,14 +50,14 @@ function TabLabel({ item }: { item: TabItem }) {
 const itemBase =
   "relative inline-flex shrink-0 items-center whitespace-nowrap border-b-2 px-3 font-medium transition-colors duration-[var(--hlo-duration-fast)]";
 
-export function Tabs({ items, active, label, onChange, idBase = "tabs", className, size = "md" }: TabsProps) {
+export function Tabs({ items, active, label, onChange, idBase = "tabs", className, size = "md", bare = false }: TabsProps) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const linkMode = items.length > 0 && items.every((i) => i.href);
-  const sizing = size === "md" ? "h-10 text-sm" : "h-8 text-sm";
+  const sizing = size === "md" ? "h-10 min-h-[max(2.5rem,var(--hlo-target-min))] text-sm" : "h-8 min-h-[max(2rem,var(--hlo-target-min))] text-sm";
 
   if (linkMode) {
     return (
-      <nav aria-label={label} className={cn("border-b border-line", className)}>
+      <nav aria-label={label} className={cn(!bare && "border-b border-line", className)}>
         <ul className="-mb-px flex flex-wrap gap-1">
           {items.map((item) => {
             const isActive = item.key === active;
@@ -103,7 +105,7 @@ export function Tabs({ items, active, label, onChange, idBase = "tabs", classNam
   };
 
   return (
-    <div role="tablist" aria-label={label} className={cn("-mb-px flex flex-wrap gap-1 border-b border-line", className)}>
+    <div role="tablist" aria-label={label} className={cn("-mb-px flex flex-wrap gap-1", !bare && "border-b border-line", className)}>
       {items.map((item, index) => {
         const isActive = item.key === active;
         return (

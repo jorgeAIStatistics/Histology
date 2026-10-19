@@ -70,6 +70,8 @@ export interface TimelineProps {
   /** Show the honesty note in the header (default true). */
   showNote?: boolean;
   title?: ReactNode;
+  /** Heading level for `title` (default 3). */
+  headingLevel?: 2 | 3 | 4;
   emptyText?: ReactNode;
   className?: string;
 }
@@ -99,7 +101,7 @@ export function SourceTag({ source, className }: { source: TimelineSource; class
     <span
       className={cn(
         "hlo-chip inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-sm border px-1.5 text-xs font-medium leading-5",
-        simulated ? "border-dashed border-sim-border bg-sim-bg text-sim-fg" : "border-line bg-surface-subtle text-ink-secondary",
+        simulated ? "border-sim-border bg-sim-bg text-sim-fg" : "border-line bg-surface-subtle text-ink-secondary",
         className,
       )}
     >
@@ -109,7 +111,8 @@ export function SourceTag({ source, className }: { source: TimelineSource; class
   );
 }
 
-export function Timeline({ events, now, order: initialOrder = "newest", showNote = true, title, emptyText, className }: TimelineProps) {
+export function Timeline({ events, now, order: initialOrder = "newest", showNote = true, title, headingLevel = 3, emptyText, className }: TimelineProps) {
+  const Heading = `h${headingLevel}` as "h2" | "h3" | "h4";
   const [order, setOrder] = useState(initialOrder);
   const sorted = useMemo(() => {
     const list = [...events].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
@@ -117,10 +120,10 @@ export function Timeline({ events, now, order: initialOrder = "newest", showNote
   }, [events, order]);
 
   return (
-    <section className={cn("flex flex-col gap-2", className)} aria-label={typeof title === "string" ? title : "History"}>
+    <section className={cn("relative flex flex-col gap-2", className)} aria-label={typeof title === "string" ? title : "History"}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          {title ? <h3 className="text-md font-semibold text-ink">{title}</h3> : null}
+          {title ? <Heading className="text-md font-semibold text-ink">{title}</Heading> : null}
           {showNote ? <p className="text-xs text-ink-muted">Local append-only audit log for this demo. Not proof of tamper resistance.</p> : null}
         </div>
         <button
@@ -134,7 +137,7 @@ export function Timeline({ events, now, order: initialOrder = "newest", showNote
         </button>
       </div>
       {sorted.length === 0 ? (
-        <p className="rounded-md border border-dashed border-line px-3 py-4 text-sm text-ink-secondary">{emptyText ?? "No events recorded yet."}</p>
+        <p className="rounded-md border border-line px-3 py-4 text-sm text-ink-secondary">{emptyText ?? "No events recorded yet."}</p>
       ) : (
         <ol className="flex flex-col">
           {sorted.map((e) => {
