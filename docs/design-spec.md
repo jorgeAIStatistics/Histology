@@ -948,4 +948,4 @@ The visual and layout parts of Section 6 and Section 7 are superseded too. The c
 - Section 12: do not.
 - Every workflow safeguard.
 
-The navigation moved from the left side rail to the hematoxylin top bar. The demo controls (role switch, demo clock, guided demo, settings) moved into its presenter menu. The keyboard keys are behind the keyboard button in the top bar.
+The navigation moved from the left side rail to the hematoxylin top bar. The demo controls (role switch, demo clock, guided demo, settings) moved into its presenter menu; in Stage 5 they moved again, to the presenter console at `/demo`, and the bar keeps only a read-only demo role, demo time and a console link. The keyboard keys are behind the keyboard button in the top bar.

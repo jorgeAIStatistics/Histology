@@ -23,6 +23,8 @@
 
 ---
 
+> **Stage 5 update (2026-10-19).** Every presenter-only control now lives on the presenter console at `/demo` (tabs Guide, Role and clock, World events, Outages and reset). The top bar shows the demo role and demo time read-only, with one link to the console. No bench screen carries a presenter control. The step-by-step release runbook with reset is [docs/release/demo-runbook.md](release/demo-runbook.md); where this script and the console differ, trust the console.
+
 ## 1. The demo in one minute (for the presenter)
 
 **What it is.** The `/demo` page has four tabs: **Guided demo**, **Workflow map**, **Speaker notes** and **Real vs simulated**. The guided demo walks through the eight steps from the master specification (Section 12), on the app's real screens.
@@ -57,11 +59,11 @@
 
 - [ ] **Start the app.** In Terminal, in the project folder, run `npm run dev` (Node 22 or newer). Open `http://localhost:3100/demo`.
 - [ ] **Browser size: 1366 × 768**, browser zoom **100%**. The screens were designed so key fields fit a common 1366-pixel-wide workstation. If the projector forces another size, check that the step panel and the Intake comparison table fit without sideways scrolling.
-- [ ] **Reset the demo.** On `/demo`, press **Reset demo** in the toolbar, then **Reset demo data** in the confirmation. Expect the message "Demo data reset" and the toolbar to read **"0 of 8 steps done"** with **Demo clock 10:52 AM ET**. (Also available at Settings, Demo scenarios, "Reset demo data".) A reset also puts every simulated connector back to its starting state (sources and notifications "connected", printers "online").
-- [ ] **Pause the demo clock (recommended).** In the top bar, open **Demo clock** and choose **Pause clock**. The step buttons still jump it forward; pausing just keeps it from drifting while you talk.
-- [ ] **Check "Acting as".** The top-bar selector should read **Maya Torres, Accessioner**. The role is remembered by the browser, and a data reset does **not** change it, so switch back to Maya if you rehearsed as Tanya Brooks.
+- [ ] **Reset the demo.** On `/demo`, press **Reset demo** in the toolbar, then **Reset demo data** in the confirmation. Expect the message "Demo data reset" and the toolbar to read **"0 of 8 steps done"** with **Demo clock 10:52 AM ET**. (Also on the presenter console's **Outages and reset** tab, "Reset demo data".) A reset also puts every simulated connector back to its starting state (sources and notifications "connected", printers "online").
+- [ ] **Pause the demo clock (recommended).** On the presenter console's **Role and clock** tab (`/demo?tab=role`), choose **Pause clock**. The step buttons still jump it forward; pausing just keeps it from drifting while you talk.
+- [ ] **Check "Acting as".** The **Acting as** selector on `/demo?tab=role` should read **Maya Torres, Accessioner**; the read-only demo-role note in the top bar names the same person. The role is remembered by the browser, and a data reset does **not** change it, so switch back to Maya if you rehearsed as Tanya Brooks.
 - [ ] **Presenter text size.** If the room is large, press **Presenter text size: normal** in the `/demo` toolbar so it reads **large**. This only enlarges the guided-demo panel and the speaker notes, and the browser remembers it. Leave browser zoom at 100% so the other screens keep their layout.
-- [ ] Do **not** switch on any simulated outage (Settings, Demo scenarios) before the demo unless you plan to show it.
+- [ ] Do **not** switch on any simulated outage (presenter console, **Outages and reset**) before the demo unless you plan to show it.
 
 ### 2.3 One minute before
 
@@ -258,8 +260,8 @@ Thirty minutes with a small group to review the synthetic demo and correct my as
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | A control is refused or missing for the current person | The server checks the role | Switch "Acting as" to the role in Section 2.4. Turn it into a talking point. |
-| Step 3: the office never answers | The clarification wasn't sent, or its simulated delivery failed | Send it from the Clarifications screen. If delivery failed, go to Settings, Demo scenarios, **Restore notifications**, resend, then press the step 3 simulator button again. |
-| Step 3: the amended order doesn't arrive | The simulated source was switched offline | Settings, Demo scenarios, Source systems: set EMA-SIM back to connected and deliver queued messages (or press the step 3 simulator button again). |
+| Step 3: the office never answers | The clarification wasn't sent, or its simulated delivery failed | Send it from the Clarifications screen. If delivery failed, go to the presenter console's **Outages and reset** tab, **Office notifications**, resend, then press the step 3 simulator button again. |
+| Step 3: the amended order doesn't arrive | The simulated source was switched offline | Presenter console, **Outages and reset**, Source systems: set EMA-SIM back to connected and deliver queued messages (or press the step 3 simulator button again). |
 | Step 3: hold release refused | Acting as an accessioner | Switch to Kim Nguyen (lead). |
 | Step 4: "Request accession" refused with a list | A precondition is missing | Read the list. Common ones: routing not accepted on INT-1014-032, related-order decision not made, container A not verified. |
 | Step 4: "Source system unreachable (simulated outage)" | EMA-SIM was set offline | Set it back to connected and retry the **same** request; it will not create a second one. |

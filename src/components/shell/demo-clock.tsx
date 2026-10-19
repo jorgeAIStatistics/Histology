@@ -35,12 +35,13 @@ export function useDemoClockLabel(): { time: string; full: string; running: bool
 }
 
 /**
- * Demo clock controls (spec §5.1), shown in the presenter menu. Always labeled
- * "Demo clock" so it never looks like real time: Advance 5 min, Jump to
- * courier arrival (11:00), Pause/Resume, Reset to 10:52. Runs demo commands
- * (see src/lib/client/demo-commands.ts for the names).
+ * Demo clock controls (spec §5.1), on the presenter console (Role and clock).
+ * Always labeled "Demo clock" so it never looks like real time: Advance 5 min,
+ * Jump to courier arrival (11:00), Pause/Resume, Reset to 10:52. Runs demo
+ * commands (see src/lib/client/demo-commands.ts for the names).
  */
-export function DemoClockPanel() {
+export function DemoClockPanel({ headingLevel = 3 }: { headingLevel?: 2 | 3 } = {}) {
+  const H = `h${headingLevel}` as const;
   const { data } = useLive();
   const now = useDemoNow();
   const running = data.clock.running;
@@ -60,10 +61,10 @@ export function DemoClockPanel() {
 
   return (
     <section aria-labelledby="demo-clock-title">
-      <h3 id="demo-clock-title" className="flex items-center gap-1.5 font-semibold">
+      <H id="demo-clock-title" className={headingLevel === 2 ? "flex items-center gap-1.5 text-md font-bold tracking-[-0.01em]" : "flex items-center gap-1.5 font-semibold"}>
         <Clock className="size-4 text-ink-muted" aria-hidden />
         Demo clock
-      </h3>
+      </H>
       <p className="mt-0.5 text-sm text-ink-secondary">
         <span className="num-tabular font-medium text-ink">{fmtDemoClock(now)}</span>,{" "}
         {running ? "running at normal speed until paused." : "paused: it moves only when you advance or jump it."} Demo time, not the wall clock.
@@ -137,7 +138,7 @@ export function DemoClockPanel() {
       >
         <p>
           Only the clock moves back. Events already recorded after 10:52 will look as if they happen in the future. To start the
-          demonstration again, use Reset demo data in Settings, Demo scenarios.
+          demonstration again, use Reset demo data on the presenter console (Outages and reset).
         </p>
       </ConfirmDialog>
     </section>

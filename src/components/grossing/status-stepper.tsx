@@ -63,9 +63,9 @@ export function StatusRail({
                   <span className="sr-only">{isCurrent ? " (current step)" : done ? " (done)" : " (not yet)"}</span>
                 </span>
               </span>
-              {warn ? <span className="pl-[1.125rem] text-sm leading-[1.15rem] font-medium text-warning-fg max-[1279px]:pl-0">Needs clarification</span> : null}
+              {warn ? <span className="pl-[1.125rem] text-sm leading-[1.15rem] font-medium text-warning-fg max-[79.9375rem]:pl-0">Needs clarification</span> : null}
               {detail ? (
-                <span className={cn("pl-[1.125rem] text-sm leading-[1.15rem] max-[1279px]:pl-0", isCurrent && !done ? "text-ink" : "text-ink-muted")}>{detail}</span>
+                <span className={cn("pl-[1.125rem] text-sm leading-[1.15rem] max-[79.9375rem]:pl-0", isCurrent && !done ? "text-ink" : "text-ink-muted")}>{detail}</span>
               ) : null}
             </li>
           );

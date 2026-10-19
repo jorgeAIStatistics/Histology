@@ -744,7 +744,7 @@ function NewRequestDialog({ open, onClose, blocks }: { open: boolean; onClose: (
 const FILTERS: { key: RetrievalFilter; label: string }[] = [
   { key: "open", label: "Open" },
   { key: "overdue", label: "Overdue returns" },
-  { key: "outside", label: "With a send-out" },
+  { key: "outside", label: "Requests with a send-out" },
   { key: "all", label: "All" },
 ];
 

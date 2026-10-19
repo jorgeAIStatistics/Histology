@@ -38,7 +38,7 @@ export function PrintSnapshot({ data, meta }: { data: WorklistData; meta: PrintM
   const rows = data.groups.reduce((n, g) => n + g.rows.length, 0);
   const filtersText = describeFilters(data.filters, doctorName);
   return (
-    <section className="print-only text-[11px] leading-snug text-ink [print-color-adjust:exact] [-webkit-print-color-adjust:exact]" aria-hidden="true">
+    <section className="print-only text-[12px] leading-snug text-ink [print-color-adjust:exact] [-webkit-print-color-adjust:exact]" aria-hidden="true">
       <header className="mb-3 border-b-2 border-ink pb-2">
         {/* Level one: what this paper is and when it was made. DOM order keeps the title and its generation line as one sentence run. */}
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-x-6">
@@ -83,10 +83,11 @@ export function PrintSnapshot({ data, meta }: { data: WorklistData; meta: PrintM
         </div>
       </header>
       {data.groups.map((g) => (
-        <div key={g.key} className="mb-4 break-inside-avoid-page">
+        <div key={g.key} className="mb-4">
+          {/* A long doctor section may span pages (rows never split); its heading never ends a page alone. */}
           <h2
             className={cn(
-              "flex items-center gap-2 border-b border-ink bg-surface-subtle px-1.5 py-1",
+              "flex break-after-avoid items-center gap-2 border-b border-ink bg-surface-subtle px-1.5 py-1",
               isPathologistColor(g.colorToken) ? cn("border-t-4", SECTION_RULE[g.colorToken]) : "border-t-2 border-dashed border-t-ink",
             )}
           >
@@ -106,9 +107,9 @@ export function PrintSnapshot({ data, meta }: { data: WorklistData; meta: PrintM
               <col className="w-[9%]" />
               <col className="w-[6%]" />
               <col className="w-[16%]" />
-              <col className="w-[24%]" />
+              <col className="w-[20%]" />
               <col className="w-[11%]" />
-              <col className="w-[18%]" />
+              <col className="w-[22%]" />
               <col className="w-[7%]" />
               <col className="w-[9%]" />
             </colgroup>
@@ -159,7 +160,7 @@ export function PrintSnapshot({ data, meta }: { data: WorklistData; meta: PrintM
                       : "None"}
                   </td>
                   <td className="border-b border-line py-0.5 pr-2">{r.readinessText}</td>
-                  <td className="border-b border-line py-0.5 pr-2">{r.owner ? r.owner.ownerName ?? "Unassigned" : "None"}</td>
+                  <td className="border-b border-line py-0.5 pr-2">{r.owner ? r.owner.ownerName ?? "Unassigned" : r.unownedOwner ?? "None"}</td>
                   <td className="border-b border-line py-0.5">{r.lastUpdate.text}</td>
                 </tr>
               ))}

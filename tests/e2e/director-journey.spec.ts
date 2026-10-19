@@ -10,6 +10,7 @@ import {
   actAs,
   loose,
   looseNumber,
+  openConsoleTab,
   openGuideStep,
   openRoleContext,
   postCommandFromPage,
@@ -18,6 +19,7 @@ import {
   resetDemo,
   runSimulatorEvents,
   toasts,
+  worldEvent,
 } from "./support";
 
 const HERO_ACCESSION = "D26-04817";
@@ -185,12 +187,14 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     // The accessioning lead decides the candidate, with a reason.
     await actAs(context, STAFF.kim);
     await page.goto(`/intake?item=${INTAKE_A}`);
-    // Her decision leads the centre at the bench size: both submissions side by side, each reason and the conflict
-    // read from both records in aligned columns, then the four choices, the chosen one's effect and the reason.
-    // "Record decision" stays pinned in the decision column, under the step heading and the review-not-merge rule.
+    // Her decision leads the centre: both submissions side by side, read from both records in aligned columns,
+    // differences first (what keeps them apart, then each reason they share), then the four choices, the chosen
+    // one's effect and the reason. The choices never appear without that evidence above them. "Record decision"
+    // stays pinned in the decision column, under the step heading and the review-not-merge rule.
     const workspace = page.getByRole("region", { name: "REL-0112 side by side" });
     await expect(workspace.getByRole("columnheader", { name: new RegExp(`^Part A\\s*Provisional intake item ${INTAKE_A}`) })).toBeVisible();
     await expect(workspace.getByRole("columnheader", { name: new RegExp(`^Part B\\s*Provisional intake item ${INTAKE_B}`) })).toBeVisible();
+    await expect(workspace.locator("tbody tr").first()).toHaveAccessibleName(/^Separate source orders/);
     await expect(workspace.getByRole("row", { name: /^Same encounter / })).toContainText(loose("ENC-55031 ENC-55031"));
     await expect(workspace.getByRole("row", { name: /^Same submitting office / })).toContainText(loose("Harbor Point Dermatology Harbor Point Dermatology"));
     await expect(workspace.getByRole("row", { name: /^Separate source orders / })).toContainText(loose("ORD-77120 ORD-77121"));
@@ -291,9 +295,17 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     await expect(sent).toContainText(loose("Delivered (simulated)"));
     await expect(sent).not.toContainText(NOT_IN_NOTICE);
 
-    // Simulated office answer (a presenter control, kept apart from the bench actions): it does not resolve anything by itself.
-    await panel.getByText("Presenter controls (demo)").click();
-    await panel.getByRole("button", { name: "Simulate office answer (demo)" }).click();
+    // Simulated office answer: a presenter control, never on the Clarify bench. The presenter runs it from the presenter
+    // console (World events), picking this question; it does not resolve anything by itself.
+    await expect(panel.getByText(/Presenter controls/i)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /Simulate office answer/ })).toHaveCount(0);
+    await openConsoleTab(page, "world");
+    const officeEvent = worldEvent(page, "The office answers a clarification");
+    await officeEvent.getByRole("combobox", { name: "Clarification" }).selectOption(ids.clarification);
+    await expect(officeEvent).toContainText(loose(`${ids.clarification} asks Harbor Point Dermatology about`));
+    await officeEvent.getByRole("button", { name: "Simulate office answer" }).click();
+    await expect(officeEvent).toContainText(loose(`Simulated office reply recorded for ${ids.clarification}. It is not resolved: a lead or supervisor must review it.`));
+    await officeEvent.getByRole("link", { name: `Open ${ids.clarification} on Clarify` }).click();
     await expect(decision.getByRole("heading", { level: 3, name: "Review the answer from Harbor Point Dermatology" })).toBeVisible();
     await expect(panel).toContainText(loose("Simulated office reply: The container is correct. Part B was taken from the LEFT dorsal forearm."));
     await expect(panel).toContainText(loose("Not resolved: a lead or supervisor must review this answer."));

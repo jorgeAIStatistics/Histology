@@ -12,7 +12,7 @@
 - **Roles.** Actors come from a demo role cookie (`hlos_actor`, `src/server/session.ts`). This is documented as "not authentication".
 - **Concurrency.** Optimistic version checks (`updateVersioned`) protect the records people edit: intake items, clarifications, holds, gross records, routing rules, trays (complete), tasks. Event-style commands (scan, advance, create) rely on state preconditions in the domain modules.
 - **Domain.** Holds are scoped by entity, with blocked transitions per hold. Readiness is derived (`src/server/domain/readiness.ts`). Blocks keep `current_location_id` as the last confirmed location, plus `location_confirmed_at/by` and an append-only `custody_event` log.
-- **Screens.** Intake, Clarify, Gross, Worklist, Materials, Operations, Case, Insights, Demo, Settings. Presenter controls are in the top-bar presenter menu, on `/demo`, in Settings › Demo, and in collapsed "Presenter controls (demo)" disclosures on Intake and Clarify.
+- **Screens.** Intake, Clarify, Gross, Worklist, Materials, Operations, Case, Insights, Demo, Settings. At baseline, presenter controls were in the top-bar presenter menu, on `/demo`, in Settings › Demo, and in collapsed "Presenter controls (demo)" disclosures on Intake and Clarify. *(Resolved in Stage 5 C5: all of them now live on the presenter console at `/demo`; see verification.md.)*
 
 ## Missing, unsafe or incomplete
 | # | Finding | Evidence | Severity |
@@ -64,3 +64,19 @@
 - AI in identity or relationship decisions.
 - A visual redesign.
 - Deployment, publishing or pushing.
+
+## Status at the end of Stage 5 (2026-10-19)
+| # | Status | Evidence |
+|---|---|---|
+| S1 | Fixed: owner, scope, command and payload-bound receipts in one immediate transaction; 24-hour expiry | `security.test.ts`; journeys (repeated request) |
+| S2 | Fixed: user requests can never act as `system` | `security.test.ts` |
+| S3 | Fixed: `HLOS_MODE` gate, fail-closed (401/403/404; the console and `/concepts` are 404) | `security.test.ts`, `presenter.test.ts`, locked-build check in [verification.md](verification.md) |
+| S4 | **Open, production blocker** (no identity provider) | [security-privacy.md](security-privacy.md) |
+| S5 | Fixed: one correlation id per request on every audit row and receipt | `security.test.ts` |
+| W1 | Fixed: see [mutation-audit.md](mutation-audit.md) | `integrity.test.ts` |
+| W2 | Fixed: presenter console at `/demo`; no presenter control on bench screens | `presenter-console.spec.ts` |
+| U1 | Fixed: icon-only jobs below 1536px; the scan field is the widest item | Lead measurement; `presenter-console.spec.ts` |
+| U2 | Fixed: REL-0112 is resilient at 1366×768, 125% text, 1024 and 200% zoom | `intake-keyboard.spec.ts` |
+| U3 | Fixed: toasts sit bottom centre; warnings persist | `toast.tsx` |
+| B1 | Fixed: self-hosted fonts; builds never rewrite `tsconfig.json` | [verification.md](verification.md) |
+| R1 | Fixed: 19 keyboard and scanner browser tests in the suite | `intake-keyboard.spec.ts` |

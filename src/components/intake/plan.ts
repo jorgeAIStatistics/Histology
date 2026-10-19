@@ -13,7 +13,7 @@
  * Identifiers are kept apart as `{ id }` segments so the client sets them in mono.
  */
 import type { Blocker } from "@/server/domain/accession";
-import type { BenchPermissions, ContainerView, ItemDetail, QueueItem, SiblingView } from "@/server/queries/intake";
+import type { BenchPermissions, ContainerView, ItemDetail, QueueItem, SiblingView, SourceConflictView } from "@/server/queries/intake";
 import { OPEN_CLARIFICATION_STATES, RELATED_STATUS } from "@/lib/domain";
 import { fmtTime } from "@/lib/time";
 
@@ -83,7 +83,7 @@ const OPEN_CLR = new Set<string>(OPEN_CLARIFICATION_STATES);
 export type Severity = "danger" | "warning" | "hold" | "waiting" | "neutral";
 
 export interface QueueFlag {
-  kind: "identity" | "differs" | "count" | "link" | "office" | "routing" | "hold" | "related" | "asked_office" | "other";
+  kind: "identity" | "differs" | "count" | "link" | "office" | "source" | "routing" | "hold" | "related" | "asked_office" | "other";
   severity: Severity;
   text: string;
   id: string | null;
@@ -114,6 +114,7 @@ export function queueFlags(
     else if (r === "Missing container" || r === "Extra container") out.push({ kind: "count", severity: "warning", text: r, id: null });
     else if (r === "Container not matched to a part" || r === "No order linked") out.push({ kind: "link", severity: "warning", text: r, id: null });
     else if (r === "Office not in directory") out.push({ kind: "office", severity: "warning", text: r, id: null });
+    else if (r === "Source conflict") out.push({ kind: "source", severity: "warning", text: "Source conflict", id: null });
     else if (r === "Routing exception") out.push({ kind: "routing", severity: "waiting", text: routingOwnerName ? `Needs routing · ${routingOwnerName}` : "Needs routing", id: null });
     else if (hold) out.push({ kind: "hold", severity: "hold", text: "Hold", id: hold[1] });
     else if (r === "Related orders: needs review")
@@ -411,13 +412,15 @@ export function waitPhrase(b: Blocker, item: ItemDetail, actorName: string | nul
       return "a linked source order";
     case "related_request_together":
       return "the related items to be requested together";
+    case "source_conflict_open":
+      return `${mine(item.sourceConflicts[0]?.ownerName ?? null)} review of the source conflict`;
     default:
       return b.message.replace(`${item.displayId}: `, "");
   }
 }
 
-/** Short words for the step rail ("REL-0112", "identity", "routing", "H-0088"). */
-function waitNoun(b: Blocker): string {
+/** Short words for the step rail ("REL-0112", "identity", "routing", "H-0088", "source conflict"). */
+export function waitNoun(b: Pick<Blocker, "code" | "message">): string {
   switch (b.code) {
     case "related_pending":
     case "related_request_together":
@@ -440,8 +443,24 @@ function waitNoun(b: Blocker): string {
       return "routing";
     case "hold":
       return /^(H-\d+)/.exec(b.message)?.[1] ?? "hold";
-    default:
+    case "source_conflict_open":
+      return "source conflict";
+    case "order_not_linked":
       return "order link";
+    case "office_unknown":
+      return "office";
+    case "order_canceled":
+      return "canceled order";
+    case "pending_request":
+      return "pending request";
+    case "not_grouped":
+    case "different_patients":
+      return "grouping";
+    case "status":
+    case "not_found":
+      return "item status";
+    default:
+      return "a review";
   }
 }
 
@@ -527,6 +546,7 @@ export type NextAction =
   | { kind: "send"; clarificationId: string; displayId: string; version: number; officeName: string; question: string; category: string; followUpAt: string | null; notice: string }
   | { kind: "open_clarification"; displayId: string; label: string }
   | { kind: "review_related"; candidateId: string; displayId: string; version: number; members: string[]; duplicateRecordKind: boolean }
+  | { kind: "review_source_conflict"; taskId: string; version: number; about: "patient" | "order"; conflict: string; detail: string | null; orderRefs: string[] }
   | { kind: "resolve_routing" }
   | { kind: "accept_routing"; doctorName: string; doctorColor: string | null; ruleSetVersion: number | null }
   | { kind: "request" };
@@ -543,6 +563,8 @@ export interface WorkItem {
   ctrlEnter: boolean;
   title: Seg[];
   detail: Seg[];
+  /** What others read under "Waiting on <owner> to ...", when the title alone does not say why. */
+  waitText?: Seg[];
 }
 
 export type StepKey = "check" | "differences" | "related" | "routing" | "accession";
@@ -601,6 +623,23 @@ const ROLE_WORD = { bench: "An accessioner", lead: "Accessioning lead" } as cons
 
 function officeName(item: ItemDetail): string {
   return item.office?.name ?? item.observedOfficeText ?? "the office";
+}
+
+function lowerFirstText(s: string): string {
+  return s ? s[0].toLowerCase() + s.slice(1) : s;
+}
+
+/**
+ * A source conflict in one sentence, from the importer's task title: what the
+ * source sent and what was kept ("New order ORD-77990 gives different details
+ * for MRN 448210 (date of birth 1961-03-22 → 1901-01-01).").
+ */
+export function sourceConflictWords(t: Pick<SourceConflictView, "title" | "about">): string {
+  const head = t.title.split(" — ")[0].trim();
+  if (head) return head.endsWith(".") ? head : `${head}.`;
+  return t.about === "patient"
+    ? "The source sent patient details that differ from the patient on file."
+    : "A newer order version changed order-level details that were not applied.";
 }
 
 function workItems(input: PlanInput, acc: AccessionPlan): WorkItem[] {
@@ -679,6 +718,23 @@ function workItems(input: PlanInput, acc: AccessionPlan): WorkItem[] {
       ctrlEnter: true,
       title: segs(`Ask ${office} about the missing container for ${m.orderRef} part ${m.designation}`),
       detail: segs(`The order expects ${m.expected ?? "an unknown number of"} container${m.expected === 1 ? "" : "s"} for part ${m.designation}; ${m.received} arrived. Other parts can continue.`),
+    });
+  }
+
+  // 2b. Source conflicts: the source sent patient or order-level details that differ from what is on file.
+  // Only a lead or supervisor records that the details on file stand; nothing is merged or changed.
+  for (const t of item.sourceConflicts) {
+    const conflict = sourceConflictWords(t);
+    work.push({
+      key: `srcconf-${t.id}`,
+      action: { kind: "review_source_conflict", taskId: t.id, version: t.version, about: t.about, conflict, detail: t.detail, orderRefs: t.orderRefs },
+      owner: t.ownerName,
+      ownerRole: ROLE_WORD.lead,
+      actorCan: can(p.reviewSourceConflict),
+      ctrlEnter: true,
+      title: segs("Review source conflict"),
+      detail: segs(`${conflict} Accession waits for this review; nothing is merged or changed.`),
+      waitText: segs(`review the source conflict: ${lowerFirstText(conflict)}`),
     });
   }
 
@@ -799,7 +855,7 @@ function workItems(input: PlanInput, acc: AccessionPlan): WorkItem[] {
 
 // ------------------------------------------------------------------ the five steps
 
-const DIFF_CODES = new Set(["discrepancy_uncovered", "identity_unresolved", "missing_container", "extra_container", "unmatched_container"]);
+const DIFF_CODES = new Set(["discrepancy_uncovered", "identity_unresolved", "missing_container", "extra_container", "unmatched_container", "source_conflict_open"]);
 
 /** "Dr. Elena Marsh" → "Dr. Marsh" (the rail is narrow; the full name stays in the accessible name). */
 export function shortDoctor(name: string): string {
@@ -885,6 +941,18 @@ function stepsFor(input: PlanInput, work: WorkItem[], acc: AccessionPlan): PathS
     for (const m of item.missingParts) issues.push({ identity: false, text: `Part ${m.designation} container missing`, short: `Part ${m.designation} missing`, w: work.find((x) => x.key === `missing-${m.orderPartId}`), clr: null });
     for (const m of item.extraParts) issues.push({ identity: false, text: `Part ${m.designation}: extra container`, short: `Part ${m.designation} extra`, w: undefined, clr: null });
     const diffBlockers = blockers.filter((b) => DIFF_CODES.has(b.code));
+    // A source conflict (the source sent other patient or order details) is a difference a lead reviews.
+    const conflicts = done ? [] : item.sourceConflicts;
+    if (!issues.length && conflicts.length) {
+      const w = work.find((x) => x.key === `srcconf-${conflicts[0].id}`);
+      const st = stateFor(w);
+      const who = ownerOf(w);
+      const more = conflicts.length > 1 ? ` (+${conflicts.length - 1})` : "";
+      const moreShort = conflicts.length > 1 ? ` +${conflicts.length - 1}` : "";
+      return st === "mine"
+        ? step("differences", label, st, "warning", `Source conflict: your review${more}`, `Source conflict · yours${moreShort}`, who)
+        : step("differences", label, st, "warning", `Source conflict: ${who ?? "a lead"} reviews${more}`, `Source conflict · ${who ?? "a lead"}${moreShort}`, who);
+    }
     if (!issues.length && !diffBlockers.length) {
       const resolved = item.clarifications.find((q) => q.state === "resolved");
       return step("differences", label, "done", "done", resolved ? `Settled (${resolved.displayId} resolved)` : "None found", resolved ? `${resolved.displayId} · resolved` : "None found");
@@ -894,8 +962,9 @@ function stepsFor(input: PlanInput, work: WorkItem[], acc: AccessionPlan): PathS
     }
     const top = issues.find((i) => i.identity) ?? issues[0];
     const tone: StepTone = issues.some((i) => i.identity) ? "danger" : "warning";
-    const more = issues.length > 1 ? ` (+${issues.length - 1})` : "";
-    const moreShort = issues.length > 1 ? ` +${issues.length - 1}` : "";
+    const others = issues.length - 1 + conflicts.length;
+    const more = others > 0 ? ` (+${others})` : "";
+    const moreShort = others > 0 ? ` +${others}` : "";
     if (!top.clr) {
       return step("differences", label, stateFor(top.w), tone, `${top.text}; not asked yet${more}`, `${top.short} · not asked${moreShort}`, ownerOf(top.w));
     }
@@ -1051,6 +1120,10 @@ function finding(item: ItemDetail, acc: AccessionPlan, actorName: string): Intak
     tone = "warning";
     const c = stale[0];
     lead = `${c.orderRef ?? "The order"} changed after container ${c.seq} was checked (v${c.lastVerification?.orderVersion ?? "?"} → v${c.currentOrderVersion ?? "?"}); the check must be repeated.`;
+  } else if (item.sourceConflicts.length) {
+    tone = "warning";
+    const t = item.sourceConflicts[0];
+    lead = `${sourceConflictWords(t)} The ${t.about === "patient" ? "patient details" : "order details"} on file were kept; nothing was merged.`;
   } else if (!item.orders.length) {
     tone = "warning";
     lead = item.office ? "No source order was found for the requisition's order id in this office's tenant." : `${item.observedOfficeText ?? "The office"} is not in the office directory, so no order could be looked up.`;
@@ -1088,6 +1161,7 @@ const STEP_OF: Record<NextAction["kind"], StepKey> = {
   send: "differences",
   open_clarification: "differences",
   review_related: "related",
+  review_source_conflict: "differences",
   resolve_routing: "routing",
   accept_routing: "routing",
   request: "accession",
@@ -1102,7 +1176,7 @@ export function buildPlan(input: PlanInput): IntakePlan {
   const also = work.filter((w) => w !== next && w.action && mineNow(w)).slice(0, 3);
   const waitingOn: WaitingOn[] = work
     .filter((w) => w !== next && !mineNow(w))
-    .map((w) => ({ key: w.key, who: w.owner ?? w.ownerRole ?? "Someone at the bench", what: w.owner && !w.action ? w.title : lowerFirst(w.title) }));
+    .map((w) => ({ key: w.key, who: w.owner ?? w.ownerRole ?? "Someone at the bench", what: w.waitText ?? (w.owner && !w.action ? w.title : lowerFirst(w.title)) }));
 
   let idle: IntakePlan["idle"] = null;
   if (!next) {

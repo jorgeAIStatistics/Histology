@@ -7,6 +7,7 @@ import { hasUnsavedChanges, unsavedLabels } from "@/lib/client/unsaved";
 import { isReadOnlyRole } from "@/lib/client/shell-context";
 import type { ShellActor, ShellStaff } from "@/lib/client/types";
 import { ConfirmDialog } from "@/components/ui/dialog";
+import { Select } from "@/components/ui/field";
 import { useToast } from "@/components/ui/toast";
 import { ReadOnlyTag } from "@/components/domain/honesty";
 
@@ -25,8 +26,8 @@ export function optionText(s: { name: string; role: Role }): string {
 }
 
 /**
- * "Acting as" role selector (spec §5.1), inside the presenter menu: a native
- * <select>. Demo role switch, not a sign-in. The server checks permissions on every action whatever this
+ * "Acting as" role selector (spec §5.1), on the presenter console (Role and
+ * clock), never on a bench screen: a native <select>. Demo role switch, not a sign-in. The server checks permissions on every action whatever this
  * says. Switching with unsaved edits asks first.
  */
 export function ActingAs({ actor, staff }: { actor: ShellActor; staff: ShellStaff[] }) {
@@ -81,7 +82,7 @@ export function ActingAs({ actor, staff }: { actor: ShellActor; staff: ShellStaf
             </span>
           ) : null}
         </span>
-        <select
+        <Select
           id="acting-as"
           value={actor.id}
           disabled={pending}
@@ -93,7 +94,7 @@ export function ActingAs({ actor, staff }: { actor: ShellActor; staff: ShellStaf
             if (hasUnsavedChanges()) setConfirmFor(id);
             else void switchTo(id);
           }}
-          className="h-10 w-full rounded-md border border-line-strong bg-surface pl-2 pr-7 text-base font-medium text-ink hover:border-ink-secondary disabled:text-ink-disabled"
+          className="font-medium"
         >
           {groups.map((g) => (
             <optgroup key={g.role} label={ROLE_LABEL[g.role]}>
@@ -104,7 +105,7 @@ export function ActingAs({ actor, staff }: { actor: ShellActor; staff: ShellStaf
               ))}
             </optgroup>
           ))}
-        </select>
+        </Select>
       </div>
       <ConfirmDialog
         open={confirmFor !== null}

@@ -1,11 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronDown, CirclePause, Hourglass, ListOrdered, Minus, PencilLine, Plug, TriangleAlert, Check } from "lucide-react";
+import { ChevronDown, CirclePause, Hourglass, ListOrdered, Minus, PencilLine, TriangleAlert, Check } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { AlertBanner } from "@/components/ui/alert-banner";
-import { CommandButton } from "@/components/ui/command-button";
-import { PresenterControls } from "@/components/ui/presenter-controls";
 import { Timeline, sourceFromOrigin, type TimelineEvent } from "@/components/ui/timeline";
 import { HoldBanner } from "@/components/domain/hold";
 import { SyntheticTag } from "@/components/domain/honesty";
@@ -338,36 +336,6 @@ function Holds({ detail, now, dockedHoldId }: { detail: ClarificationDetail; now
   );
 }
 
-/** Demo controls the presenter uses (the simulated office), in the shared presenter disclosure; a real bench does not have them. */
-function OfficeSimulator({ detail }: { detail: ClarificationDetail }) {
-  const sim = detail.actions.find((a) => a.key === "simulateAnswer");
-  // The simulated office can only answer a question that was sent.
-  if (!sim || detail.row.state === "drafted") return null;
-  return (
-    <PresenterControls>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <CommandButton
-            command="clarification.simulateOfficeAnswer"
-          input={{ clarificationId: detail.row.id }}
-          variant="secondary"
-          size="sm"
-          pendingLabel="Simulating..."
-          disabledReason={sim.enabled ? undefined : sim.reason}
-          successToast={(r: { message: string }) => r.message}
-        >
-          Simulate office answer (demo)
-        </CommandButton>
-        {sim.enabled ? (
-          <span className="inline-flex items-center gap-1 text-sm text-ink-muted">
-            <Plug className="size-3.5 shrink-0" aria-hidden />
-            The reply is labeled simulated
-          </span>
-        ) : null}
-      </div>
-    </PresenterControls>
-  );
-}
-
 /** The primary (next) action: the server lists the next valid action first and marks it primary. */
 export function primaryAction(detail: ClarificationDetail): ActionView | null {
   const candidates = detail.actions.filter((a) => !["draft", "simulateAnswer", "cancel"].includes(a.key));
@@ -409,12 +377,11 @@ export function ClarificationRecord({
     <section aria-labelledby="clr-record-heading" aria-busy={busy || undefined} className="animate-swap-in flex min-h-0 min-w-0 flex-1 flex-col">
       <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col transition-opacity duration-[var(--hlo-duration-base)]", busy && "opacity-55 delay-150")}>
         <Bands detail={detail} now={now} queueCount={queueCount} queueOpen={queueOpen} onToggleQueue={onToggleQueue} />
-        <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_300px] xl:grid-cols-[minmax(0,1fr)_336px] min-[1400px]:grid-cols-[minmax(0,1fr)_352px]">
+        <div className="flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[minmax(0,1fr)_300px] xl:grid-cols-[minmax(0,1fr)_336px] min-[87.5rem]:grid-cols-[minmax(0,1fr)_352px]">
           <div className="min-h-0 min-w-0 space-y-4 p-4 lg:overflow-y-auto max-xl:p-3">
             <Conversation detail={detail} now={now} forms={forms} primaryKey={readOnly ? null : (primary?.key ?? null)} readOnly={readOnly} />
             <Holds detail={detail} now={now} dockedHoldId={dockedHoldId} />
             <OfficeAndHistory detail={detail} now={now} />
-            <OfficeSimulator detail={detail} />
           </div>
           <DecisionDock detail={detail} forms={forms} primary={primary} readOnlyNote={readOnlyNote} now={now} />
         </div>

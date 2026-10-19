@@ -60,10 +60,10 @@ function JobNavLink({ item, active, count }: { item: JobLink; active: boolean; c
   const showCount = typeof count === "number" && count > 0;
   // Below 1536px the scan field must lead the bar: inactive jobs become 44px icon targets (label in a
   // tooltip on hover and keyboard focus, and in the accessible name); the active job keeps its label.
-  const compact = active ? "max-[1365px]:h-11 max-[1365px]:w-11 max-[1365px]:justify-center max-[1365px]:px-0" : "max-[1535px]:h-11 max-[1535px]:w-11 max-[1535px]:justify-center max-[1535px]:px-0";
-  const hideLabel = active ? "max-[1365px]:sr-only" : "max-[1535px]:sr-only";
-  const showIcon = active ? "min-[1366px]:hidden" : "min-[1536px]:hidden";
-  const badgeCorner = active ? "max-[1365px]" : "max-[1535px]";
+  const compact = active ? "max-[85.375rem]:h-11 max-[85.375rem]:w-11 max-[85.375rem]:justify-center max-[85.375rem]:px-0" : "max-[96rem]:h-11 max-[96rem]:w-11 max-[96rem]:justify-center max-[96rem]:px-0";
+  const hideLabel = active ? "max-[85.375rem]:sr-only" : "max-[96rem]:sr-only";
+  const showIcon = active ? "min-[85.375rem]:hidden" : "min-[96rem]:hidden";
+  const badgeCorner = active ? "max-[85.375rem]" : "max-[96rem]";
   const link = (
     <Link
       href={item.href}
@@ -82,7 +82,7 @@ function JobNavLink({ item, active, count }: { item: JobLink; active: boolean; c
             aria-hidden
             className={cn(
               "num-tabular inline-flex h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-pill px-1 text-xs font-semibold leading-none",
-              badgeCorner === "max-[1365px]" ? "max-[1365px]:absolute max-[1365px]:top-0.5 max-[1365px]:right-0.5" : "max-[1535px]:absolute max-[1535px]:top-0.5 max-[1535px]:right-0.5",
+              badgeCorner === "max-[85.375rem]" ? "max-[85.375rem]:absolute max-[85.375rem]:top-0.5 max-[85.375rem]:right-0.5" : "max-[96rem]:absolute max-[96rem]:top-0.5 max-[96rem]:right-0.5",
               active ? "bg-shell text-shell-fg" : "bg-shell-line text-shell-fg",
             )}
           >

@@ -15,7 +15,7 @@ export function DemoBanner() {
         className="inline-flex h-7 items-center gap-1.5 rounded-pill bg-shell-fg px-2.5 text-sm font-semibold text-shell hover:bg-white/90"
       >
         <FlaskConical className="size-3.5" aria-hidden />
-        Synthetic<span className="max-[1535px]:sr-only"> demo</span>
+        Synthetic<span className="max-[96rem]:sr-only"> demo</span>
         <span className="sr-only">: what is simulated?</span>
       </Link>
     </div>

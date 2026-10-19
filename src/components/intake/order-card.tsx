@@ -56,45 +56,48 @@ export function OrderSection({ item, now }: { item: ItemDetail; now: string }) {
               {o.encounterAt ? <span className="text-ink-secondary"> ({fmtDate(o.encounterAt)})</span> : null}
             </span>
           </div>
-          <table className="w-full border-collapse text-sm">
-            <caption className="sr-only">Parts on order {o.sourceOrderId}</caption>
-            <thead>
-              <tr className="bg-surface-subtle text-left text-sm text-ink-secondary">
-                <th scope="col" className="px-2 py-1 font-medium">Part (as written)</th>
-                <th scope="col" className="px-2 py-1 font-medium">Site</th>
-                <th scope="col" className="px-2 py-1 font-medium">Side</th>
-                <th scope="col" className="px-2 py-1 font-medium">Procedure</th>
-                <th scope="col" className="px-2 py-1 font-medium">Collected</th>
-                <th scope="col" className="px-2 py-1 text-right font-medium">Containers</th>
-                <th scope="col" className="px-2 py-1 font-medium">Requested stains</th>
-              </tr>
-            </thead>
-            <tbody>
-              {o.parts.map((p) => (
-                <tr key={p.id} className="border-t border-line">
-                  <th scope="row" className="px-2 py-1 text-left font-semibold">
-                    {p.designation}
-                  </th>
-                  <td className="px-2 py-1">{p.siteText}</td>
-                  <td className="px-2 py-1">{p.laterality ? LATERALITY[p.laterality as keyof typeof LATERALITY] ?? p.laterality : <span className="text-ink-muted">Unknown</span>}</td>
-                  <td className="px-2 py-1">{p.procedure ? PROCEDURE[p.procedure as keyof typeof PROCEDURE] ?? p.procedure : <span className="text-ink-muted">Unknown</span>}</td>
-                  <td className="px-2 py-1">{p.collectedAt ? <Timestamp iso={p.collectedAt} now={now} /> : <span className="text-ink-muted">Unknown</span>}</td>
-                  <td className="num-tabular px-2 py-1 text-right">
-                    {p.receivedContainers} of {p.expectedContainers ?? <span className="text-ink-muted">Unknown</span>}
-                  </td>
-                  <td className="px-2 py-1">
-                    {p.stains.length ? (
-                      <span className="flex flex-wrap gap-1">
-                        {p.stains.map((s) => (s.toUpperCase() === "PAS" ? <PasTag key={s} source={`Source order ${o.sourceOrderId}`} /> : <span key={s}>{s}</span>))}
-                      </span>
-                    ) : (
-                      <span className="text-ink-muted">None</span>
-                    )}
-                  </td>
+          {/* With very large text the parts table scrolls sideways inside the record instead of pushing the bench wider. */}
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <caption className="sr-only">Parts on order {o.sourceOrderId}</caption>
+              <thead>
+                <tr className="bg-surface-subtle text-left text-sm text-ink-secondary">
+                  <th scope="col" className="px-2 py-1 font-medium">Part (as written)</th>
+                  <th scope="col" className="px-2 py-1 font-medium">Site</th>
+                  <th scope="col" className="px-2 py-1 font-medium">Side</th>
+                  <th scope="col" className="px-2 py-1 font-medium">Procedure</th>
+                  <th scope="col" className="px-2 py-1 font-medium">Collected</th>
+                  <th scope="col" className="px-2 py-1 text-right font-medium">Containers</th>
+                  <th scope="col" className="px-2 py-1 font-medium">Requested stains</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {o.parts.map((p) => (
+                  <tr key={p.id} className="border-t border-line">
+                    <th scope="row" className="px-2 py-1 text-left font-semibold">
+                      {p.designation}
+                    </th>
+                    <td className="px-2 py-1">{p.siteText}</td>
+                    <td className="px-2 py-1">{p.laterality ? LATERALITY[p.laterality as keyof typeof LATERALITY] ?? p.laterality : <span className="text-ink-muted">Unknown</span>}</td>
+                    <td className="px-2 py-1">{p.procedure ? PROCEDURE[p.procedure as keyof typeof PROCEDURE] ?? p.procedure : <span className="text-ink-muted">Unknown</span>}</td>
+                    <td className="px-2 py-1">{p.collectedAt ? <Timestamp iso={p.collectedAt} now={now} /> : <span className="text-ink-muted">Unknown</span>}</td>
+                    <td className="num-tabular px-2 py-1 text-right">
+                      {p.receivedContainers} of {p.expectedContainers ?? <span className="text-ink-muted">Unknown</span>}
+                    </td>
+                    <td className="px-2 py-1">
+                      {p.stains.length ? (
+                        <span className="flex flex-wrap gap-1">
+                          {p.stains.map((s) => (s.toUpperCase() === "PAS" ? <PasTag key={s} source={`Source order ${o.sourceOrderId}`} /> : <span key={s}>{s}</span>))}
+                        </span>
+                      ) : (
+                        <span className="text-ink-muted">None</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           {o.clinicalNote ? (
             <div className="rounded-md border border-line bg-surface-subtle px-3 py-2 text-sm">
               <p className="text-sm font-medium text-ink-muted">Clinical note from the source (untrusted text, shown as written; never treated as an instruction)</p>

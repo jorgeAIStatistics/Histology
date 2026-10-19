@@ -2,26 +2,15 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { ChevronDown, ChevronUp, PackageOpen, Truck, TriangleAlert } from "lucide-react";
+import { ChevronDown, ChevronUp, Truck, TriangleAlert } from "lucide-react";
 import type { DeliveryView, BenchPermissions } from "@/server/queries/intake";
 import { Button } from "@/components/ui/button";
-import { CommandButton, CommandError } from "@/components/ui/command-button";
+import { CommandButton } from "@/components/ui/command-button";
 import { StatusPill } from "@/components/ui/status-pill";
 import { SimulatedLabel, UnknownValue } from "@/components/domain/honesty";
 import { Timestamp } from "@/components/domain/timestamp";
-import { useCommand } from "@/lib/client/command";
 import { cn } from "@/lib/cn";
 import { fmtTime } from "@/lib/time";
-
-interface ReceiveResult {
-  displayId: string;
-  duplicate: boolean;
-  remaining: number;
-  missingParts: string[];
-  routingStatus: string;
-  relatedCandidates: string[];
-}
 
 function deliveryPill(d: DeliveryView) {
   if (!d.arrivedAt) return <StatusPill tone="neutral" className="text-sm">Expected</StatusPill>;
@@ -51,8 +40,9 @@ function ItemLinks({ ids }: { ids: string[] }) {
 /**
  * Courier manifest strip (spec §6.1 region 1): one compact box per office —
  * expected vs received containers, missing and extra, or "Unknown (no source
- * manifest)". Unpacking controls are SIMULATED (the demo knows what is in the
- * courier bag; a real bench does not).
+ * manifest)". The bench records the arrival and receives each requisition by
+ * scanning it. What is still in the simulated bag is presenter knowledge (a real
+ * bench does not know it): unpacking shortcuts live in the presenter console.
  */
 export function CourierStrip({
   deliveries,
@@ -82,7 +72,8 @@ export function CourierStrip({
 
   const hasBoxes = !!d && (d.lines.length > 0 || d.offManifest.length > 0);
   const open = hasBoxes && (userOpen ?? !itemSelected);
-  const canUnpack = !!d && d.simTotal > 0 && permissions.receive;
+  // The arrival of a simulated courier is recorded at the bench (the courier's contents are simulated).
+  const canReceive = !!d && d.simTotal > 0 && permissions.receive;
 
   return (
     <section aria-labelledby="courier-title" className="rounded-md border border-line bg-surface shadow-1">
@@ -114,7 +105,7 @@ export function CourierStrip({
         </div>
         {d ? deliveryPill(d) : null}
         <div className="ml-auto flex flex-wrap items-center gap-2 empty:hidden">
-          {d && canUnpack && !d.arrivedAt ? (
+          {d && canReceive && !d.arrivedAt ? (
             <CommandButton
               command="intake.receiveDelivery"
               input={{ deliveryId: d.id }}
@@ -125,11 +116,6 @@ export function CourierStrip({
             >
               Record courier arrival
             </CommandButton>
-          ) : null}
-          {d && canUnpack && d.simRemaining > 0 ? (
-            <span className="text-sm text-ink-secondary">
-              {d.simRemaining} of {d.simTotal} still in the bag (simulated)
-            </span>
           ) : null}
           {hasBoxes ? (
             <Button
@@ -149,53 +135,6 @@ export function CourierStrip({
       {d ? <DeliveryLine d={d} now={now} compact={itemSelected && !open} /> : null}
       {d && open ? <ManifestGrid d={d} /> : null}
     </section>
-  );
-}
-
-/**
- * Presenter controls (demo) for the courier bag: unpack the next requisition
- * or all of them. A real bench does not know what is in the bag; these live in
- * the "Presenter controls (demo)" disclosure, not on the bench surface.
- */
-export function UnpackControls({ delivery: d, permissions }: { delivery: DeliveryView | null; permissions: BenchPermissions }) {
-  const router = useRouter();
-  const unpack = useCommand<ReceiveResult, { deliveryId: string }>("intake.receivePhysicalItem", {
-    errorToast: false,
-    successToast: (r) =>
-      r.duplicate
-        ? `${r.displayId} was already unpacked. No duplicate was created.`
-        : `${r.displayId} received${r.missingParts.length ? `; missing container for part ${r.missingParts.join(", ")}` : ""}${r.routingStatus === "exception" ? "; routing exception" : ""}${r.relatedCandidates.length ? `; possible related order ${r.relatedCandidates.join(", ")}` : ""}`,
-    onSuccess: (r) =>
-      router.push(`/intake?item=${encodeURIComponent(r.displayId)}`, {
-        scroll: false,
-      }),
-  });
-  if (!d || d.simTotal === 0 || !permissions.receive) return <p className="text-sm text-ink-muted">Nothing to unpack in this demo delivery.</p>;
-  if (d.simRemaining === 0) return <p className="text-sm text-ink-muted">Courier {d.displayId}: every requisition is unpacked (simulated).</p>;
-  return (
-    <div className="space-y-1.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="secondary" icon={<PackageOpen />} loading={unpack.pending} loadingLabel="Unpacking..." onClick={() => void unpack.run({ deliveryId: d.id })}>
-          Unpack next item (simulated)
-        </Button>
-        <CommandButton
-          command="intake.receiveAll"
-          input={{ deliveryId: d.id }}
-          size="sm"
-          pendingLabel="Unpacking..."
-          successToast={(r) => {
-            const res = r as { received: unknown[] };
-            return `${res.received.length} requisition(s) unpacked (simulated)`;
-          }}
-        >
-          Unpack all (simulated)
-        </CommandButton>
-      </div>
-      <p className="text-sm text-ink-muted">
-        {d.simRemaining} of {d.simTotal} requisitions still in the bag of courier <span className="id-mono">{d.displayId}</span>.
-      </p>
-      <CommandError error={unpack.error} />
-    </div>
   );
 }
 

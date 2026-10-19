@@ -21,7 +21,7 @@ Every bench screen is now laid out for its own job:
 | Case | A stack of cards | Each part as its label, with its physical and documentation paths drawn as two short rails. |
 | Insights, Demo, Settings | Card stacks | The same world. Every "Illustrative", "Simulated" and "Synthetic" label is kept. |
 
-The shell is now one hematoxylin top bar: job navigation, the scan field, source freshness, a keyboard-keys button, an always-visible **Synthetic demo** pill and a **presenter menu** (demo role switch, demo clock, guided demo, settings). The left side menu is gone, and the content uses the full width.
+The shell is now one hematoxylin top bar: job navigation, the scan field, source freshness, a keyboard-keys button, an always-visible **Synthetic demo** pill and, in demo mode, a read-only demo role and demo time with one link to the **presenter console** (`/demo`). *(Stage 5 replaced the presenter menu.)* The left side menu is gone, and the content uses the full width.
 
 Rules: [visual-system.md](visual-system.md). The system as built: [DESIGN.md](../../DESIGN.md). Why each choice: [decision-log.md](decision-log.md).
 
@@ -98,9 +98,9 @@ These are the questions in [task-map.md](task-map.md), answered on the after cap
 - the role switch, which is not a sign-in.
 
 **Unfinished or known weaknesses:**
-- **Presenter-only controls** (a colleague's edit, unpacking a courier bag, an office answer) still sit on the bench in one collapsed "Presenter controls (demo)" disclosure, below the first view. This is a documented exception until a [separate presenter surface](presentation-surface-proposal.md) exists. That surface is proposed, not built.
+- **Presenter-only controls** (a colleague's edit, unpacking a courier bag, an office answer) moved in Stage 5 to the presenter console's **World events** tab, built from the [presentation-surface proposal](presentation-surface-proposal.md). No bench screen carries them any more.
 - **Top bar widths:** at 1366 to 1535px the job-navigation group is wider than the scan field. The scan field is still the widest single control. Below 1366px the navigation shows icons only, with labels kept for screen readers and as tooltips.
-- **Demo clock below 1280px:** it leaves the bar and is reached through the presenter menu.
+- **Demo clock:** read-only in the bar; its controls are on the console's Role and clock tab.
 - **Tight fit at 1366×768:** Kim's decision fits with about 10px to spare. A longer finding or hold line would push its reason field below the fold.
 - **Step rails:** the Intake rail, the Grossing record states and the case-page rails show the same idea drawn three ways. They are not one shared part yet.
 - **Toasts:** they now appear bottom-left, away from the decision columns and side panels on the right. On the Intake bench that puts them over the bottom of the queue for a few seconds.

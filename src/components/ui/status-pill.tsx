@@ -98,7 +98,8 @@ export const PILL_STATES = {
     exception: { label: "Exception", tone: "warning" },
     verified_complete: { label: "Complete", tone: "success" },
     released_with_exceptions: { label: "Released with exceptions", tone: "warning" },
-    delivered: { label: "Delivered", tone: "success" },
+    // The tray left the lab; no pathologist receipt is recorded (TRAY_STATUS.delivered says the same).
+    delivered: { label: "Sent (receipt not recorded)", tone: "info" },
   },
   routing: {
     suggested: { label: "Rule applied", tone: "neutral" },

@@ -24,34 +24,33 @@ import { EvidenceSheet } from "./evidence-sheet";
 import { RelatedDecisionWorkspace, RelatedSection, useRelatedDecision } from "./related";
 import { RoutingSection } from "./routing-card";
 import { HoldsSection } from "./holds-card";
-import { ColleagueEditControl, NotesSection } from "./notes-card";
+import { NotesSection } from "./notes-card";
 import { OrderSection } from "./order-card";
 import { CorrectionSection } from "./correction-card";
 import { HistorySection } from "./history-card";
 import { DecisionColumn } from "./decision-column";
 import { EmptyWorkspace } from "./empty-workspace";
-import { PresenterControls } from "@/components/ui/presenter-controls";
 import { RaiseClarificationDialog, type ClarificationDraft } from "./clarification-dialog";
 
 const STEP_KEYS: StepKey[] = ["check", "differences", "related", "routing", "accession"];
 
 /** Below 1024px wide or 560px tall (200% zoom of a bench screen) the fixed frame becomes one page-scrolling stack. */
-const STACKED_QUERY = "(max-width: 1023.98px), (max-height: 560px)";
+const STACKED_QUERY = "(max-width: 63.99875rem), (max-height: 35rem)";
 
-/**
- * Bench widths (queue, centre and decision column side by side, not stacked): a
- * decision that rests on evidence in the centre (the lead's "one case or two")
- * is laid out there. Narrower or stacked, it stays in the decision column.
- */
-const WIDE_QUERY = "(min-width: 1280px) and (min-height: 560.02px)";
-function subscribeWide(onChange: () => void) {
-  const m = window.matchMedia(WIDE_QUERY);
+function subscribeStacked(onChange: () => void) {
+  const m = window.matchMedia(STACKED_QUERY);
   m.addEventListener("change", onChange);
   return () => m.removeEventListener("change", onChange);
 }
-function useWideBench(): boolean {
-  // The server renders the bench layout (1366-1440 wide); a narrower window switches on hydration.
-  return useSyncExternalStore(subscribeWide, () => window.matchMedia(WIDE_QUERY).matches, () => true);
+/**
+ * The stacked, page-scrolling layout. A decision that rests on evidence in the
+ * centre (the lead's "one case or two") keeps its action pinned in the decision
+ * column at bench sizes; stacked, the action follows the reason in the centre
+ * so the column reads evidence, choices, reason, action from top to bottom.
+ */
+function useStacked(): boolean {
+  // The server renders the bench layout (1366-1440 wide); a stacked window switches on hydration.
+  return useSyncExternalStore(subscribeStacked, () => window.matchMedia(STACKED_QUERY).matches, () => false);
 }
 
 function reducedMotion(): boolean {
@@ -131,8 +130,10 @@ function ItemWorkspace({
   const relAction = plan.next?.action?.kind === "review_related" ? plan.next.action : null;
   const relCand = relAction ? (item.related.find((r) => r.id === relAction.candidateId) ?? null) : null;
   const relState = useRelatedDecision(item, relCand, bench.siblings);
-  const wide = useWideBench();
-  const lead = !!relCand && !!relState && wide;
+  const stacked = useStacked();
+  // The two submissions side by side, then the choices, lead the centre at every size: the choices never
+  // appear without the conflicting information (never folded into the decision column).
+  const lead = !!relCand && !!relState;
   const stated = useMemo(() => statedIds(plan), [plan]);
   return (
     <section aria-label="Intake workspace" aria-busy={busy || undefined} className="animate-swap-in flex min-h-0 min-w-0 flex-1 flex-col">
@@ -145,7 +146,9 @@ function ItemWorkspace({
         {/* Fixed frame: finding over the evidence, the decision column beside both. The DOM (and tab) order is
             finding, decision, evidence, so the stacked layout below 1024px wide or 560px tall (200% zoom) reads
             the next step before the evidence and the page scrolls instead of the panes. */}
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_336px] grid-rows-[auto_minmax(0,1fr)] min-[1400px]:grid-cols-[minmax(0,1fr)_352px] max-xl:grid-cols-[minmax(0,1fr)_324px] stacked:flex stacked:flex-col">
+        {/* The centre keeps at least 12rem (it scrolls inside); when the bands above it grow past that (large text,
+            banners), the whole workspace scrolls in its column rather than clipping the evidence or the controls. */}
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_336px] grid-rows-[auto_minmax(12rem,1fr)] min-[87.5rem]:grid-cols-[minmax(0,1fr)_352px] max-xl:grid-cols-[minmax(0,1fr)_324px] stacked:flex stacked:flex-col">
           <FindingBand plan={plan} active={active} onStep={jump} className="col-start-1 row-start-1" />
           <DecisionColumn
             bench={bench}
@@ -153,12 +156,12 @@ function ItemWorkspace({
             plan={plan}
             onRaise={onRaise}
             onOpenItem={onOpenItem}
-            related={relState ? { state: relState, lead } : null}
+            related={relState ? { state: relState, recordHere: !stacked } : null}
             className="col-start-2 row-span-2 row-start-1"
           />
-          <div className={cn("relative col-start-1 row-start-2 min-h-0 min-w-0 space-y-4 overflow-y-auto p-4 max-xl:p-3 stacked:overflow-visible", lead && "pt-2")}>
+          <div className={cn("relative col-start-1 row-start-2 min-h-0 min-w-0 space-y-4 overflow-y-auto p-4 max-xl:p-3 stacked:overflow-visible", lead && "pt-2 max-xl:pt-2")}>
             {/* The lead's decision leads the centre: both submissions side by side, then the choices and the reason. The evidence follows (key 2). */}
-            {lead && relCand && relState ? <RelatedDecisionWorkspace item={item} cand={relCand} s={relState} /> : null}
+            {lead && relCand && relState ? <RelatedDecisionWorkspace item={item} cand={relCand} s={relState} withRecord={stacked} /> : null}
             <EvidenceSheet item={item} permissions={permissions} now={now} onRaise={onRaise} stated={stated} />
             <RelatedSection item={item} siblings={bench.siblings} permissions={permissions} readOnly={bench.readOnly} now={now} onRaise={onRaise} exclude={lead ? relCand?.id : null} />
             <div className="rounded-lg border border-line bg-surface">
@@ -169,9 +172,6 @@ function ItemWorkspace({
               <CorrectionSection item={item} permissions={permissions} now={now} />
               <HistorySection item={item} now={now} />
             </div>
-            <PresenterControls>
-              <ColleagueEditControl item={item} />
-            </PresenterControls>
           </div>
         </div>
       </div>
@@ -445,7 +445,7 @@ export function IntakeWorkstation({ bench }: { bench: IntakeBench }) {
   }, [setResult, focusScan]);
 
   return (
-    <div className="relative grid h-[calc(100dvh-var(--hlo-topbar-h))] grid-cols-[280px_minmax(0,1fr)] overflow-hidden min-[1400px]:grid-cols-[296px_minmax(0,1fr)] max-xl:grid-cols-[minmax(0,1fr)] stacked:h-auto stacked:min-h-[calc(100dvh-var(--hlo-topbar-h))] stacked:overflow-visible">
+    <div className="relative grid h-[calc(100dvh-var(--hlo-topbar-h))] grid-cols-[280px_minmax(0,1fr)] overflow-hidden min-[87.5rem]:grid-cols-[296px_minmax(0,1fr)] max-xl:grid-cols-[minmax(0,1fr)] stacked:h-auto stacked:min-h-[calc(100dvh-var(--hlo-topbar-h))] stacked:overflow-visible">
       <h1 className="sr-only">Intake</h1>
       <ArrivalQueue
         queue={bench.queue}
@@ -459,7 +459,7 @@ export function IntakeWorkstation({ bench }: { bench: IntakeBench }) {
         onCloseDrawer={() => setDrawerOpen(false)}
         onOpen={onRowOpen}
       />
-      <div className="relative flex min-h-0 min-w-0 flex-col">
+      <div className="relative flex min-h-0 min-w-0 flex-col overflow-y-auto stacked:overflow-visible">
         {!bench.source.available ? (
           <StaleBanner
             className="m-3 mb-0"

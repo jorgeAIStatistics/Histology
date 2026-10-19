@@ -16,7 +16,7 @@ Imports: `@/components/ui/<file>` and `@/components/domain/<file>`, or the barre
 
 ## Shell (already mounted by `src/app/layout.tsx`; pages render only their content)
 
-`AppShell` (server) loads the demo actor (cookie `hlos_actor`), clock, sources, staff and nav counts, and renders: skip links, one hematoxylin `TopBar` (`BrandMark`, `JobNav` grouped by job, `ScanField`, `SourceFreshness`, `DemoBanner` "Synthetic demo", `PresenterMenu` holding `ActingAs`, `DemoClockPanel`, guided demo, settings and keys), and `<main id="main">` at full width. Visual rules: docs/redesign/visual-system.md. Pages start with `<PageBody>` (padding) or, for case work, an `IdentityBar` first.
+`AppShell` (server) loads the demo actor (cookie `hlos_actor`), clock, sources, staff and nav counts, and renders: skip links, one hematoxylin `TopBar` (`BrandMark`, `JobNav` grouped by job, `ScanField`, `SourceFreshness`, `ShortcutsButton`, `DemoBanner` "Synthetic demo", and in synthetic demo mode only the read-only `DemoRoleIndicator` (demo role and demo time, not a control) and `PresenterConsoleLink` to `/demo`; the role switch `ActingAs`, `DemoClockPanel`, every simulated world event and the Settings link live on the presenter console, never on a bench screen), and `<main id="main">` at full width. Visual rules: docs/redesign/visual-system.md. Pages start with `<PageBody>` (padding) or, for case work, an `IdentityBar` first.
 
 `landingPathFor(role)` in `shell/landing.ts` — role → landing route (used by `/`).
 

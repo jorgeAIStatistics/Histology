@@ -54,7 +54,7 @@ export function PrinterStrip({ children }: { children: ReactNode }) {
  * first in the DOM for that reason; the frame places it on the right.
  */
 export const BENCH_GRID =
-  "grid grid-cols-[minmax(0,1fr)_var(--dc-w)] gap-4 px-6 py-4 max-xl:px-4 [--dc-w:300px] xl:[--dc-w:320px] min-[1400px]:[--dc-w:340px] stacked:grid-cols-1";
+  "grid grid-cols-[minmax(0,1fr)_var(--dc-w)] gap-4 px-6 py-4 max-xl:px-4 [--dc-w:300px] xl:[--dc-w:320px] min-[87.5rem]:[--dc-w:340px] stacked:grid-cols-1";
 export const BENCH_DECISION = "col-start-2 row-start-1 stacked:col-start-auto stacked:row-start-auto";
 export const BENCH_WORK = "col-start-1 row-start-1 stacked:col-start-auto stacked:row-start-auto";
 
@@ -147,8 +147,23 @@ export function useCutBelow(root: RefObject<HTMLDivElement | null>, key: string)
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(measure);
     };
+    // Keyboard focus is never left under the cover (WCAG 2.4.11/2.4.12): the focused control's whole unit is
+    // scrolled into the uncovered part of the column; the cover then moves to the next cut unit.
+    const onFocus = (e: FocusEvent) => {
+      const t = e.target instanceof HTMLElement ? e.target : null;
+      if (!t) return;
+      requestAnimationFrame(() => {
+        const unit = t.closest<HTMLElement>("[data-cut-unit]");
+        const target = unit && el.contains(unit) && unit.offsetHeight < el.clientHeight ? unit : t;
+        const r = target.getBoundingClientRect();
+        const box = el.getBoundingClientRect();
+        if (r.bottom > box.bottom - 0.5) el.scrollTop += r.bottom - box.bottom + 4;
+        else if (r.top < box.top + 0.5) el.scrollTop -= box.top - r.top + 4;
+      });
+    };
     measure();
     el.addEventListener("scroll", schedule, { passive: true });
+    el.addEventListener("focusin", onFocus);
     const ro = new ResizeObserver(schedule);
     ro.observe(el);
     for (const child of Array.from(el.children)) ro.observe(child);
@@ -156,6 +171,7 @@ export function useCutBelow(root: RefObject<HTMLDivElement | null>, key: string)
     return () => {
       cancelAnimationFrame(frame);
       el.removeEventListener("scroll", schedule);
+      el.removeEventListener("focusin", onFocus);
       ro.disconnect();
       window.removeEventListener("resize", schedule);
     };

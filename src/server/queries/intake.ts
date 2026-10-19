@@ -22,6 +22,7 @@ import {
 import { currentRouting, type RoutingDecisionRow } from "@/server/domain/routing";
 import { candidatesForIntake, intakeItemsForOrder, separateEncounterOrders, DETECTION_RULE_DUPLICATE_RECORD, type ReasonItem } from "@/server/domain/related";
 import { accessionBlockers, latestRequestFor, type Blocker } from "@/server/domain/accession";
+import { openSourceConflictsForOrder } from "@/server/domain/sourceConflict";
 import { accessionSourceStatus } from "@/server/sim/authoritative";
 import { countUnreceived, labelText } from "@/server/sim/courier";
 import { CORRECTION_KIND_LABEL, CORRECTION_STATUS_LABEL } from "@/server/domain/correction";
@@ -290,6 +291,29 @@ export interface AuditView {
   after: string | null;
 }
 
+/**
+ * An open source-conflict review on one of this item's linked orders or on its
+ * patient reference: the source sent patient (or order-level) details that
+ * differ from what is on file. It gates accession (`source_conflict_open`)
+ * until an accessioning lead or supervisor reviews it. Derived, read-only.
+ */
+export interface SourceConflictView {
+  /** The review task (sent back with its version by sourceConflict.review). */
+  id: string;
+  version: number;
+  /** "patient": a new order gave different details for the patient on file; "order": a newer version of a linked order changed order-level details. */
+  about: "patient" | "order";
+  /** The task title as the importer wrote it (what differs, in words). */
+  title: string;
+  detail: string | null;
+  ownerName: string | null;
+  ownerRole: string | null;
+  priority: string;
+  createdAt: string;
+  /** This item's linked orders that the conflict holds back. */
+  orderRefs: string[];
+}
+
 export interface MissingPartView {
   discrepancyId: string;
   /** Version of the discrepancy row (for a lead's acceptance of an extra container). */
@@ -333,6 +357,8 @@ export interface ItemDetail {
   related: RelatedView[];
   separateEncounters: ReturnType<typeof separateEncounterOrders>;
   holds: HoldView[];
+  /** Open source-conflict reviews that gate this item's accession (oldest first). */
+  sourceConflicts: SourceConflictView[];
   clarifications: ClarificationView[];
   tasks: TaskView[];
   audit: AuditView[];
@@ -365,6 +391,8 @@ export interface BenchPermissions {
   print: boolean;
   sendClarification: boolean;
   reviewClarification: boolean;
+  /** Record that the details on file stand for a source conflict (sourceConflict.review). */
+  reviewSourceConflict: boolean;
 }
 
 /**
@@ -451,6 +479,7 @@ function permissionsFor(role: Actor["role"]): BenchPermissions {
     print: roleCan(role, "print.request"),
     sendClarification: roleCan(role, "clarification.send"),
     reviewClarification: roleCan(role, "clarification.review"),
+    reviewSourceConflict: roleCan(role, "clarification.resolve"),
   };
 }
 
@@ -583,6 +612,11 @@ function laneFor(db: DB, item: IntakeItemRow, routing: RoutingDecisionRow | null
   if (disc.some((d) => d.kind === "extra_container")) reasons.push("Extra container");
   if (disc.some((d) => d.kind === "unmatched_container")) reasons.push("Container not matched to a part");
   if (disc.some((d) => d.kind === "order_not_linked")) reasons.push("No order linked");
+  // The source sent other patient or order-level details for a linked order: accession waits for a lead's review.
+  const linked = db
+    .prepare("SELECT so.id, so.patient_ref_id FROM intake_order_link l JOIN source_order so ON so.id = l.source_order_id WHERE l.intake_item_id = ?")
+    .all(item.id) as { id: string; patient_ref_id: string }[];
+  if (linked.some((o) => openSourceConflictsForOrder(db, o).length > 0)) reasons.push("Source conflict");
   const cands = candidatesForIntake(db, item.id);
   if (cands.some((c) => c.status === "pending_review")) reasons.push("Related orders: needs review");
   if (cands.some((c) => c.status === "escalated_to_office")) reasons.push("Related orders: asked the office");
@@ -796,7 +830,7 @@ export function intakeItemDetail(db: DB, displayIdOrId: string): ItemDetail | nu
     .all(item.id) as {
     id: string; source_order_id: string; tenant_name: string; source_version: number; source_status: string; source_updated_at: string; imported_at: string;
     clinician_name: string | null; clinician_credential: string | null; office_name: string; enc_src: string | null; enc_at: string | null; clinical_note: string | null;
-    family_name: string; given_name: string; birth_date: string; source_mrn: string;
+    family_name: string; given_name: string; birth_date: string; source_mrn: string; patient_ref_id: string;
   }[];
   const containers = containersFor(db, item.id);
   const orders: OrderView[] = orderRows.map((o) => {
@@ -996,6 +1030,31 @@ export function intakeItemDetail(db: DB, displayIdOrId: string): ItemDetail | nu
     return hv;
   });
 
+  // Source conflicts on a linked order or its patient reference (one review can hold back several orders).
+  const conflictMap = new Map<string, SourceConflictView>();
+  for (const o of orderRows) {
+    for (const t of openSourceConflictsForOrder(db, { id: o.id, patient_ref_id: o.patient_ref_id })) {
+      const seen = conflictMap.get(t.id);
+      if (seen) {
+        if (!seen.orderRefs.includes(o.source_order_id)) seen.orderRefs.push(o.source_order_id);
+        continue;
+      }
+      conflictMap.set(t.id, {
+        id: t.id,
+        version: t.version,
+        about: t.entity_type === "patient_ref" ? "patient" : "order",
+        title: t.title,
+        detail: t.detail,
+        ownerName: nameOf(staff, t.owner_id),
+        ownerRole: t.owner_role,
+        priority: t.priority,
+        createdAt: t.created_at,
+        orderRefs: [o.source_order_id],
+      });
+    }
+  }
+  const sourceConflicts = [...conflictMap.values()];
+
   const candIds = related.map((r) => r.id);
   const containerIds = containers.map((c) => c.id);
   const ph = (n: number) => (n ? Array.from({ length: n }, () => "?").join(",") : "''");
@@ -1098,6 +1157,7 @@ export function intakeItemDetail(db: DB, displayIdOrId: string): ItemDetail | nu
     related,
     separateEncounters: separateUnique,
     holds,
+    sourceConflicts,
     clarifications: clarRows.map((q) => ({
       id: q.id,
       displayId: q.display_id,

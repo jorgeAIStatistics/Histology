@@ -238,11 +238,11 @@ function BenchQueue({ rows, now }: { rows: QueueRow[]; now: string }) {
         scroll="page"
         // Narrower than 1024px (a bench screen at 200% zoom) the owner folds into the next-step cell and the columns relax,
         // so every column still fits without sideways scrolling.
-        wrapperClassName="max-xl:[&_[data-priority='3']]:hidden max-[1100px]:[&_[data-priority='2']]:hidden max-[1023.98px]:[&_[data-col='owner']]:hidden"
+        wrapperClassName="max-xl:[&_[data-priority='3']]:hidden max-[68.75rem]:[&_[data-priority='2']]:hidden max-[63.99875rem]:[&_[data-col='owner']]:hidden"
       >
         <THead>
           <tr>
-            <TH stickyFirst className="max-xl:min-w-[13.75rem] max-[1023.98px]:min-w-0">
+            <TH stickyFirst className="max-xl:min-w-[13.75rem] max-[63.99875rem]:min-w-0">
               Part
             </TH>
             <TH>Site, procedure</TH>
@@ -289,7 +289,7 @@ function BenchQueue({ rows, now }: { rows: QueueRow[]; now: string }) {
                     {r.priority === "rush" ? <span className="ml-1.5 text-xs font-semibold text-danger-fg">Rush</span> : null}
                     {/* Below 1280px the "Other parts" column folds into the part cell. */}
                     {r.otherParts.length ? (
-                      <ul className="mt-0.5 flex flex-wrap gap-x-2 text-sm whitespace-normal text-ink-secondary min-[1280px]:hidden" aria-label="Other parts of the case">
+                      <ul className="mt-0.5 flex flex-wrap gap-x-2 text-sm whitespace-normal text-ink-secondary min-[80rem]:hidden" aria-label="Other parts of the case">
                         {r.otherParts.map((o) => (
                           <li key={o.designation} className="inline-flex items-center gap-1">
                             <PartStateIcon state={o.state} className="size-3.5" />
@@ -299,21 +299,21 @@ function BenchQueue({ rows, now }: { rows: QueueRow[]; now: string }) {
                       </ul>
                     ) : null}
                   </TD>
-                  <TD wrap className="min-w-[9rem] py-1.5 max-[1023.98px]:min-w-[7rem]">
+                  <TD wrap className="min-w-[9rem] py-1.5 max-[63.99875rem]:min-w-[7rem]">
                     {r.site}, {r.procedure ? (PROCEDURE[r.procedure as keyof typeof PROCEDURE]?.toLowerCase() ?? r.procedure) : "procedure unknown"}
                   </TD>
                   <TD priority={2}>
                     <DoctorChip name={r.pathologist?.name ?? null} color={r.pathologist?.color} compact shortName={shortDoctor(r.pathologist?.name)} />
                   </TD>
-                  <TD wrap className="min-w-[10rem] py-1.5 max-[1023.98px]:min-w-[8rem]">
+                  <TD wrap className="min-w-[10rem] py-1.5 max-[63.99875rem]:min-w-[8rem]">
                     <span className={cn("inline-flex items-start gap-1.5", amber ? "font-semibold text-warning-fg" : r.state === "approved_acknowledged" ? "text-ink-muted" : "text-ink")}>
                       <PartStateIcon state={r.state} className="mt-px" />
                       {recordText(r)}
                     </span>
                   </TD>
-                  <TD wrap className="min-w-[13rem] py-1.5 text-ink-secondary max-[1023.98px]:min-w-[9rem]">
+                  <TD wrap className="min-w-[13rem] py-1.5 text-ink-secondary max-[63.99875rem]:min-w-[9rem]">
                     <IdText text={next.what} />
-                    <span className="mt-0.5 block text-ink min-[1024px]:hidden">Owner: {next.who}</span>
+                    <span className="mt-0.5 block text-ink min-[64rem]:hidden">Owner: {next.who}</span>
                   </TD>
                   <TD data-col="owner" className="text-ink">
                     {next.who}
@@ -495,22 +495,11 @@ function SourceEntryQueue({ rows, now }: { rows: SourceEntryRow[]; now: string }
                         {shortSource(r.sourceName ?? r.tenantName)}
                       </TD>
                       <TD wrap>
-                        {readOnly ? (
-                          <span className="text-xs text-ink-muted">Not acknowledged</span>
-                        ) : unreachable ? (
+                        {/* Waiting on the (simulated) source system: nobody at the bench can acknowledge it. */}
+                        {unreachable ? (
                           <span className="text-xs text-warning-fg">Not acknowledged. Source unreachable; it cannot acknowledge until it is back.</span>
                         ) : (
-                          <CommandButton
-                            command="gross.simulateSourceAck"
-                            input={{ grossRecordId: r.recordId }}
-                            size="sm"
-                            variant="quiet"
-                            pendingLabel="Simulating..."
-                            successToast="Simulated source acknowledgment recorded"
-                            aria-label={`Simulate the source acknowledgment for ${r.accessionNumber} part ${r.designation} (demo)`}
-                          >
-                            Simulate acknowledgment
-                          </CommandButton>
+                          <span className="text-xs text-ink-secondary">Not acknowledged yet. Waiting for {shortSource(r.sourceName ?? r.tenantName)}.</span>
                         )}
                       </TD>
                     </TR>

@@ -648,3 +648,24 @@ describe("B-15: the worklist never shows a bare 'hold'", () => {
     expect(partsText([{ word: "hold", stage: "awaiting_gross", designation: "C", holdSteps: "print, tray" }])).toBe("C on hold (print, tray)");
   });
 });
+
+describe("C1-4: unowned source entry reads the same on the worklist as on Operations", () => {
+  it("a case with an approved gross description pending entry and no open task names the role that should own it, never a blank", () => {
+    const db = testDb();
+    const ops = getOperations(db).blocked.filter((b) => b.category === "source_entry" && b.ownerId === null);
+    expect(ops.length, "the seed includes unowned source entry (prior-day late entries)").toBeGreaterThan(0);
+    const rows = loadWorklistRows(db, Number.MAX_SAFE_INTEGER, demoNow(db), { includeIntake: false });
+    let checked = 0;
+    for (const item of ops) {
+      const row = rows.find((r) => r.accessionNumber === item.ref)!;
+      expect(row, `${item.ref} is on the worklist`).toBeTruthy();
+      if (row.owner) continue; // another open task on the case names its owner
+      expect(row.unownedOwner).toBe(item.owner);
+      expect(row.ownerText).toContain(item.owner);
+      checked += 1;
+    }
+    expect(checked, "at least one case has no open task at all (D26-04772 in the seed)").toBeGreaterThan(0);
+    // A case whose owner comes from a task never carries the fallback.
+    for (const r of rows) if (r.owner) expect(r.unownedOwner).toBeNull();
+  });
+});

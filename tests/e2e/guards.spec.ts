@@ -1,6 +1,7 @@
 // Focused browser checks for the gaps listed in docs/acceptance-tests.md: things
 // the domain tests prove in the data but no test had shown on screen yet.
 //  - Check 12: a read-only role is refused by the server (inline "Not allowed"), and a stale save shows the conflict dialog.
+//    The simulated colleague is a presenter control: it is run from the presenter console, never from the Intake bench.
 //  - Check 13: a source outage turns an open worklist stale (banner and top-bar freshness) without a reload, and
 //    messages held during the outage are imported exactly once after the connection is restored.
 //  - Check 6: an uncertain decimal or unit, or a vague piece count, cannot be confirmed as dictated or approved.
@@ -9,7 +10,7 @@
 //  - Worklist (spec §7, H7/H8): the printed snapshot carries its generation time and version.
 // Each test starts from the reproducible synthetic 10:52 state.
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
-import { STAFF, actAs, actingAsValue, loose, openRoleContext, resetDemo, toasts } from "./support";
+import { STAFF, actAs, actingAsValue, loose, openConsoleTab, openRoleContext, resetDemo, toasts, worldEvent } from "./support";
 
 // Present at the 10:52 starting state: an intake item in review (identity question, hold H-0088).
 const ITEM = "INT-1014-022";
@@ -28,17 +29,28 @@ function ownerNoteCard(page: Page) {
   return page.getByRole("region", { name: "Owner and working note" });
 }
 
-/** The intake bench's "Presenter controls (demo)" disclosure (closed by default), opened; it holds the colleague-edit demo control. */
-async function openPresenterControls(page: Page) {
-  const presenter = page.getByRole("group", { name: "Presenter controls (demo)" });
-  const simulate = presenter.getByRole("button", { name: "Simulate a colleague editing this item (demo control)" });
-  await expect(simulate).toBeHidden();
-  await presenter.getByText("Presenter controls (demo)", { exact: true }).click();
-  await expect(simulate).toBeVisible();
+/**
+ * The colleague-edit demo control, which lives only on the presenter console (World events), never on the Intake
+ * bench: the "A colleague edits an intake item" event, aimed at `item` with its target picker.
+ */
+async function colleagueEditOnConsole(page: Page, item: string) {
+  await openConsoleTab(page, "world");
+  const presenter = worldEvent(page, "A colleague edits an intake item");
+  const target = presenter.getByRole("combobox", { name: "Intake item" });
+  await target.selectOption(item);
+  await expect(target).toHaveValue(item);
+  const simulate = presenter.getByRole("button", { name: /^Simulate the colleague.s edit$/ });
+  await expect(simulate).toBeEnabled();
   return { presenter, simulate };
 }
 
-/** Settings → Demo scenarios: the EMA-SIM source card (status, backlog and its outage controls). */
+/** The Intake bench shows no presenter control at all (they live on the presenter console). */
+async function expectNoPresenterControlsOnIntake(page: Page) {
+  await expect(page.getByText(/Presenter controls/i)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /simulate (a|the) colleague|demo control/i })).toHaveCount(0);
+}
+
+/** Presenter console → Outages and reset: the EMA-SIM source card (status, backlog and its outage controls). */
 function emaSourceCard(page: Page) {
   const sources = page.getByRole("list").filter({ has: page.getByRole("button", { name: /^(Simulate outage|Restore connection)$/ }) });
   return sources.getByRole("listitem").filter({ has: page.getByText("EMA-SIM Sunrise Coast", { exact: true }) });
@@ -64,14 +76,19 @@ test.describe("guards: server-side roles, stale data and fallbacks on the real s
     const card = ownerNoteCard(page);
     await expect(card).toContainText(loose("Note: None"));
     await expect(card).toContainText(loose("Version 1 · last saved by Maya Torres"));
-    // Editing is not offered to the read-only role ...
+    // Editing is not offered to the read-only role, and the bench carries no presenter control ...
     await expect(card.getByRole("button", { name: "Edit owner or note" })).toHaveCount(0);
-    // ... and the one control it can press (a presenter control, off the bench surface) is refused by the server, not just hidden.
-    const { presenter, simulate } = await openPresenterControls(page);
+    await expectNoPresenterControlsOnIntake(page);
+    // ... and the one control it can press (a presenter control, on the presenter console in another tab) is refused by
+    // the server, not just hidden.
+    const consolePage = await context.newPage();
+    const { presenter, simulate } = await colleagueEditOnConsole(consolePage, ITEM);
     await simulate.click();
     const refusal = presenter.getByRole("alert");
     // Exactly one "Not allowed:" (the title), then the server's reason and who may do it.
     await expect(refusal).toHaveText(/^Not allowed: Director of Operations \(read-only demo\) cannot edit intake items\. Allowed: [A-Z]/);
+    await expect(presenter).not.toContainText(loose("saved a change to the working note"));
+    await consolePage.close();
     await expect(card).toContainText(loose("Version 1 · last saved by Maya Torres"));
 
     // Nothing changed on the server: a fresh load shows the same version, note and history.
@@ -82,7 +99,7 @@ test.describe("guards: server-side roles, stale data and fallbacks on the real s
     await expect(page.getByRole("region", { name: "History" }).first()).not.toContainText(loose("simulated colleague edit"));
   });
 
-  test("check 12: a stale save shows the conflict dialog with both values and never overwrites the colleague's edit", async ({ page, context }) => {
+  test("check 12: a stale save shows the conflict dialog with both values and never overwrites the colleague's edit", async ({ page, context, browser }) => {
     await actAs(context, STAFF.maya);
     await page.goto(`/intake?item=${ITEM}`);
     const card = ownerNoteCard(page);
@@ -94,12 +111,22 @@ test.describe("guards: server-side roles, stale data and fallbacks on the real s
     const myNote = "Phoned the office about the date of birth; waiting for a call back.";
     await card.getByLabel("Working note").fill(myNote);
 
-    // ... a colleague (simulated: Luis Benitez, from the closed-by-default presenter controls) saves first ...
-    const { simulate } = await openPresenterControls(page);
+    // ... a colleague (simulated: Luis Benitez, run by the presenter from the console in another window; the Intake
+    // bench has no such control) saves first. My open edit learns of it without a reload ...
+    await expectNoPresenterControlsOnIntake(page);
+    await page.evaluate(() => {
+      (window as unknown as { __sameDocument?: boolean }).__sameDocument = true;
+    });
+    const presenterContext = await openRoleContext(browser, STAFF.maya);
+    extraContexts.push(presenterContext);
+    const consolePage = await presenterContext.newPage();
+    const { presenter, simulate } = await colleagueEditOnConsole(consolePage, ITEM);
     await simulate.click();
-    await expect(toasts(page)).toContainText(loose("Demo: Luis Benitez (simulated colleague) edited this item"));
+    await expect(toasts(consolePage)).toContainText(loose(`Demo: Luis Benitez (simulated colleague) edited ${ITEM}`));
+    await expect(presenter).toContainText(loose(`Luis Benitez (simulated colleague) saved a change to the working note of ${ITEM}, now version 2.`));
     await expect(card.getByRole("status")).toContainText(loose("This item changed after you started editing (version 1 → 2)"));
     await expect(card.getByLabel("Working note")).toHaveValue(myNote);
+    expect(await page.evaluate(() => (window as unknown as { __sameDocument?: boolean }).__sameDocument), "the Intake window was not reloaded").toBe(true);
 
     // ... and my save is refused as a conflict: the dialog shows their value and mine.
     await card.getByRole("button", { name: "Save owner and note" }).click();
@@ -145,11 +172,11 @@ test.describe("guards: server-side roles, stale data and fallbacks on the real s
       (window as unknown as { __sameDocument?: boolean }).__sameDocument = true;
     });
 
-    // Another window: Settings → Demo scenarios → simulate an EMA-SIM outage.
+    // Another window: presenter console → Outages and reset → simulate an EMA-SIM outage.
     const adminContext = await openRoleContext(browser, STAFF.tanya);
     extraContexts.push(adminContext);
     const admin = await adminContext.newPage();
-    await admin.goto("/settings?tab=demo");
+    await openConsoleTab(admin, "outages");
     const ema = emaSourceCard(admin);
     await ema.getByRole("button", { name: "Simulate outage" }).click();
     await expect(ema.getByRole("button", { name: "Restore connection" })).toBeVisible();
@@ -167,7 +194,7 @@ test.describe("guards: server-side roles, stale data and fallbacks on the real s
     await expect(admin.getByRole("status").filter({ hasText: loose("EMA-SIM Sunrise Coast (accession source) unreachable since") })).toContainText(loose("Request accession is unavailable."));
 
     // Restoring the connection clears the stale state on the open worklist, again without a reload.
-    await admin.goto("/settings?tab=demo");
+    await openConsoleTab(admin, "outages");
     await ema.getByRole("button", { name: "Restore connection" }).click();
     await expect(ema.getByRole("button", { name: "Simulate outage" })).toBeVisible();
     await expect(staleBanner).toHaveCount(0);
@@ -182,7 +209,7 @@ test.describe("guards: server-side roles, stale data and fallbacks on the real s
     await page.goto("/settings?tab=integration");
     const totals = await receiptTotals(page);
 
-    await page.goto("/settings?tab=demo");
+    await openConsoleTab(page, "outages");
     const ema = emaSourceCard(page);
     // ORD-75061 v2 (the office removes a PAS stain on D26-04749) is scheduled for 11:20; ORD-77118 v1 is a re-send due at 11:04.
     const pasCancel = page.getByRole("row", { name: /^ORD-75061#v2 / });
@@ -191,12 +218,16 @@ test.describe("guards: server-side roles, stale data and fallbacks on the real s
     await ema.getByRole("button", { name: "Simulate outage" }).click();
     await expect(ema).toContainText(loose("EMA-SIM Sunrise Coast: unreachable since"));
 
-    // The demo clock passes 11:20 while the source is offline: both messages are due, neither is delivered.
-    await page.getByRole("button", { name: "11:20 PAS cancellation" }).click();
-    // The top bar's presenter menu carries the demo clock (full date in its accessible name, time on screen).
-    const presenter = page.getByRole("banner").getByRole("button", { name: /^Presenter menu:/ });
-    await expect(presenter).toHaveAccessibleName(/demo clock Wed Oct 14, 11:20 AM ET/);
+    // The demo clock passes 11:20 while the source is offline (presenter console, Role and clock): both messages are due,
+    // neither is delivered.
+    await openConsoleTab(page, "role");
+    await page.getByRole("button", { name: "Jump to 11:20 PAS cancellation" }).click();
+    // The top bar shows the demo time read only (full date in its accessible name, time on screen); it is not a control.
+    const presenter = page.getByRole("banner").getByRole("note", { name: /^Demo role: / });
+    await expect(presenter).toHaveAccessibleName(/Demo time Wed Oct 14, 11:20 AM ET, paused\.$/);
     await expect(presenter).toContainText("11:20 AM");
+    await expect(page.getByRole("banner").getByRole("button", { name: /demo clock|presenter/i })).toHaveCount(0);
+    await openConsoleTab(page, "outages");
     await expect(pasCancel).toContainText(loose("Waiting: source offline"));
     await expect(resend).toContainText(loose("Waiting: source offline"));
     await expect(ema).toContainText(loose("Ready but not delivered: 2 (delivered once, through the same idempotent importer, after the connection is restored)"));
@@ -210,7 +241,7 @@ test.describe("guards: server-side roles, stale data and fallbacks on the real s
     await expect(cancelEvent).toHaveCount(0);
 
     // Restore: the held messages go through the same idempotent importer once.
-    await page.goto("/settings?tab=demo");
+    await openConsoleTab(page, "outages");
     await ema.getByRole("button", { name: "Restore connection" }).click();
     await expect(toasts(page)).toContainText(loose("EMA-SIM Sunrise Coast restored. 2 queued messages delivered once."));
     await expect(pasCancel).toContainText(loose("Delivered 11:20 AM"));
@@ -242,7 +273,7 @@ test.describe("guards: server-side roles, stale data and fallbacks on the real s
 
   test("check 15: with the assistant unavailable, a grosser enters, confirms and approves a gross record by hand", async ({ page, context }) => {
     await actAs(context, STAFF.dana);
-    await page.goto("/settings?tab=demo");
+    await openConsoleTab(page, "outages");
     await page.getByRole("button", { name: "Make assistant unavailable" }).click();
     await expect(page.getByRole("button", { name: "Restore assistant" })).toBeVisible();
 

@@ -11,7 +11,7 @@ import { CLARIFICATION_STATE, STAGE, type Stage } from "@/lib/domain";
 import { AGE_BUCKET_LABELS } from "@/lib/tokens";
 import { isGrossPending, loadSourceFreshness, loadWorklistRows, type FreshnessSummary } from "./worklist";
 import { holdNextSteps } from "./hold-next";
-import { OPEN_ROUTING_EXCEPTION_SQL } from "./predicates";
+import { OPEN_ROUTING_EXCEPTION_SQL, SOURCE_ENTRY_UNASSIGNED } from "./predicates";
 import { correctionPart } from "@/server/domain/correction";
 import { plural } from "@/components/worklist/format";
 
@@ -756,7 +756,7 @@ export function getOperations(db: DB): OperationsData {
         key: `entry:${p.partId}`, category: "source_entry", item: `${r.accessionNumber} part ${p.designation}`, ref: r.accessionNumber, subject: `part ${p.designation} · gross description to enter`, itemHref: href,
         blocks: "Approved; not entered in the source system. No entry task: nobody owns it.",
         nextStep: "Assign the entry to a histology assistant",
-        owner: "Unassigned (histology assistant)", ownerId: null, since: approvedAt.get(p.partId) ?? null,
+        owner: SOURCE_ENTRY_UNASSIGNED, ownerId: null, since: approvedAt.get(p.partId) ?? null,
         evidenceLabel: "Source-entry queue", evidenceHref: `/worklist?view=grossing&queue=source_entry&selected=${encodeURIComponent(r.accessionNumber)}`,
         kind: "delay", where: NO_MATERIAL.sourceEntry,
       });

@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { Check, CircleCheck, Clock, Pause, Play, RotateCcw, Unplug, Plug, RefreshCw } from "lucide-react";
+import { Check, CircleCheck, RotateCcw, Unplug, Plug, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { Button } from "@/components/ui/button";
@@ -10,37 +10,40 @@ import { Card } from "@/components/ui/card";
 import { CommandButton, CommandError } from "@/components/ui/command-button";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
-import { Input, Label } from "@/components/ui/field";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { useToast } from "@/components/ui/toast";
 import { Timestamp } from "@/components/domain/timestamp";
+import { DemoControlTag, FreshnessPill, OUTCOME_LABEL } from "@/components/settings/bits";
 import { useCommand } from "@/lib/client/command";
-import { useDemoNow, useLive, useLiveActions } from "@/lib/client/live";
-import { DEMO_CLOCK_COMMAND } from "@/lib/client/demo-commands";
-import { fmtDateTime, fmtTime, labDay, labLocalToIso } from "@/lib/time";
+import { useLiveActions } from "@/lib/client/live";
+import { fmtTime } from "@/lib/time";
 import type { DemoSettings } from "@/server/queries/settings";
-import { DemoControlTag, FreshnessPill, OUTCOME_LABEL } from "./bits";
 
 type Outcome = { messageId: string; outcome: string; detail: string };
 
-export function DemoTab({ data }: { data: DemoSettings }) {
+/**
+ * Presenter console, "Outages and reset" (synthetic demo only; moved here from
+ * Settings, Demo scenarios): reset the demo data, take a simulated source,
+ * printer, the notification connector or the assistant down, and inject
+ * duplicate, out-of-order and failing source messages. Each control changes
+ * the simulated world, never a lab record, and is recorded as a demo control.
+ * The demo clock that makes scheduled messages fall due is on Role and clock.
+ */
+export function OutagesTab({ data }: { data: DemoSettings }) {
   return (
     <div className="grid grid-cols-1 gap-4">
-      <AlertBanner tone="info" title="Demo controls change the simulated world, not lab records">
-        The clock, connector outages and fault injection exist only in this local demonstration. Nothing here contacts a real system. Each change is recorded in the local audit
-        history with your demo role.
+      <AlertBanner tone="info" title="These controls change the simulated world, not lab records">
+        Connector outages, printer faults and injected source messages exist only in this local demonstration. Nothing here contacts a real system. Each change is recorded in the
+        local history as a demo control. Demo clock: {fmtTime(data.now)} ET, {data.running ? "running" : "paused"} (move it on Role and clock).
       </AlertBanner>
-      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
-        <ResetCard />
-        <ClockCard />
-      </div>
       <SourcesCard data={data} />
       <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
         <PrintersCard printers={data.printers} />
         <div className="grid grid-cols-1 gap-4">
           <NotificationsCard status={data.notifyStatus} />
           <AssistantCard mode={data.assistantMode} />
+          <ResetCard />
         </div>
       </div>
     </div>
@@ -101,93 +104,6 @@ export function ResetCard() {
       >
         <p>Your demo changes will be lost. This replaces the local synthetic database; no real data is involved.</p>
       </ConfirmDialog>
-    </Card>
-  );
-}
-
-// ------------------------------------------------------------------ clock
-
-const JUMPS: { hhmm: string; label: string }[] = [
-  { hhmm: "11:00", label: "11:00 courier arrival" },
-  { hhmm: "11:04", label: "11:04 duplicate message" },
-  { hhmm: "11:20", label: "11:20 PAS cancellation" },
-  { hhmm: "11:25", label: "11:25 stale replay" },
-];
-
-function ClockCard() {
-  const now = useDemoNow(5_000);
-  const { data } = useLive();
-  const running = data.clock.running;
-  const day = labDay(now);
-  const [custom, setCustom] = useState("");
-  const customIso = /^\d{2}:\d{2}$/.test(custom) ? labLocalToIso(day, custom) : null;
-  const customPast = customIso ? Date.parse(customIso) <= Date.parse(now) : false;
-  const toast = (r: unknown) => {
-    const x = r as { now: string; delivered: number };
-    return `Demo clock ${fmtTime(x.now)} ET.${x.delivered ? ` ${x.delivered} simulated source message${x.delivered === 1 ? "" : "s"} delivered.` : ""}`;
-  };
-  return (
-    <Card title="Demo clock" actions={<DemoControlTag />}>
-      <p className="flex flex-wrap items-center gap-2 text-sm text-ink">
-        <Clock className="size-4 text-ink-muted" aria-hidden />
-        <span className="font-medium">{fmtDateTime(now)} ET</span>
-        <StatusPill tone={running ? "info" : "neutral"} icon={running ? Play : Pause} size="sm">
-          {running ? "Running" : "Paused"}
-        </StatusPill>
-      </p>
-      <p className="mt-1 text-xs text-ink-muted">
-        Demo time, not the wall clock. {running ? "Running: it advances at normal speed until paused." : "Paused: it moves only when you advance or jump it."} These controls only move
-        it forward; Reset demo data starts again at 10:52, paused.
-      </p>
-      <div className="mt-3 flex flex-wrap gap-2">
-        <CommandButton command={DEMO_CLOCK_COMMAND} input={{ running: !running }} size="sm" icon={running ? <Pause /> : <Play />} pendingLabel={running ? "Pausing..." : "Resuming..."}>
-          {running ? "Pause clock" : "Resume clock"}
-        </CommandButton>
-        {[1, 5, 15].map((m) => (
-          <CommandButton key={m} command={DEMO_CLOCK_COMMAND} input={{ advanceMinutes: m }} size="sm" pendingLabel="Advancing..." successToast={toast}>
-            Advance {m} min
-          </CommandButton>
-        ))}
-      </div>
-      <p className="mt-3 text-xs font-medium text-ink-secondary" id="clock-jumps">Jump forward to a scripted moment</p>
-      <div className="mt-1 flex flex-wrap gap-x-1 gap-y-1" role="group" aria-labelledby="clock-jumps">
-        {JUMPS.map((j) => {
-          const iso = labLocalToIso(day, j.hhmm);
-          const past = Date.parse(iso) <= Date.parse(now);
-          return (
-            <CommandButton
-              key={j.hhmm}
-              command={DEMO_CLOCK_COMMAND}
-              input={{ iso }}
-              size="sm"
-              variant="ghost"
-              disabled={past}
-              pendingLabel="Jumping..."
-              successToast={toast}
-              aria-label={past ? `Jump to ${j.label} (already past)` : `Jump to ${j.label}`}
-            >
-              {j.label}
-              {past ? " (past)" : ""}
-            </CommandButton>
-          );
-        })}
-      </div>
-      <div className="mt-3 flex flex-wrap items-end gap-2">
-        <div className="grid gap-1">
-          <Label htmlFor="clock-jump">Jump forward to (ET, today)</Label>
-          <Input id="clock-jump" type="time" size="sm" value={custom} onChange={(e) => setCustom(e.target.value)} className="w-32" invalid={customPast} />
-        </div>
-        <CommandButton
-          command={DEMO_CLOCK_COMMAND}
-          input={() => ({ iso: customIso })}
-          size="sm"
-          disabledReason={!customIso ? "Enter a time first." : customPast ? "That time has already passed; the clock does not move backwards." : undefined}
-          pendingLabel="Jumping..."
-          successToast={toast}
-        >
-          Jump
-        </CommandButton>
-      </div>
     </Card>
   );
 }

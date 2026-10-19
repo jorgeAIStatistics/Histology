@@ -104,7 +104,7 @@ export function TH({ children, sort, onSort, align = "left", priority, stickyFir
       data-priority={priority}
       {...rest}
       className={cn(
-        "sticky top-[var(--hlo-th-top)] z-10 h-8 whitespace-nowrap border-b border-line bg-surface-subtle px-3 text-xs font-medium text-ink-secondary [@media(max-height:560px)]:static",
+        "sticky top-[var(--hlo-th-top)] z-10 h-8 whitespace-nowrap border-b border-line bg-surface-subtle px-3 text-xs font-medium text-ink-secondary [@media(max-height:35rem)]:static",
         align === "right" && "text-right",
         align === "center" && "text-center",
         stickyFirst && "left-0 z-[11]",

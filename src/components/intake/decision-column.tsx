@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { ArrowRight, ChevronDown, Eye, Hourglass, UserRoundCheck } from "lucide-react";
 import type { IntakeBench, ItemDetail } from "@/server/queries/intake";
 import { Button, ButtonLink, buttonClasses } from "@/components/ui/button";
@@ -19,10 +19,18 @@ import { CtrlEnterBadge } from "@/components/ui/ctrl-enter-badge";
 import { Segs, useBackToScan, type StepFrame } from "./bits";
 import { CutScroll } from "./cut-scroll";
 import { draftForCount, draftForRow } from "./evidence-sheet";
-import { REVIEW_NOT_MERGE, RecordDecision, RelatedChoices, RelatedDecisionForm, type RelatedDecisionState } from "./related";
+import { REVIEW_NOT_MERGE, RecordDecision, type RelatedDecisionState } from "./related";
 import { RoutingDialog } from "./routing-card";
 import { SendClarification } from "./send-clarification";
+import { SourceConflictDialog } from "./source-conflict-dialog";
 import { identityFacts, partsOf, segs, segText, type IntakePlan, type NextAction, type WorkItem } from "./plan";
+
+/** The related-order decision when it is this person's next step (held by the workspace, shared with the centre). */
+export interface RelatedDecisionCtx {
+  state: RelatedDecisionState;
+  /** "Record decision" is pinned in this column (bench layouts); stacked, it follows the reason in the centre. */
+  recordHere: boolean;
+}
 
 interface VerifyResult {
   state: "verified" | "discrepancy";
@@ -39,6 +47,7 @@ function verifyToast(seq: number, r: VerifyResult): string {
 }
 
 type VerifyAction = Extract<NextAction, { kind: "verify" }>;
+type ConflictAction = Extract<NextAction, { kind: "review_source_conflict" }>;
 
 /** "Also yours now": the button right under its title, details after it, so the list stays scannable in a short column. */
 const actionFirst: StepFrame = ({ body, action }) => (
@@ -52,7 +61,7 @@ const actionFirst: StepFrame = ({ body, action }) => (
 const SECONDARY_WRAP = "h-auto whitespace-normal py-1.5 text-left leading-5";
 
 /** The container check: always a deliberate click or Enter on this button; Ctrl+Enter and scans never record it. */
-function VerifyControl({ action, item, primary, frame }: { action: VerifyAction; item: ItemDetail; primary: boolean; frame: StepFrame }) {
+function VerifyControl({ action, item, primary, frame, onFailure }: { action: VerifyAction; item: ItemDetail; primary: boolean; frame: StepFrame; onFailure?: () => void }) {
   const backToScan = useBackToScan();
   const parts = item.orders.flatMap((o) => o.parts.map((p) => ({ id: p.id, label: `${o.sourceOrderId} part ${p.designation} (${p.siteText})` })));
   const [partId, setPartId] = useState(action.orderPartId ?? "");
@@ -63,6 +72,7 @@ function VerifyControl({ action, item, primary, frame }: { action: VerifyAction;
     successToast: (r) => verifyToast(action.seq, r),
     errorToast: false,
     onSuccess: () => backToScan(),
+    onError: () => onFailure?.(),
   });
   const order = item.orders.find((o) => o.parts.some((p) => p.id === partId));
   const body = (
@@ -137,6 +147,8 @@ function ActionControl({
   frame,
   onRaise,
   onAssign,
+  onReviewConflict,
+  onFailure,
   related = null,
 }: {
   w: WorkItem;
@@ -146,8 +158,11 @@ function ActionControl({
   frame: StepFrame;
   onRaise: (d: ClarificationDraft) => void;
   onAssign: () => void;
-  /** The related-order decision held by the workspace; `lead`: its choices lead the centre, only the action stays here. */
-  related?: { state: RelatedDecisionState; lead: boolean } | null;
+  onReviewConflict: (a: ConflictAction) => void;
+  /** A command from this control failed (its error shows inline): "Also yours now" stays open so the error is not folded away. */
+  onFailure?: () => void;
+  /** The related-order decision held by the workspace (its evidence and choices lead the centre); `recordHere`: "Record decision" sits in this column. */
+  related?: RelatedDecisionCtx | null;
 }) {
   const backToScan = useBackToScan();
   const a = w.action;
@@ -160,7 +175,7 @@ function ActionControl({
   const badge = primary ? <CtrlEnterBadge onDark /> : null;
   switch (a.kind) {
     case "verify":
-      return <VerifyControl action={a} item={item} primary={primary} frame={frame} />;
+      return <VerifyControl action={a} item={item} primary={primary} frame={frame} onFailure={onFailure} />;
     case "raise": {
       const c = item.containers.find((x) => x.id === a.containerId);
       const row = c?.comparison.find((r) => r.field === a.field);
@@ -200,31 +215,46 @@ function ActionControl({
     case "review_related": {
       const cand = item.related.find((r) => r.id === a.candidateId);
       if (!cand) return frame({});
+      // The choices never sit here: they follow the two submissions side by side in the centre, so nobody
+      // picks a relationship without the conflicting information on screen. This column keeps the step,
+      // the review-not-merge rule and (at bench widths) "Record decision".
       if (primary && related && related.state.cand.id === cand.id) {
-        return related.lead
-          ? frame({
-              body: (
-                <p className="text-sm text-ink-secondary">
-                  {cand.duplicateRecordKind ? "Possible duplicate patient record: different patient references are never joined. " : null}
-                  {REVIEW_NOT_MERGE}
-                </p>
-              ),
-              action: <RecordDecision s={related.state} primary />,
-            })
-          : frame({ body: <RelatedChoices s={related.state} legend="hidden" />, action: <RecordDecision s={related.state} primary /> });
-      }
-      return primary ? (
-        <RelatedDecisionForm item={item} cand={cand} siblings={bench.siblings} primary frame={frame} />
-      ) : (
-        frame({
-          action: (
-            <Button variant="secondary" size="sm" onClick={() => document.getElementById("related-orders")?.scrollIntoView({ block: "start" })}>
-              Review <span className="id-mono">{cand.displayId}</span>
-            </Button>
+        return frame({
+          body: (
+            <p className="text-sm text-ink-secondary">
+              {cand.duplicateRecordKind ? "Possible duplicate patient record: different patient references are never joined. " : null}
+              {REVIEW_NOT_MERGE}
+              {related.recordHere ? null : " Compare the two submissions below, then choose and record the decision there."}
+            </p>
           ),
-        })
-      );
+          action: related.recordHere ? <RecordDecision s={related.state} primary /> : undefined,
+        });
+      }
+      return frame({
+        action: (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              const el = document.getElementById("related-orders");
+              el?.scrollIntoView({ block: "start" });
+              el?.focus({ preventScroll: true });
+            }}
+          >
+            Review <span className="id-mono">{cand.displayId}</span>
+          </Button>
+        ),
+      });
     }
+    case "review_source_conflict":
+      return frame({
+        action: (
+          <Button variant={variant} size={size} className={wide} aria-keyshortcuts={keys} aria-haspopup="dialog" data-intake-primary={mark} onClick={() => onReviewConflict(a)}>
+            Review source conflict
+            {badge}
+          </Button>
+        ),
+      });
     case "resolve_routing":
       return frame({
         action: (
@@ -248,6 +278,7 @@ function ActionControl({
               pendingLabel="Accepting..."
               successToast={`Routing accepted: ${a.doctorName}`}
               onSuccess={() => backToScan()}
+              onError={() => onFailure?.()}
             >
               {primary ? "Accept routing" : `Accept routing to ${a.doctorName}`}
               {badge}
@@ -476,7 +507,7 @@ function NextStepSheet({
 }
 
 /** Stacked, page-scrolling layout: below 1024px wide or 560px tall (200% zoom of a bench screen). */
-const STACKED_QUERY = "(max-width: 1023.98px), (max-height: 560px)";
+const STACKED_QUERY = "(max-width: 63.99875rem), (max-height: 35rem)";
 
 type AlsoMode = "list" | "collapsed" | "open";
 
@@ -558,11 +589,15 @@ export function DecisionColumn({
   onRaise: (d: ClarificationDraft) => void;
   onOpenItem: (displayId: string) => void;
   /** The related-order decision when it is this person's next step (held by the workspace, shared with the centre). */
-  related?: { state: RelatedDecisionState; lead: boolean } | null;
+  related?: RelatedDecisionCtx | null;
   className?: string;
 }) {
   const [assigning, setAssigning] = useState(false);
+  const [reviewing, setReviewing] = useState<ConflictAction | null>(null);
   const [alsoOpen, setAlsoOpen] = useState(false);
+  // A failed action in "Also yours now" grows the list by its error; if the list then stopped fitting it would fold to
+  // titles and unmount the error with its button. Opening it keeps the failed task, its error and its retry on screen.
+  const keepAlsoOpen = useCallback(() => setAlsoOpen(true), []);
   const asideRef = useRef<HTMLElement>(null);
   const alsoListId = useId();
   const next = plan.next;
@@ -600,8 +635,10 @@ export function DecisionColumn({
       ref={asideRef}
       aria-label="Decision"
       className={cn(
-        "relative flex min-h-0 flex-col border-l border-line bg-surface-subtle",
-        "stacked:grid stacked:grid-cols-1 stacked:items-start stacked:border-b stacked:border-l-0 stacked:sm:grid-cols-2",
+        // When even the floors of its parts do not fit (large text, a long reason, a validation message), the
+        // column scrolls as a whole instead of clipping its foot (the accession request).
+        "relative flex min-h-0 flex-col overflow-y-auto overscroll-contain border-l border-line bg-surface-subtle",
+        "stacked:grid stacked:grid-cols-1 stacked:items-start stacked:overflow-visible stacked:border-b stacked:border-l-0 stacked:sm:grid-cols-2",
         className,
       )}
     >
@@ -623,7 +660,7 @@ export function DecisionColumn({
           </span>
         </p>
         {next ? (
-          <ActionControl w={next} item={item} bench={bench} primary frame={nextFrame} onRaise={onRaise} onAssign={onAssign} related={related} />
+          <ActionControl w={next} item={item} bench={bench} primary frame={nextFrame} onRaise={onRaise} onAssign={onAssign} onReviewConflict={setReviewing} related={related} />
         ) : plan.idle ? (
           <NextStepSheet
             title={
@@ -732,7 +769,8 @@ export function DecisionColumn({
           {alsoMode === "collapsed" ? (
             // Titles only, one whole line each; a title that does not fit wraps into a second column out of view.
             // "Show all" opens the tasks with their actions.
-            <div className="relative min-h-2 flex-1">
+            // At least one whole title tall: with less room the column scrolls rather than showing half a line.
+            <div className="relative min-h-7 flex-1">
               <ul aria-label="Also yours now, titles only" className="absolute inset-x-4 top-0 bottom-2 flex flex-col flex-wrap content-start gap-x-8 overflow-hidden max-xl:inset-x-3">
                 {plan.also.map((w) => (
                   <li key={w.key} className="flex w-full shrink-0 items-center gap-1.5 text-sm leading-5 text-ink-secondary">
@@ -754,7 +792,9 @@ export function DecisionColumn({
                         <Segs value={w.title} />
                       </p>
                     )}
-                    {w.action?.kind === "send" ? null : <ActionControl w={w} item={item} bench={bench} primary={false} frame={actionFirst} onRaise={onRaise} onAssign={onAssign} />}
+                    {w.action?.kind === "send" ? null : (
+                      <ActionControl w={w} item={item} bench={bench} primary={false} frame={actionFirst} onRaise={onRaise} onAssign={onAssign} onReviewConflict={setReviewing} onFailure={keepAlsoOpen} />
+                    )}
                   </li>
                 ))}
               </ul>
@@ -766,6 +806,7 @@ export function DecisionColumn({
         <AccessionDock item={item} plan={plan} bench={bench} primary={requestIsNext} />
       </div>
       {assigning ? <RoutingDialog mode="resolve" item={item} current={null} pathologists={bench.pathologists} onClose={() => setAssigning(false)} /> : null}
+      {reviewing ? <SourceConflictDialog action={reviewing} item={item} onClose={() => setReviewing(null)} /> : null}
     </aside>
   );
 }

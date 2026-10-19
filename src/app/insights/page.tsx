@@ -23,7 +23,8 @@ export const metadata = { title: "Insights" };
 
 const PRIOR_TAG = "Illustrative: synthetic prior-day data";
 // One provenance wording for every "today" figure (queries/insights.ts): seeded synthetic records plus this session.
-const TODAY_TAG = `Today: ${TODAY_PROVENANCE.toLowerCase()} (synthetic)`;
+// "Seeded synthetic + this session" already says synthetic; the tag stays short enough not to push a narrow card sideways.
+const TODAY_TAG = `Today: ${TODAY_PROVENANCE.toLowerCase()}`;
 
 /** In-page index: the page is long, and a presenter jumps to one measure at a time. */
 const MEASURES = [

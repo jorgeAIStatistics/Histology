@@ -3,7 +3,8 @@ import type { DB } from "@/server/db/db";
 import { testDb, run, must, clockAt, one, all, STAFF } from "../helpers";
 import { executeCommand } from "@/server/commands";
 import { placeHold } from "@/server/domain/holds";
-import { loadActor, makeCtx } from "@/server/core/context";
+import { loadActor, makeCtx, SYSTEM_ACTOR } from "@/server/core/context";
+import { importSourceMessage } from "@/server/domain/sourceImport";
 import { suggestRouting } from "@/server/domain/routing";
 import { separateEncounterOrders } from "@/server/domain/related";
 import { computeReadiness } from "@/server/domain/readiness";
@@ -1353,5 +1354,118 @@ describe("S1 intake workstation: severity ladder, lanes and the per-actor plan",
     expect(bench.plan!.next).toBeNull();
     expect(bench.plan!.waitingOn.map((w) => w.who)).toEqual(["EMA-SIM (simulated source)"]);
     expect(bench.plan!.steps[4]).toMatchObject({ key: "accession", state: "blocked" });
+  });
+});
+
+describe("S1 intake workstation: a source conflict on the plan (lead reviews; others wait with the reason)", () => {
+  /** Theo Barnes (ORD-77118): checked and routed, so only the source conflict can hold the accession back. */
+  function barnesReady(db: DB) {
+    arrive(db);
+    const r = receive(db, "phys_barnes");
+    verifyAll(db, r.intakeItemId);
+    must(db, STAFF.maya, "routing.confirm", { intakeItemId: r.intakeItemId });
+    return r;
+  }
+  function v1Payload(db: DB) {
+    return JSON.parse(
+      one<{ payload: string }>(db, "SELECT v.payload FROM source_order_version v JOIN source_order o ON o.id = v.source_order_id WHERE o.source_order_id = 'ORD-77118' AND v.source_version = 1").payload,
+    ) as Record<string, any>;
+  }
+
+  it("a new order with other details for the patient on file: the lead's next step is 'Review source conflict'; it reads as a source conflict, never as an order link", async () => {
+    const { intakeBench } = await import("@/server/queries/intake");
+    const { segText, waitNoun } = await import("@/components/intake/plan");
+    const db = testDb();
+    const r = barnesReady(db);
+    expect(intakeBench(db, loadActor(db, STAFF.maya), { item: r.displayId }).plan!.accession.state).toBe("ready");
+    const v1 = v1Payload(db);
+    importSourceMessage(makeCtx(db, SYSTEM_ACTOR, "import", "plan-test"), "src_ema", {
+      messageId: "ORD-77990#v1", messageType: "order.upsert", payload: { ...v1, order_id: "ORD-77990", patient: { ...v1.patient, birth_date: "1901-01-01" } },
+    });
+    const task = one<{ id: string; version: number; title: string }>(db, "SELECT id, version, title FROM task WHERE kind = 'source_conflict' AND entity_type = 'patient_ref' AND status = 'open'");
+    expect(accessionBlockers(db, [r.intakeItemId]).map((b) => b.code)).toEqual(["source_conflict_open"]);
+
+    // Read model: the open review on the item, with the task version the command needs; the item goes to the exceptions lane.
+    const kimBench = intakeBench(db, loadActor(db, STAFF.kim), { item: r.displayId });
+    const item = kimBench.selected!;
+    expect(item.sourceConflicts).toEqual([
+      expect.objectContaining({ id: task.id, version: task.version, about: "patient", title: task.title, ownerName: "Kim Nguyen", orderRefs: ["ORD-77118"] }),
+    ]);
+    expect(item.lane).toBe("exceptions");
+    expect(kimBench.queue.find((q) => q.id === item.id)!.flags.map((f) => [f.kind, f.severity, f.text])).toContainEqual(["source", "warning", "Source conflict"]);
+    expect(kimBench.permissions.reviewSourceConflict).toBe(true);
+
+    // Kim (accessioning lead, the task owner): her next step, with the conflict in words and the task's id and version.
+    const kim = kimBench.plan!;
+    expect(segText(kim.next!.title)).toBe("Review source conflict");
+    expect(kim.next!.action).toEqual({
+      kind: "review_source_conflict",
+      taskId: task.id,
+      version: task.version,
+      about: "patient",
+      conflict: "New order ORD-77990 gives different details for MRN 447902 (date of birth 1972-06-14 → 1901-01-01).",
+      detail: expect.stringMatching(/details on file were kept/),
+      orderRefs: ["ORD-77118"],
+    });
+    expect(kim.next!.ctrlEnter).toBe(true);
+    expect(segText(kim.next!.detail)).toMatch(/Accession waits for this review; nothing is merged or changed\.$/);
+    expect(kim.current).toBe("differences");
+    expect(kim.steps[1]).toMatchObject({ key: "differences", state: "mine", tone: "warning" });
+    expect(segText(kim.steps[1].short)).toBe("Source conflict · yours");
+    // The blocker code reads as what it is, not as "order link".
+    expect(segText(kim.steps[4].status)).toBe("Waits for source conflict");
+    expect(segText(kim.steps[4].short)).toBe("Waits for source conflict");
+    expect(waitNoun({ code: "source_conflict_open", message: "" })).toBe("source conflict");
+    expect(waitNoun({ code: "order_not_linked", message: "" })).toBe("order link");
+    expect(segText(kim.accession.reason)).toBe("Cannot request yet: waits for your review of the source conflict.");
+    expect(kim.finding.tone).toBe("warning");
+    expect(segText(kim.finding.lead)).toBe(
+      "New order ORD-77990 gives different details for MRN 447902 (date of birth 1972-06-14 → 1901-01-01). The patient details on file were kept; nothing was merged.",
+    );
+    expect(segText(kim.finding.then)).toBe("Accession waits for your review of the source conflict.");
+
+    // Maya (accessioner, no clarification.resolve): never her step; she waits on Kim, with the reason.
+    const maya = intakeBench(db, loadActor(db, STAFF.maya), { item: r.displayId });
+    expect(maya.permissions.reviewSourceConflict).toBe(false);
+    expect(maya.plan!.next).toBeNull();
+    expect(maya.plan!.also.some((w) => w.action?.kind === "review_source_conflict")).toBe(false);
+    expect(maya.plan!.waitingOn.map((w) => [w.who, segText(w.what)])).toEqual([
+      ["Kim Nguyen", "review the source conflict: new order ORD-77990 gives different details for MRN 447902 (date of birth 1972-06-14 → 1901-01-01)."],
+    ]);
+    expect(maya.plan!.steps[1]).toMatchObject({ key: "differences", state: "waiting", owner: "Kim Nguyen" });
+    expect(segText(maya.plan!.steps[1].short)).toBe("Source conflict · Kim Nguyen");
+    expect(segText(maya.plan!.accession.reason)).toBe("Cannot request yet: waits for Kim Nguyen's review of the source conflict.");
+
+    // Tanya (supervisor) may review it but it is Kim's task: she sees who it waits on. The read-only director only reads.
+    const tanya = intakeBench(db, loadActor(db, STAFF.tanya), { item: r.displayId });
+    expect(tanya.permissions.reviewSourceConflict).toBe(true);
+    expect(tanya.plan!.waitingOn.map((w) => w.who)).toEqual(["Kim Nguyen"]);
+    const director = intakeBench(db, loadActor(db, STAFF.director), { item: r.displayId }).plan!;
+    expect(director.next).toBeNull();
+    expect(director.waitingOn.map((w) => w.who)).toEqual(["Kim Nguyen"]);
+
+    // The review (the command the dialog calls) closes it: no step, nothing waits, accession ready, patient unchanged.
+    must(db, STAFF.kim, "sourceConflict.review", { taskId: task.id, expectedVersion: task.version, decision: "details_on_file_confirmed", reason: "Office confirmed the birth date on file (synthetic)" });
+    const after = intakeBench(db, loadActor(db, STAFF.kim), { item: r.displayId });
+    expect(after.selected!.sourceConflicts).toEqual([]);
+    expect(after.selected!.lane).toBe("to_review");
+    expect(after.plan!.next?.action?.kind).toBe("request");
+    expect(after.plan!.accession.state).toBe("ready");
+    expect(segText(after.plan!.steps[1].status)).toBe("None found");
+  });
+
+  it("a newer order version that changed order-level details is reviewed the same way (about the order)", async () => {
+    const { intakeBench } = await import("@/server/queries/intake");
+    const { segText } = await import("@/components/intake/plan");
+    const db = testDb();
+    const r = barnesReady(db);
+    amendOrder(db, "ORD-77118", (pl) => void ((pl.patient as { birth_date: string }).birth_date = "1972-06-15"));
+    verifyAll(db, r.intakeItemId); // a fresh check against v2: only the source conflict is left
+    const kim = intakeBench(db, loadActor(db, STAFF.kim), { item: r.displayId });
+    expect(kim.selected!.sourceConflicts.map((c) => [c.about, c.orderRefs])).toEqual([["order", ["ORD-77118"]]]);
+    expect(kim.plan!.next!.action).toMatchObject({ kind: "review_source_conflict", about: "order" });
+    expect((kim.plan!.next!.action as { conflict: string }).conflict).toMatch(/^ORD-77118 v2 changed the patient .*\.$/);
+    expect(segText(kim.plan!.steps[4].status)).toBe("Waits for source conflict");
+    expect(segText(kim.plan!.accession.reason)).toBe("Cannot request yet: waits for your review of the source conflict.");
   });
 });

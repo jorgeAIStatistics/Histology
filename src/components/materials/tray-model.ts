@@ -151,6 +151,22 @@ export function blockedHeadline(view: TrayView): string | null {
   return parts.length ? `Cannot complete: ${parts.join(", ")}.` : "Cannot complete yet.";
 }
 
+/**
+ * True when the only thing between the tray and completion is expected slides
+ * not scanned yet: ordinary assembly progress (waiting), not a disagreement.
+ * Amber stays for missing, unexpected, duplicate, unknown and canceled material.
+ */
+export function onlyAwaitingScans(view: TrayView): boolean {
+  if (!view.isActive || !view.completeBlockers.length) return false;
+  const live = view.expected.filter((e) => e.state !== "canceled");
+  return (
+    live.some((e) => e.state === "expected") &&
+    live.every((e) => e.state === "expected" || e.state === "scanned") &&
+    view.unresolved.length === 0 &&
+    view.counts.canceledOnTray === 0
+  );
+}
+
 /** The slot the newest scan landed in (for the scan-locates-it highlight). */
 export function slotForScan(slots: TraySlot[], scan: { id: string; slideId: string | null } | undefined): string | null {
   if (!scan) return null;

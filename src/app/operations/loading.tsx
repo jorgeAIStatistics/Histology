@@ -23,7 +23,7 @@ export default function OperationsLoading() {
             ))}
           </div>
         </div>
-        <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_21rem] min-[1500px]:grid-cols-[minmax(0,1fr)_23rem]">
+        <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_21rem] min-[93.75rem]:grid-cols-[minmax(0,1fr)_23rem]">
           <div className="rounded-lg border border-line bg-surface">
             <div className="flex flex-col gap-2 px-5 py-4">
               <Skeleton className="h-5 w-32" />

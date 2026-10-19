@@ -72,14 +72,14 @@ export function SourceFreshness() {
           aria-label={`Source freshness: ${summary}${detail}${age ? ` (${age})` : ""}. Simulated. Show details`}
         >
           <Icon className={cn("size-4 shrink-0", ui.darkIconClass)} aria-hidden />
-          <span className={cn("flex flex-col leading-tight", worst === "synced" && "max-[1719px]:hidden")}>
-            <span className="text-xs text-shell-muted max-[1439px]:hidden">Source (simulated)</span>
-            <span className={cn("max-w-[11rem] truncate text-sm font-semibold max-xl:max-w-[7.5rem] min-[1720px]:max-w-[17rem]", ui.darkTextClass)}>
-              <span className="max-[1439px]:hidden">{summary}</span>
+          <span className={cn("flex flex-col leading-tight", worst === "synced" && "max-[107.5rem]:hidden")}>
+            <span className="text-xs text-shell-muted max-[90rem]:hidden">Source (simulated)</span>
+            <span className={cn("max-w-[11rem] truncate text-sm font-semibold max-xl:max-w-[7.5rem] min-[107.5rem]:max-w-[17rem]", ui.darkTextClass)}>
+              <span className="max-[90rem]:hidden">{summary}</span>
               {/* Below 1440px: the state word only ("Offline"); the full sentence stays in the accessible name and tooltip. */}
-              <span className="min-[1440px]:hidden">{worst === "unknown" ? "Unknown" : ui.text}</span>
-              {detail ? <span className="font-normal max-[1719px]:hidden">{detail}</span> : null}
-              {age ? <span className="font-normal text-shell-muted max-[1719px]:hidden"> ({age})</span> : null}
+              <span className="min-[90rem]:hidden">{worst === "unknown" ? "Unknown" : ui.text}</span>
+              {detail ? <span className="font-normal max-[107.5rem]:hidden">{detail}</span> : null}
+              {age ? <span className="font-normal text-shell-muted max-[107.5rem]:hidden"> ({age})</span> : null}
             </span>
           </span>
         </button>

@@ -101,7 +101,7 @@
 /* "stacked": tablet portrait, 200% browser zoom or a short window. Fixed-frame
    workstations become one page-scrolling column here. Use as stacked:... */
 @custom-variant stacked {
-  @media (max-width: 1023.98px), (max-height: 560px) {
+  @media (max-width: 63.99875rem), (max-height: 35rem) {
     @slot;
   }
 }
@@ -109,7 +109,7 @@
 /* Below 1024px (tablet portrait, 200% browser zoom) the top bar wraps to two
    rows; sticky offsets follow. On short viewports the identity bar stops
    being sticky so pinned chrome never covers more than a third of the view. */
-@media (max-width: 1023.98px) {
+@media (max-width: 63.99875rem) {
   :root { --hlo-topbar-h: 102px; }
 }
 
@@ -182,7 +182,7 @@
     scroll-padding-top: calc(var(--hlo-chrome-h) + 24px);
   }
   /* Pages with a sticky identity bar keep focused rows clear of it too (not on short windows, where it scrolls away). */
-  @media (min-height: 560.02px) {
+  @media (min-height: 35.00125rem) {
     html:has([data-identity-sticky]) { scroll-padding-top: calc(var(--hlo-chrome-h) + var(--hlo-identity-h) + 24px); }
   }
   body { background: var(--hlo-canvas); font-size: var(--text-base); line-height: var(--text-base--line-height); }

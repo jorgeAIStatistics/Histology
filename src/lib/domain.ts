@@ -172,7 +172,8 @@ export const TRAY_STATUS = {
   exception: "Exception — cannot verify",
   verified_complete: "Verified complete",
   released_with_exceptions: "Released with documented exceptions",
-  delivered: "Delivered",
+  // The tray left the lab; no pathologist receipt is recorded (same wording as the slide stage "Sent on tray").
+  delivered: "Sent (receipt not recorded)",
 } as const;
 export type TrayStatus = keyof typeof TRAY_STATUS;
 

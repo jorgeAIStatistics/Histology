@@ -1,7 +1,7 @@
 // Step 3 of the director demo exactly as docs/demo-script.md tells the presenter to run it: send the
 // clarification, then press the guide's "Run simulator events" so that ONE simulator run brings both the
 // office's answer and amended order ORD-77121 v2; only then does the lead review, resolve and release.
-// (The main journey instead uses the panel's "Simulate office answer" button, so it never exercises this
+// (The main journey instead uses the presenter console's "Simulate office answer" world event, so it never exercises this
 // branch of the step 3 simulator.) Steps 1 and 2 are set up with the guide's rehearsal button, which the
 // supervisor demo role may use; every step 3 staff action is a click on the real screens.
 import { expect, test, type Page } from "@playwright/test";

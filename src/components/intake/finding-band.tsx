@@ -61,7 +61,7 @@ export function FindingBand({ plan, active, onStep, className }: { plan: IntakeP
   const f = plan.finding;
   const hl = plan.holdLine;
   return (
-    <section aria-label="Current finding" className={cn("min-w-0 border-b border-line bg-surface px-5 pt-3 pb-2.5 max-[1399px]:px-4", className)}>
+    <section aria-label="Current finding" className={cn("min-w-0 border-b border-line bg-surface px-5 pt-3 pb-2.5 max-[87.4375rem]:px-4", className)}>
       <p className="flex items-start gap-2.5 text-md leading-6">
         {LEAD_ICON[f.tone]}
         <span>

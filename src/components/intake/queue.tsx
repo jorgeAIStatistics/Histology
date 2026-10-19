@@ -44,7 +44,8 @@ function Flag({ f, showId }: { f: QueueFlag; showId: boolean }) {
           aria-hidden
         />
       )}
-      <span className="truncate">{f.text}</span>
+      {/* Wraps rather than cuts the words of a flag (large text); the queue column has a fixed width. */}
+      <span className="min-w-0 break-words">{f.text}</span>
       {f.id && showId ? <span className="id-mono">{f.id}</span> : null}
     </span>
   );
@@ -83,7 +84,8 @@ function QueueRow({
         )}
       >
         {pingKey ? <span key={pingKey} aria-hidden className="animate-scan-ping pointer-events-none absolute inset-0 rounded-md" /> : null}
-        <span className="flex items-center gap-2">
+        {/* The id and the doctor share a line; with large text the doctor moves under the id rather than being cut. */}
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
           {q.accessionNumber ? (
             <>
               <AccessionChip accession={q.accessionNumber} compact href={false} />

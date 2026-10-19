@@ -82,7 +82,7 @@ export default async function OperationsPage({ searchParams }: { searchParams: P
 
       <BenchPath stages={data.path.stages} definition={data.path.definition} now={now} />
 
-      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_21rem] min-[1500px]:grid-cols-[minmax(0,1fr)_23rem]">
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_21rem] min-[93.75rem]:grid-cols-[minmax(0,1fr)_23rem]">
         <BlockedNow summary={summary} items={exceptions} filter={{ category, owner: ownerFilter, overdueOnly }} now={now} />
         <aside
           aria-label="Owners and sources"

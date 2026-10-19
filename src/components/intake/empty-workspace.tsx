@@ -4,22 +4,20 @@ import type { IntakeBench } from "@/server/queries/intake";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { CtrlEnterBadge } from "@/components/ui/ctrl-enter-badge";
-import { PresenterControls } from "@/components/ui/presenter-controls";
-import { CourierStrip, UnpackControls } from "./courier-strip";
+import { CourierStrip } from "./courier-strip";
 
 /**
  * No item open: name the next item and how to open it (J, the button, or a
  * scan), then the courier reconciliation by office, which is the work of the
- * moment when nothing is selected. The presenter disclosure sits below one
- * full view of the bench work, so it is never in the first viewport.
+ * moment when nothing is selected. Simulated presenter events (unpacking the
+ * courier bag) live in the presenter console, never on the bench.
  */
 export function EmptyWorkspace({ bench, onOpenItem }: { bench: IntakeBench; onOpenItem: (displayId: string) => void }) {
   const first = bench.firstOpen;
   const active = bench.deliveries.find((d) => d.id === bench.activeDeliveryId) ?? null;
   return (
     <div className="relative min-h-0 flex-1 overflow-y-auto">
-      {/* At least one view tall: the presenter disclosure after it starts below the fold at every size. */}
-      <div className="min-h-[calc(100dvh-var(--hlo-topbar-h))] space-y-4 p-5 max-xl:p-4">
+      <div className="space-y-4 p-5 max-xl:p-4">
         <section aria-labelledby="empty-title" className="rounded-lg border border-line bg-surface px-5 py-4">
           <h2 id="empty-title" className="text-xl font-semibold tracking-[-0.01em] text-ink">
             {first ? "Open the next arrival" : `No arrivals to review for ${active ? active.displayId : "the next courier"} yet`}
@@ -47,11 +45,6 @@ export function EmptyWorkspace({ bench, onOpenItem }: { bench: IntakeBench; onOp
           )}
         </section>
         <CourierStrip deliveries={bench.deliveries} activeId={bench.activeDeliveryId} permissions={bench.permissions} now={bench.now} />
-      </div>
-      <div className="px-5 pb-5 max-xl:px-4 max-xl:pb-4">
-        <PresenterControls>
-          <UnpackControls delivery={active} permissions={bench.permissions} />
-        </PresenterControls>
       </div>
     </div>
   );

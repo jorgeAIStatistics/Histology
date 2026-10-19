@@ -254,8 +254,8 @@ export function ClarificationsWorkspace({
         className={cn(
           "relative flex min-h-0 flex-1 flex-col lg:grid",
           drawer
-            ? "lg:grid-cols-[minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)] min-[1400px]:grid-cols-[352px_minmax(0,1fr)]"
-            : "lg:grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)] min-[1400px]:grid-cols-[352px_minmax(0,1fr)]",
+            ? "lg:grid-cols-[minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)] min-[87.5rem]:grid-cols-[352px_minmax(0,1fr)]"
+            : "lg:grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)] min-[87.5rem]:grid-cols-[352px_minmax(0,1fr)]",
         )}
       >
         <ClarificationQueue

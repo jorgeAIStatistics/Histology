@@ -16,7 +16,7 @@ import type { TrayExpectedView, TrayScanView, TrayView } from "@/server/domain/t
 import { IdText } from "@/components/domain/id-text";
 import { HoldPill } from "@/components/domain/hold";
 import { CutCover, CutCue, STICKY_COLUMN, useCutBelow, useFitColumn } from "./shared";
-import { blockedHeadline, trayPositions } from "./tray-model";
+import { blockedHeadline, onlyAwaitingScans, trayPositions } from "./tray-model";
 
 type Msg = { message: string };
 const msg = (r: Msg) => r.message;
@@ -266,7 +266,12 @@ function Headline({ view }: { view: TrayView }) {
   if (blocked) {
     return (
       <h2 className="flex items-start gap-2 text-lg font-semibold leading-7 tracking-[-0.01em] text-ink">
-        <TriangleAlert className="mt-1.5 size-5 shrink-0 text-warning-solid" aria-hidden />
+        {/* Slides still to scan is waiting (neutral); anything else on the list is a disagreement (amber). */}
+        {onlyAwaitingScans(view) ? (
+          <Hourglass className="mt-1.5 size-5 shrink-0 text-ink-muted" aria-hidden />
+        ) : (
+          <TriangleAlert className="mt-1.5 size-5 shrink-0 text-warning-solid" aria-hidden />
+        )}
         <span>{blocked}</span>
       </h2>
     );
@@ -277,7 +282,7 @@ function Headline({ view }: { view: TrayView }) {
       ? `${t.display_id} is verified complete: every slide has its own matching scan.`
       : t.status === "released_with_exceptions"
         ? `${t.display_id} was released with exceptions. It is not verified complete.`
-        : `${t.display_id} was delivered to ${view.pathologistName}.`;
+        : `${t.display_id} was sent to ${view.pathologistName}. Receipt is not recorded.`;
   return (
     <h2 className="flex items-start gap-2 text-lg font-semibold leading-7 tracking-[-0.01em] text-ink">
       {t.status === "released_with_exceptions" ? (
@@ -490,7 +495,7 @@ export function TrayDecision({
             Deliver tray to {view.pathologistName}
           </CommandButton>
         ) : (
-          <p className="text-sm text-ink-secondary">Delivered. Anything outstanding keeps its own task on Operations.</p>
+          <p className="text-sm text-ink-secondary">Sent. Receipt by the pathologist is not recorded. Anything outstanding keeps its own task on Operations.</p>
         )}
       </div>
 

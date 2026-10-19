@@ -397,13 +397,14 @@ function RowCell({
     case "readiness":
       // The next step, and who owns it wherever the Owner column is not shown (bench tablet, side panel open).
       return (
-        // The owner follows the readiness text and wraps under it only when the line runs out of room;
-        // a long next step (a routing exception) may take a third line rather than lose its clause.
+        // The owner follows the readiness text and wraps under it only when the line runs out of room.
+        // Never clamped: the end of the sentence is the action and where the material is (a routing
+        // exception's "a lead must assign…", "on TRY-M-03 (tray not delivered)"), so the row grows instead.
         <span className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
-          <span className="line-clamp-3 min-w-[min(100%,14rem)] flex-1" title={[...r.eligibleShort.map((e) => `Eligible: ${e}`), ...r.blockedShort.map((b) => `Not ready: ${b}`)].join("\n")}>
+          <span className="min-w-[min(100%,14rem)] flex-1" title={[...r.eligibleShort.map((e) => `Eligible: ${e}`), ...r.blockedShort.map((b) => `Not ready: ${b}`)].join("\n")}>
             {r.readinessText}
           </span>
-          {r.owner ? <InlineOwner row={r} actorId={actorId} className={ownerInline ? "inline-flex" : "hidden max-xl:inline-flex"} /> : null}
+          {r.owner || r.unownedOwner ? <InlineOwner row={r} actorId={actorId} className={ownerInline ? "inline-flex" : "hidden max-xl:inline-flex"} /> : null}
         </span>
       );
     case "blocks":
@@ -478,7 +479,8 @@ function Blank({ label = "None" }: { label?: string }) {
 
 /** The current task owner; the viewer's own tasks read "You" so a bench user finds hers at a glance. */
 function OwnerCell({ row: r, actorId }: { row: WorklistRow; actorId: string }) {
-  if (!r.owner) return <Blank />;
+  // Waiting work with no task still says who should own it (as Operations does), never a blank.
+  if (!r.owner) return r.unownedOwner ? <span title={r.ownerText} className="text-ink-muted">{r.unownedOwner}</span> : <Blank />;
   const mine = r.owner.ownerId === actorId;
   const more = r.tasks.length > 1 ? <span className="text-ink-muted"> +{r.tasks.length - 1}</span> : null;
   if (mine) {
@@ -503,7 +505,16 @@ function OwnerCell({ row: r, actorId }: { row: WorklistRow; actorId: string }) {
  * otherwise the owner's name after a person mark, so the next step and its owner read together.
  */
 function InlineOwner({ row: r, actorId, className }: { row: WorklistRow; actorId: string; className?: string }) {
-  if (!r.owner) return null;
+  if (!r.owner) {
+    if (!r.unownedOwner) return null;
+    return (
+      <span title={`Current task owner: ${r.ownerText}`} className={cn("shrink-0 items-center gap-1 whitespace-nowrap text-ink-muted", className)}>
+        <span className="sr-only">Owner: </span>
+        <UserRound className="size-3.5 shrink-0" aria-hidden />
+        {r.unownedOwner}
+      </span>
+    );
+  }
   const mine = r.owner.ownerId === actorId;
   const more = r.tasks.length > 1 ? <span className="text-ink-muted"> +{r.tasks.length - 1}</span> : null;
   return (

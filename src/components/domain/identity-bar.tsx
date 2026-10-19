@@ -94,7 +94,7 @@ export function IdentityBar({
       aria-label="Current case"
       data-identity-sticky
       className={cn(
-        "sticky top-[var(--hlo-chrome-h)] z-20 flex min-h-[var(--hlo-identity-h)] flex-wrap [@media(max-height:560px)]:static items-center gap-x-5 gap-y-2 border-b border-line bg-surface px-6 py-2 max-xl:gap-x-4 max-xl:px-4",
+        "sticky top-[var(--hlo-chrome-h)] z-20 flex min-h-[var(--hlo-identity-h)] flex-wrap [@media(max-height:35rem)]:static items-center gap-x-5 gap-y-2 border-b border-line bg-surface px-6 py-2 max-xl:gap-x-4 max-xl:px-4",
         flash && "hlo-identity-flash",
         className,
       )}

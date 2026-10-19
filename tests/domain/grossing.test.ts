@@ -801,11 +801,19 @@ describe("S4 grossing screen (server-side smoke render of the client components)
     expect(approved).toMatch(/Sam Ortiz types it into .+ by hand and attests the entry; only the simulated source can acknowledge it\./);
     expect(approved).not.toContain("Amend (creates version 2)");
     expect(approved).toMatch(/A grosser, supervisor or dermatopathologist amends an approved record; that creates version 2 and keeps version 1\s*\./);
-    // The histology assistant gets attestation and the simulated acknowledgment as separate actions.
+    // The histology assistant gets the attestation. The simulated source's acknowledgment is a separate step that is never a
+    // bench control: it is a presenter world event on the presenter console (/demo, World events).
     const approvedSam = renderAs(SAM, partWorkspace(db, partA)!);
     expect(approvedSam).toContain("Mark entered in source system (staff attestation)");
-    expect(approvedSam).toContain("Simulate source acknowledgment (demo)");
-    expect(approvedSam).toContain("The simulated source can only acknowledge an entry that staff have marked as entered.");
+    expect(approvedSam).not.toMatch(/Simulate (the )?source acknowledg/i);
+    expect(approvedSam).toContain("Marking it entered is a staff attestation, not an acknowledgment. Only the simulated source can acknowledge in this demo.");
+    // Once attested, the record waits on the simulated source, in words, still with no control to acknowledge it.
+    must(db, STAFF.sam, "gross.recordSourceEntry", { grossRecordId: reviewed.id, expectedVersion: seenGross(db, partA) });
+    const attestedSam = renderAs(SAM, partWorkspace(db, partA)!);
+    expect(attestedSam).toMatch(/Entered \(staff attested\) by Sam Ortiz at .+ Not acknowledged by the source\./);
+    expect(attestedSam).toMatch(/EMA-SIM Sunrise Coast \(simulated\)\s*to acknowledge the entry\./);
+    expect(attestedSam).not.toMatch(/Simulate (the )?source acknowledg/i);
+    expect(attestedSam).not.toContain("Mark entered in source system (staff attestation)");
     expect(approved).toContain("The case is not complete.");
     expect(approved).toMatch(/Enter approved gross description in source system/);
     // The six record states stay in order; approval and the source update are separate steps.

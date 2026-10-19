@@ -8,7 +8,7 @@ import { decodeLabel } from "@/lib/identifiers";
 import { getRetrievalDetail, getTrayDetail, getPrintJobDetail } from "@/server/queries/materials";
 import { demoNow } from "@/server/core/clock";
 import * as q from "@/server/queries/materials";
-import { blockedHeadline, slotForScan, traySlots } from "@/components/materials/tray-model";
+import { blockedHeadline, onlyAwaitingScans, slotForScan, traySlots } from "@/components/materials/tray-model";
 import { printOutcome } from "@/components/materials/print-outcome";
 import { retrievalWalk } from "@/components/materials/retrieval-model";
 
@@ -604,6 +604,8 @@ describe("Materials bench drawing (derived, read only): tray slots, holds on slo
     expect(slots.filter((x) => x.state === "empty").map((x) => x.slideId).sort()).toEqual([sc.expectedUnscanned, sc.missing].sort());
     expect(slots.find((x) => x.slideId === sc.expectedUnscanned)!.sr).toMatch(/^Position \d+: D26-\d{5} A\d+-\d+ .*\. Expected, not scanned yet\.$/);
     expect(blockedHeadline(d.view)).toBe("Cannot complete: 2 not scanned.");
+    // Slides still to scan is ordinary progress: the headline is neutral (waiting), not amber.
+    expect(onlyAwaitingScans(d.view)).toBe(true);
 
     must(db, STAFF.priya, "tray.scan", { trayId: "tray_m03", payload: ident(db, sc.expectedUnscanned) });
     must(db, STAFF.priya, "tray.scan", { trayId: "tray_m03", payload: ident(db, sc.unexpected) });
@@ -617,6 +619,8 @@ describe("Materials bench drawing (derived, read only): tray slots, holds on slo
     expect(slotForScan(slots, d.view.scans[0])).toBe(extra[0].key);
     expect(slots.filter((x) => x.position !== null)).toHaveLength(10);
     expect(blockedHeadline(d.view)).toBe("Cannot complete: 1 not scanned, 1 unexpected.");
+    // An unexpected slide is a disagreement: amber again.
+    expect(onlyAwaitingScans(d.view)).toBe(false);
     // The drawing decides nothing: the server still refuses completion with its own reasons.
     const done = run(db, STAFF.priya, "tray.complete", { trayId: "tray_m03", expectedVersion: trayVersion(db) });
     expect(!done.ok && done.error.code).toBe("BLOCKED");

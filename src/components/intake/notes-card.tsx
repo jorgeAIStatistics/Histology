@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Users } from "lucide-react";
 import type { ItemDetail, BenchPermissions } from "@/server/queries/intake";
 import { Button } from "@/components/ui/button";
-import { CommandButton, CommandError } from "@/components/ui/command-button";
+import { CommandError } from "@/components/ui/command-button";
 import { Field, Select, Textarea } from "@/components/ui/field";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { Timestamp } from "@/components/domain/timestamp";
@@ -18,28 +18,6 @@ interface Draft {
   baseVersion: number;
   ownerId: string;
   notes: string;
-}
-
-/**
- * Presenter control (demo): a simulated colleague (Luis Benitez) saves a change
- * to this item, so the stale-save protection can be shown. Lives in the
- * "Presenter controls (demo)" disclosure, not on the bench surface; the server
- * still checks the role (the read-only director is refused inline).
- */
-export function ColleagueEditControl({ item }: { item: ItemDetail }) {
-  return (
-    <CommandButton
-      command="intake.simulateColleagueEdit"
-      input={{ intakeItemId: item.id }}
-      size="sm"
-      variant="secondary"
-      pendingLabel="Simulating..."
-      successToast="Demo: Luis Benitez (simulated colleague) edited this item"
-      disabled={item.status === "canceled"}
-    >
-      Simulate a colleague editing this item (demo control)
-    </CommandButton>
-  );
 }
 
 /**

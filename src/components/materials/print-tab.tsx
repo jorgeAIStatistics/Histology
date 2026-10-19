@@ -8,12 +8,9 @@ import { Table, THead, TBody, TR, TH, TD, TableMessageRow } from "@/components/u
 import { Tabs } from "@/components/ui/tabs";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { CommandButton } from "@/components/ui/command-button";
-import { Field, Select } from "@/components/ui/field";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Kbd } from "@/components/ui/kbd";
-import { PresenterControls } from "@/components/ui/presenter-controls";
 import { Timestamp } from "@/components/domain/timestamp";
-import { useCommand } from "@/lib/client/command";
 import { useSingleKey } from "@/lib/client/keyboard";
 import type { PrinterView, PrintFilter, PrintJobDetail, PrintJobRowView, WorkOrderReviewView, listRecentWorkOrderReviews, slidesAwaitingLabel } from "@/server/queries/materials";
 import { useToast } from "@/components/ui/toast";
@@ -28,21 +25,6 @@ const FILTERS: { key: PrintFilter; label: string }[] = [
   { key: "today", label: "Today" },
   { key: "all", label: "All" },
 ];
-
-function PrinterBehaviour({ printer }: { printer: PrinterView }) {
-  const cmd = useCommand<{ status: string }, { printerId: string; status: string }>("printer.setStatus", {
-    successToast: (_r, input) => `${printerName(printer.name)}: ${input.status === "online" ? "ready" : input.status === "offline" ? "unavailable" : "will time out after submission"} (simulated)`,
-  });
-  return (
-    <Field label={`Demo control: ${printerName(printer.name)}`} className="w-[230px]">
-      <Select size="sm" value={printer.status} disabled={cmd.pending} onChange={(e) => void cmd.run({ printerId: printer.id, status: e.target.value })}>
-        <option value="online">Ready</option>
-        <option value="offline">Unavailable</option>
-        <option value="simulate_timeout">Time out after submission</option>
-      </Select>
-    </Field>
-  );
-}
 
 type PrintResultDto = { outcome: string; displayId: string; state?: string; message: string; printerUnavailable?: boolean };
 
@@ -304,17 +286,6 @@ export function PrintTab({
           )}
           <p className="text-xs text-ink-muted">Jobs go to simulated printers. Scan or type a print job number (PJ-…) in the scan field to open it.</p>
         </div>
-        {/* The presenter's printer switches, at the foot of the bench like every other demo control. */}
-        {!readOnly ? (
-          <PresenterControls label="Simulate printer behaviour (demo)">
-            <div className="flex flex-wrap gap-2">
-              {printers.map((p) => (
-                <PrinterBehaviour key={p.id} printer={p} />
-              ))}
-            </div>
-            <p className="text-xs text-ink-muted">Also in Settings. No real printer is contacted.</p>
-          </PresenterControls>
-        ) : null}
       </div>
     </SidePanelLayout>
   );

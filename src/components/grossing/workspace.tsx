@@ -50,7 +50,7 @@ type ApproveResult = {
 };
 
 /** Below 1024px wide or 560px tall (200% zoom of a bench screen) the fixed frame becomes one page-scrolling stack. */
-const STACKED_QUERY = "(max-width: 1023.98px), (max-height: 560px)";
+const STACKED_QUERY = "(max-width: 63.99875rem), (max-height: 35rem)";
 
 const TASK_KIND_LABEL: Record<string, string> = {
   source_entry: "Source-system entry",
@@ -412,7 +412,7 @@ function HistorySheet({ ws }: { ws: PartWorkspace }) {
           Record history
         </h2>
       </header>
-      <div className="grid grid-cols-1 min-[1280px]:grid-cols-[minmax(0,5fr)_minmax(0,8fr)]">
+      <div className="grid grid-cols-1 min-[80rem]:grid-cols-[minmax(0,5fr)_minmax(0,8fr)]">
         <div className="flex flex-col gap-3 px-4 py-3 max-xl:px-3">
           <div>
             <h3 className="text-sm font-semibold text-ink">Versions</h3>
@@ -448,7 +448,7 @@ function HistorySheet({ ws }: { ws: PartWorkspace }) {
           />
         </div>
         <Timeline
-          className="border-t border-line px-4 py-3 min-[1280px]:border-t-0 min-[1280px]:border-l max-xl:px-3"
+          className="border-t border-line px-4 py-3 min-[80rem]:border-t-0 min-[80rem]:border-l max-xl:px-3"
           title="History for this part"
           now={ws.now}
           events={ws.history.map((h) => ({
@@ -627,7 +627,6 @@ export function GrossingWorkspace({ ws }: { ws: PartWorkspace }) {
     opts,
   );
   const entryCmd = useCommand<Summary, Record<string, unknown>>("gross.recordSourceEntry", opts);
-  const ackCmd = useCommand<Summary, Record<string, unknown>>("gross.simulateSourceAck", { errorToast: false });
 
   const track = <R,>(out: CommandOutcome<R>): CommandOutcome<R> => {
     if (out.ok) {
@@ -1166,25 +1165,6 @@ export function GrossingWorkspace({ ws }: { ws: PartWorkspace }) {
             >
               Mark entered in source system (staff attestation)
             </Button>
-            <Button variant="secondary" size="block" disabled reasonId="ack-reason">
-              Simulate source acknowledgment (demo)
-            </Button>
-            <DisabledReason id="ack-reason">The simulated source can only acknowledge an entry that staff have marked as entered.</DisabledReason>
-          </>
-        ) : rec.sourceUpdateState === "entered_attested" && !readOnly ? (
-          <>
-            <Button
-              variant="secondary"
-              size="block"
-              loading={ackCmd.pending}
-              loadingLabel="Simulating..."
-              disabled={sourceOffline}
-              reasonId={sourceOffline ? "ack-offline-reason" : undefined}
-              onClick={async () => void track(await ackCmd.run({ grossRecordId: rec.id }))}
-            >
-              Simulate source acknowledgment (demo)
-            </Button>
-            {sourceOffline ? <DisabledReason id="ack-offline-reason">{sourceName} is unreachable, so it cannot acknowledge yet.</DisabledReason> : null}
           </>
         ) : null}
       </div>
@@ -1196,7 +1176,7 @@ export function GrossingWorkspace({ ws }: { ws: PartWorkspace }) {
   return (
     // A fixed frame at bench sizes (the record scrolls beside the docked next step). Below 1024px wide or 560px tall (200%
     // browser zoom of a bench screen) it becomes one page-scrolling stack: identity, record band, next step, then the sheets.
-    <div onKeyDown={onWorkspaceKeyDown} className="flex h-[calc(100dvh-var(--hlo-chrome-h))] min-h-[34rem] flex-col [@media(max-width:1023.98px),(max-height:560px)]:h-auto [@media(max-width:1023.98px),(max-height:560px)]:min-h-0">
+    <div onKeyDown={onWorkspaceKeyDown} className="flex h-[calc(100dvh-var(--hlo-chrome-h))] min-h-[34rem] flex-col [@media(max-width:63.99875rem),(max-height:35rem)]:h-auto [@media(max-width:63.99875rem),(max-height:35rem)]:min-h-0">
       <IdentityBar
         identity={{ kind: "accession", accession: id.accessionNumber, namespace: id.namespace }}
         part={{
@@ -1211,31 +1191,31 @@ export function GrossingWorkspace({ ws }: { ws: PartWorkspace }) {
         contextKey={`${id.accessionNumber}:${id.designation}`}
         actions={
           // Icon only below 1280px, so the bar keeps one row on a bench tablet with a hold; the name and tooltip say it in words.
-          <Tooltip content={<IdText text={`Open case ${id.accessionNumber}`} />} side="bottom" className="min-[1280px]:hidden">
+          <Tooltip content={<IdText text={`Open case ${id.accessionNumber}`} />} side="bottom" className="min-[80rem]:hidden">
             <ButtonLink
               href={`/cases/${encodeURIComponent(id.accessionNumber)}`}
               size="sm"
               variant="ghost"
               icon={<FolderOpen />}
-              className="max-[1279px]:w-[max(2rem,var(--hlo-target-min))] max-[1279px]:px-0"
+              className="max-[79.9375rem]:w-[max(2rem,var(--hlo-target-min))] max-[79.9375rem]:px-0"
               onClick={guardLink(`/cases/${encodeURIComponent(id.accessionNumber)}`)}
             >
-              <span className="max-[1279px]:sr-only">Open case</span>
+              <span className="max-[79.9375rem]:sr-only">Open case</span>
               <span className="sr-only"> {id.accessionNumber}</span>
             </ButtonLink>
           </Tooltip>
         }
       />
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_19rem] min-[1280px]:grid-cols-[minmax(0,1fr)_21rem] min-[1400px]:grid-cols-[minmax(0,1fr)_22.5rem] [@media(max-width:1023.98px),(max-height:560px)]:flex [@media(max-width:1023.98px),(max-height:560px)]:flex-col">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_19rem] min-[80rem]:grid-cols-[minmax(0,1fr)_21rem] min-[87.5rem]:grid-cols-[minmax(0,1fr)_22.5rem] [@media(max-width:63.99875rem),(max-height:35rem)]:flex [@media(max-width:63.99875rem),(max-height:35rem)]:flex-col">
         {/* ------------------------------------------------ the record: finding, states, evidence beside structure */}
         {/* Stacked: this scroller dissolves (display: contents) so the next step can sit between the record band and the sheets. */}
         {/* "relative" keeps visually hidden text (sr-only, absolutely positioned) inside this scroller instead of
             stretching the page below the frame. */}
-        <div ref={mainRef} className="relative min-h-0 overflow-y-auto overscroll-contain [@media(max-width:1023.98px),(max-height:560px)]:contents">
-          <section aria-label="Gross record summary" className="border-b border-line bg-surface px-5 pt-3 pb-2 max-xl:px-4 [@media(max-width:1023.98px),(max-height:560px)]:order-1">
-            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 max-[1279px]:gap-x-3">
-              <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 max-[1279px]:gap-x-2">
+        <div ref={mainRef} className="relative min-h-0 overflow-y-auto overscroll-contain [@media(max-width:63.99875rem),(max-height:35rem)]:contents">
+          <section aria-label="Gross record summary" className="border-b border-line bg-surface px-5 pt-3 pb-2 max-xl:px-4 [@media(max-width:63.99875rem),(max-height:35rem)]:order-1">
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 max-[79.9375rem]:gap-x-3">
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 max-[79.9375rem]:gap-x-2">
                 <Link
                   href="/grossing"
                   onClick={guardLink("/grossing")}
@@ -1250,7 +1230,7 @@ export function GrossingWorkspace({ ws }: { ws: PartWorkspace }) {
               </div>
               <PartsStrip parts={ws.parts} currentPartId={id.partId} onNavigate={guardLink} />
             </div>
-            <p className="mt-2.5 flex items-start gap-2.5 text-md tracking-[-0.005em] min-[1280px]:text-lg">
+            <p className="mt-2.5 flex items-start gap-2.5 text-md tracking-[-0.005em] min-[80rem]:text-lg">
               {FINDING_ICON[finding.tone]}
               <span>
                 <span className="font-semibold text-ink">
@@ -1266,7 +1246,7 @@ export function GrossingWorkspace({ ws }: { ws: PartWorkspace }) {
             </div>
           </section>
 
-          <div className="flex flex-col gap-4 px-5 py-4 max-xl:px-4 [@media(max-width:1023.98px),(max-height:560px)]:order-3">
+          <div className="flex flex-col gap-4 px-5 py-4 max-xl:px-4 [@media(max-width:63.99875rem),(max-height:35rem)]:order-3">
             {!partActive ? (
               <AlertBanner tone="warning" title={id.partStatus !== "active" ? `${partLabel} is ${id.partStatus}` : `Case ${id.accessionNumber} is canceled`}>
                 Gross documentation cannot change for a canceled part or case. The server refuses drafting, confirming, approving and amending.
@@ -1319,9 +1299,9 @@ export function GrossingWorkspace({ ws }: { ws: PartWorkspace }) {
             {lastApproval ? <ApprovalOutcome result={lastApproval} partLabel={partLabel} anchorRef={approvalRef} /> : null}
             {rec && rec.state === "approved_for_downstream" ? <DownstreamSheet ws={ws} showOpenTasks={!lastApproval} /> : null}
 
-            <div className="grid grid-cols-1 items-start gap-4 min-[1280px]:grid-cols-[minmax(18rem,5fr)_minmax(0,8fr)]">
+            <div className="grid grid-cols-1 items-start gap-4 min-[80rem]:grid-cols-[minmax(18rem,5fr)_minmax(0,8fr)]">
               <TranscriptPane
-                className="order-2 min-[1280px]:order-none min-[1280px]:[@media(min-height:560.02px)]:sticky min-[1280px]:[@media(min-height:560.02px)]:top-4 min-[1280px]:[@media(min-height:560.02px)]:max-h-[calc(var(--gross-pane-h,70vh)-2rem)] min-[1280px]:[@media(min-height:560.02px)]:overflow-y-auto"
+                className="order-2 min-[80rem]:order-none min-[80rem]:[@media(min-height:35.00125rem)]:sticky min-[80rem]:[@media(min-height:35.00125rem)]:top-4 min-[80rem]:[@media(min-height:35.00125rem)]:max-h-[calc(var(--gross-pane-h,70vh)-2rem)] min-[80rem]:[@media(min-height:35.00125rem)]:overflow-y-auto"
                 transcript={ws.transcript}
                 fields={rec ? fields : null}
                 activeField={frozen ? null : activeField}
@@ -1347,7 +1327,7 @@ export function GrossingWorkspace({ ws }: { ws: PartWorkspace }) {
               />
 
               {/* One form sheet: structured fields, then the narrative, separated by hairlines. */}
-              <section aria-labelledby="gross-fields-title" className="order-1 min-w-0 rounded-lg border border-line bg-surface min-[1280px]:order-none">
+              <section aria-labelledby="gross-fields-title" className="order-1 min-w-0 rounded-lg border border-line bg-surface min-[80rem]:order-none">
                 <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 border-b border-line px-4 py-3 max-xl:px-3">
                   <div className="min-w-0">
                     <h2 id="gross-fields-title" className="text-md font-semibold tracking-[-0.01em] text-ink">
@@ -1511,12 +1491,12 @@ export function GrossingWorkspace({ ws }: { ws: PartWorkspace }) {
         {/* ------------------------------------------------ docked: the next step, why anything is disabled, who else is waited on */}
         <section
           aria-label={`Next step for ${partLabel}`}
-          className="flex min-h-0 flex-col border-l border-line bg-canvas [@media(max-width:1023.98px),(max-height:560px)]:order-2 [@media(max-width:1023.98px),(max-height:560px)]:border-b [@media(max-width:1023.98px),(max-height:560px)]:border-l-0"
+          className="flex min-h-0 flex-col border-l border-line bg-canvas [@media(max-width:63.99875rem),(max-height:35rem)]:order-2 [@media(max-width:63.99875rem),(max-height:35rem)]:border-b [@media(max-width:63.99875rem),(max-height:35rem)]:border-l-0"
         >
           <div
-            className="relative flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain p-4 max-xl:p-3 [@media(max-width:1023.98px),(max-height:560px)]:overflow-visible [@media(max-width:1023.98px),(max-height:560px)]:sm:grid [@media(max-width:1023.98px),(max-height:560px)]:sm:grid-cols-2 [@media(max-width:1023.98px),(max-height:560px)]:sm:items-start"
+            className="relative flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain p-4 max-xl:p-3 [@media(max-width:63.99875rem),(max-height:35rem)]:overflow-visible [@media(max-width:63.99875rem),(max-height:35rem)]:sm:grid [@media(max-width:63.99875rem),(max-height:35rem)]:sm:grid-cols-2 [@media(max-width:63.99875rem),(max-height:35rem)]:sm:items-start"
           >
-            <div className="rounded-lg border border-line bg-surface p-4 max-xl:p-3 [@media(max-width:1023.98px),(max-height:560px)]:sm:row-span-3">
+            <div className="rounded-lg border border-line bg-surface p-4 max-xl:p-3 [@media(max-width:63.99875rem),(max-height:35rem)]:sm:row-span-3">
               <h2 className="text-lg font-bold tracking-[-0.01em] text-ink">Your next step</h2>
               <p className="mt-1 text-md font-semibold leading-6 text-ink">{stepTitle}</p>
 

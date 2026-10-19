@@ -1,20 +1,15 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
 import { getDb } from "@/server/db/db";
 import { readClock } from "@/server/core/clock";
 import { getActor } from "@/server/session";
 import { roleCan } from "@/lib/roles";
-import {
-  loadContactsSettings,
-  loadDemoSettings,
-  loadIntegrationSettings,
-  loadRoutingSettings,
-  sourceFreshness,
-} from "@/server/queries/settings";
+import { isDemoMode } from "@/server/runtime-mode";
+import { loadContactsSettings, loadIntegrationSettings, loadRoutingSettings } from "@/server/queries/settings";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { PageBody, PageHeader } from "@/components/ui/page-header";
 import { Tabs } from "@/components/ui/tabs";
 import { RoutingTab } from "@/components/settings/routing-tab";
-import { DemoTab, ResetCard } from "@/components/settings/demo-tab";
 import { IntegrationTab } from "@/components/settings/integration-tab";
 import { ContactsTab } from "@/components/settings/contacts-tab";
 import { PreferencesTab } from "@/components/settings/preferences-tab";
@@ -24,6 +19,8 @@ export const metadata = { title: "Settings" };
 
 const TABS = ["routing", "demo", "integration", "contacts", "preferences"] as const;
 type Tab = (typeof TABS)[number];
+
+const consoleLink = "font-medium text-brand underline decoration-brand/40 underline-offset-2 hover:decoration-brand";
 
 const TAB_LABEL: Record<Tab, string> = {
   routing: "Routing rules",
@@ -38,7 +35,10 @@ const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const sp = await searchParams;
   const raw = first(sp.tab);
-  const tab: Tab = (TABS as readonly string[]).includes(raw ?? "") ? (raw as Tab) : "routing";
+  // Demo scenarios moved to the presenter console (synthetic demo only); a locked build has no such tab at all.
+  const demo = isDemoMode();
+  const tabs = TABS.filter((t) => t !== "demo" || demo);
+  const tab: Tab = (tabs as readonly string[]).includes(raw ?? "") ? (raw as Tab) : "routing";
   const actor = await getActor();
   const readOnly = actor.role === "director";
 
@@ -47,9 +47,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   try {
     const db = getDb();
     const now = readClock(db).now;
-    const fresh = sourceFreshness(db, now);
     const failed = (db.prepare("SELECT COUNT(*) n FROM integration_event WHERE outcome = 'failed'").get() as { n: number }).n;
-    const pendingOutbox = fresh.reduce((n, s) => n + s.backlog, 0);
     const unrouted = (
       db
         .prepare(
@@ -59,7 +57,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         )
         .get(now, now) as { n: number }
     ).n;
-    counts = { routing: unrouted || null, integration: failed || null, demo: pendingOutbox || null };
+    counts = { routing: unrouted || null, integration: failed || null };
     switch (tab) {
       case "routing": {
         const data = loadRoutingSettings(db);
@@ -74,7 +72,16 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         break;
       }
       case "demo":
-        body = <DemoTab data={loadDemoSettings(db)} />;
+        // One line: every presenter control lives on the presenter console, never here.
+        body = (
+          <p className="text-sm text-ink-secondary">
+            Demo scenarios (source outages, printers, notifications, the assistant, injected failures and reset) are on the{" "}
+            <Link href="/demo?tab=outages" className={consoleLink}>
+              presenter console, Outages and reset
+            </Link>
+            .
+          </p>
+        );
         break;
       case "integration":
         body = <IntegrationTab data={loadIntegrationSettings(db)} canRetry={roleCan(actor.role, "integration.manage")} />;
@@ -88,20 +95,22 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     }
   } catch (e) {
     console.error("[settings] failed to load", e);
-    // A database created before newer tables were added cannot be read by this version: offer the reset here,
-    // because the Demo tab itself may not load.
+    // A database created before newer tables were added cannot be read by this version. The reset that rebuilds
+    // it is a presenter control: it lives on the presenter console (synthetic demo only), which still loads.
     const outdated = e instanceof Error && /no such table|no such column/i.test(e.message);
     body = (
-      <div className="grid grid-cols-1 gap-4">
-        <AlertBanner tone="warning" title={outdated ? "The local demo database is from an older version" : "Could not load settings"}>
-          {outdated
-            ? "It is missing tables this version needs, so these settings cannot be shown. Nothing was changed. Reset the demo data to rebuild it with the synthetic starting state."
-            : "The local demo database could not be read. Nothing was changed. Reload the page to try again; if it keeps failing, reset the demo data."}
-        </AlertBanner>
-        <div className="max-w-xl">
-          <ResetCard />
-        </div>
-      </div>
+      <AlertBanner tone="warning" title={outdated ? "The local demo database is from an older version" : "Could not load settings"}>
+        {outdated ? "It is missing tables this version needs, so these settings cannot be shown. Nothing was changed. " : "The local database could not be read. Nothing was changed. Reload the page to try again. "}
+        {demo ? (
+          <>
+            {outdated ? "Reset the demo data to rebuild it with the synthetic starting state, on the " : "If it keeps failing, reset the demo data on the "}
+            <Link href="/demo?tab=outages" className={consoleLink}>
+              presenter console, Outages and reset
+            </Link>
+            .
+          </>
+        ) : null}
+      </AlertBanner>
     );
   }
 
@@ -109,17 +118,17 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     <PageBody>
       <PageHeader
         title="Settings"
-        description="Routing rule versions, demo scenarios, simulated connectors and their capabilities, the office contact directory, and your browser preferences."
+        description="Routing rule versions, simulated connectors and their capabilities, the office contact directory, and your browser preferences."
         simulated="connectors"
         readOnly={readOnly}
       />
       <Tabs
         label="Settings sections"
         active={tab}
-        items={TABS.map((t) => {
+        items={tabs.map((t) => {
           const n = counts[t] ?? null;
           // Say what the number counts: a bare "(1)" next to "Routing rules" reads as one rule.
-          const what = n === null ? null : t === "routing" ? `${n} office${n === 1 ? "" : "s"} without a rule` : t === "integration" ? `${n} failed` : t === "demo" ? `${n} waiting` : String(n);
+          const what = n === null ? null : t === "routing" ? `${n} office${n === 1 ? "" : "s"} without a rule` : t === "integration" ? `${n} failed` : String(n);
           return {
             key: t,
             label: (
@@ -133,10 +142,9 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           };
         })}
       />
-      {readOnly && tab !== "preferences" ? (
+      {readOnly && tab !== "preferences" && tab !== "demo" ? (
         <AlertBanner tone="info" title="Read only">
-          Director (demo) can view routing rules, contacts and integration status but cannot change them. Demo controls (clock, reset, simulated faults) stay available to the
-          presenter. The server checks the role on every change.
+          Director (demo) can view routing rules, contacts and integration status but cannot change them. The server checks the role on every change.
         </AlertBanner>
       ) : null}
       {body}

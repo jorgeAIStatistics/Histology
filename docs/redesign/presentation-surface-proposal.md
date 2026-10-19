@@ -1,3 +1,5 @@
+> **Status (Stage 5, 2026-10-19): built.** The console exists at `/demo` with tabs Guide, Role and clock, World events, and Outages and reset. It returns 404 in a locked build (`src/app/demo/gate.ts`). The rest of this document is the original proposal.
+
 # Proposal: a separate director presentation surface
 
 *Proposed, not built. Today the guided demo lives at `/demo` beside the bench screens, and the presenter controls (role switch, demo clock, guided demo) sit in the top bar's presenter menu.*

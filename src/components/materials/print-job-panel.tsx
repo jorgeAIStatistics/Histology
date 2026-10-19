@@ -282,7 +282,13 @@ export function PrintJobPanel({ detail, now, closeHref }: { detail: PrintJobDeta
         {(job.state === "queued" || job.state === "planned") && job.failureDetail ? (
           <AlertBanner
             tone="warning"
-            title={`${printer ? printerName(printer.name) : "Printer"} is unavailable (simulated). ${job.displayId} is kept in the queue.`}
+            // Said from the printer's status now, not from the failure stored on the job: once it is back, the job
+            // is still queued only until someone releases it.
+            title={
+              printer && printer.status !== "offline"
+                ? `${printerName(printer.name)} is available again (simulated). ${job.displayId} is still in the queue.`
+                : `${printer ? printerName(printer.name) : "Printer"} is unavailable (simulated). ${job.displayId} is kept in the queue.`
+            }
             action={
               readOnly ? null : (
                 <CommandButton command="print.release" input={{ printJobId: job.id }} size="sm" pendingLabel="Releasing..." successToast={(r: { message: string }) => r.message} icon={<Send className="size-4" aria-hidden />}>

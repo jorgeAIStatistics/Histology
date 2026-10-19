@@ -438,8 +438,8 @@ export function releaseQueuedForPrinter(ctx: Ctx, printerId: string): { released
     message: !jobs.length
       ? "No queued jobs for this printer."
       : stillQueued
-        ? `${stillQueued} of ${jobs.length} job(s) still queued: the printer is still unavailable (simulated).${skipped}`
-        : `${released.length} queued job(s) released to the printer (simulated).${skipped}`,
+        ? `${stillQueued} of ${jobs.length} ${jobs.length === 1 ? "job" : "jobs"} still queued: the printer is still unavailable (simulated).${skipped}`
+        : `${released.length} queued ${released.length === 1 ? "job" : "jobs"} released to the printer (simulated).${skipped}`,
   };
 }
 

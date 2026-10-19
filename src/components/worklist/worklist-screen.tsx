@@ -95,7 +95,7 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
       { id: "readiness", accessorFn: (r) => r.readinessText },
       { id: "blocks", accessorFn: (r) => r.blocks.prepared },
       { id: "sourceEntry", accessorFn: (r) => -r.sourceEntry.pendingParts.length },
-      { id: "owner", accessorFn: (r) => r.owner?.ownerName ?? "~" },
+      { id: "owner", accessorFn: (r) => r.owner?.ownerName ?? (r.unownedOwner ? "~unassigned" : "~") },
       { id: "lastUpdate", accessorFn: (r) => (r.lastUpdate.at ? Date.parse(r.lastUpdate.at) : 0) },
       { id: "office", accessorFn: (r) => r.office },
       { id: "clinician", accessorFn: (r) => r.clinician ?? "~" },

@@ -11,7 +11,8 @@ export function fmtSnapshotTime(iso: string | null | undefined): string {
   return `${weekday} ${day} ${time} ET`;
 }
 
-const PART_WORD_LABEL: Record<string, string> = { hold: "on hold", "gross record": "gross in progress" };
+// "delivered" is the stored stage; on screen, print and CSV it is "sent on tray" (no pathologist receipt is recorded).
+const PART_WORD_LABEL: Record<string, string> = { hold: "on hold", "gross record": "gross in progress", delivered: "sent on tray" };
 /** A part that can move now names the step it is ready for ("A ready for processing"), never a bare "ready". */
 const PART_STAGE_WORD: Partial<Record<Stage, string>> = {
   awaiting_processing: "ready for processing", processing: "ready for processing", embedding: "ready for embedding", sectioning: "ready for sectioning", staining: "ready for staining", qc: "ready for QC", ready_for_tray: "ready for tray",

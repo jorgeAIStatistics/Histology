@@ -12,7 +12,7 @@ import { currentWorklistSeq } from "@/server/core/feed";
 import { ALL_SENT_ON_TRAYS, computeReadiness, STAGE_SHORT, type CaseReadiness, type PartReadiness } from "@/server/domain/readiness";
 import { activeHolds, blockedTransitions, PART_LEVEL_SCOPES, scopesForIntake } from "@/server/domain/holds";
 import { AUTHORIZATION_SOURCE, AWAITING_SOURCE_ACK, AWAITING_SOURCE_ENTRY_SQL, awaitsSourceEntry, ROUTING_STATUS, type Stage } from "@/lib/domain";
-import { OPEN_ROUTING_EXCEPTION_SQL } from "./predicates";
+import { OPEN_ROUTING_EXCEPTION_SQL, SOURCE_ENTRY_UNASSIGNED } from "./predicates";
 import { fmtTime, fmtSmart, fmtFull, labDay, minutesBetween, fmtAge } from "@/lib/time";
 import {
   FRESHNESS_DELAYED_AFTER_MIN,
@@ -161,6 +161,11 @@ export interface WorklistRow {
   tasks: TaskEntry[];
   owner: TaskEntry | null;
   ownerText: string;
+  /**
+   * With no open task but work still waiting (an approved gross description not entered in the source system),
+   * who should own it, in the same words as Operations; null when a task names the owner or nothing waits.
+   */
+  unownedOwner: string | null;
   lastUpdate: { at: string | null; origin: UpdateOrigin | null; by: string | null; summary: string | null; text: string };
   /** Primary tag (used for counts): canceled, then new, then changed. */
   change: ChangeTag | null;
@@ -726,7 +731,7 @@ export function loadWorklistRows(db: DB, ackedSeq: number, now: string, opts: Lo
       eligibleShort: [], blockedShort: [`Routing exception: ${office}`], isComplete: false,
       blocks: { prepared: 0, expected: null, expectedLowerBound: null, text: "Unknown (not accessioned)" },
       sourceEntry: { text: "Not applicable (not accessioned)", pendingParts: [], attestedParts: [] },
-      tasks, owner, ownerText: ownerText(owner, tasks.length),
+      tasks, owner, ownerText: ownerText(owner, tasks.length), unownedOwner: null,
       lastUpdate: {
         at: lastAt, origin: lastOrigin, by: lastBy, summary: last?.summary ?? "Received (no later recorded change)",
         text: `${fmtSmart(lastAt, now)} ET · ${lastOrigin ?? "origin Unknown"}`,
@@ -895,7 +900,11 @@ function buildCaseRow(
     sourceEntry: { text: sourceEntryText, pendingParts, attestedParts },
     tasks,
     owner,
-    ownerText: ownerText(owner, tasks.length),
+    ownerText:
+      !owner && pendingParts.length
+        ? `${SOURCE_ENTRY_UNASSIGNED}: enter the approved gross description in the source system (no entry task is open)`
+        : ownerText(owner, tasks.length),
+    unownedOwner: !owner && pendingParts.length ? SOURCE_ENTRY_UNASSIGNED : null,
     lastUpdate: {
       at: lastAt, origin: lastOrigin, by: last?.by ?? null, summary: last?.summary ?? "No recorded change found for this case",
       text: `${fmtSmart(lastAt, now)} ET · ${lastOrigin ?? "origin Unknown"}`,

@@ -82,7 +82,7 @@ export function IdentityBand({
   return (
     <section
       aria-label="Current case"
-      className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-line bg-surface px-5 py-2 max-[1439px]:gap-x-5 max-xl:px-4 xl:flex-nowrap"
+      className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-line bg-surface px-5 py-2 max-[89.9375rem]:gap-x-5 max-xl:px-4 xl:flex-nowrap"
     >
       <button
         type="button"
@@ -158,7 +158,7 @@ export function IdentityBand({
         {multi ? (
           <ul className="text-sm text-ink">
             {sites.map((s) => (
-              <li key={s.key} className="truncate">
+              <li key={s.key} className="break-words">
                 <span className="font-semibold">Part {s.part ?? "?"}</span> {s.text}
               </li>
             ))}
@@ -176,7 +176,7 @@ export function IdentityBand({
 
       <dl className="ml-auto grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-2 text-sm leading-5 text-ink max-xl:ml-0 max-xl:flex max-xl:basis-full max-xl:flex-wrap max-xl:items-baseline max-xl:gap-x-2 xl:shrink">
         <dt className="text-ink-muted">{r?.status === "suggested" ? "Suggested" : "Routed to"}</dt>
-        <dd className="min-w-0 truncate max-xl:mr-3">
+        <dd className="min-w-0 break-words max-xl:mr-3">
           {doctor ? (
             <span className="inline-flex items-center gap-1.5 font-semibold">
               <DoctorSwatch color={doctor.color} />
@@ -187,9 +187,9 @@ export function IdentityBand({
           )}
         </dd>
         <dt className="text-ink-muted">Ordered by</dt>
-        <dd className="min-w-0 truncate max-xl:mr-3">{clinician ?? <span className="text-ink-muted">Unknown (no order linked)</span>}</dd>
+        <dd className="min-w-0 break-words max-xl:mr-3">{clinician ?? <span className="text-ink-muted">Unknown (no order linked)</span>}</dd>
         <dt className="text-ink-muted">Office</dt>
-        <dd className="min-w-0 truncate">
+        <dd className="min-w-0 break-words">
           {item.office ? (
             <>
               {item.office.name}

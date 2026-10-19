@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import Link from "next/link";
 import { Check, CircleHelp, CirclePause, EqualNot, TriangleAlert } from "lucide-react";
 import type { BenchPermissions, ItemDetail, RelatedView, SiblingView } from "@/server/queries/intake";
@@ -76,14 +76,24 @@ export interface RelatedDecisionState {
   why: string | null;
   /** "If recorded: ..." for the current choice; null before a choice. */
   effect: string | null;
+  /** Shown after "Record decision" was pressed with something missing (next to the choices and the reason). */
+  choiceError: string | null;
+  reasonError: string | null;
+  /** Where the missing input is focused when "Record decision" is pressed too early. */
+  choiceRef: RefObject<HTMLInputElement | null>;
+  reasonRef: RefObject<HTMLTextAreaElement | null>;
   pending: boolean;
   error: CommandFailure | null;
+  /** Records the decision, or (choice or reason missing) shows what is missing and moves focus there; records nothing. */
   record: () => void;
 }
 
 export function useRelatedDecision(item: ItemDetail, cand: DecisionCand | null, siblings: SiblingView[], onDone?: () => void): RelatedDecisionState | null {
   const [decision, setDecision] = useState<Decision | "">("");
   const [reason, setReason] = useState("");
+  const [attempted, setAttempted] = useState(false);
+  const choiceRef = useRef<HTMLInputElement>(null);
+  const reasonRef = useRef<HTMLTextAreaElement>(null);
   const backToScan = useBackToScan();
   useUnsavedChanges(!!cand && reason.trim().length > 0, `decision on ${cand?.displayId ?? "the related orders"}`);
   const review = useCommand<{ status: string }, { candidateId: string; expectedVersion: number; decision: Decision; reason: string }>("related.review", {
@@ -92,6 +102,7 @@ export function useRelatedDecision(item: ItemDetail, cand: DecisionCand | null, 
     onSuccess: () => {
       setDecision("");
       setReason("");
+      setAttempted(false);
       onDone?.();
       backToScan();
     },
@@ -107,10 +118,25 @@ export function useRelatedDecision(item: ItemDetail, cand: DecisionCand | null, 
     setReason,
     why: !decision ? "Choose a decision and give a reason." : !reason.trim() ? "Give a reason; it is recorded with your name." : null,
     effect: decision ? effectOf(decision, members, orders) : null,
+    choiceError: attempted && !decision ? "Choose one of the four decisions." : null,
+    reasonError: attempted && !reason.trim() ? "A reason is required: say why. It is recorded with your name." : null,
+    choiceRef,
+    reasonRef,
     pending: review.pending,
     error: review.error,
     record: () => {
-      if (decision) void review.run({ candidateId: cand.id, expectedVersion: cand.version, decision, reason: reason.trim() });
+      if (decision && reason.trim()) {
+        void review.run({ candidateId: cand.id, expectedVersion: cand.version, decision, reason: reason.trim() });
+        return;
+      }
+      // Nothing is recorded: say what is missing where it is entered, and take focus there (the band in the
+      // centre keeps the two submissions above the choices in view as it scrolls to them).
+      setAttempted(true);
+      const el = !decision ? choiceRef.current : reasonRef.current;
+      if (!el) return;
+      el.focus({ preventScroll: true });
+      const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      (el.closest<HTMLElement>("[data-rel-choices]") ?? el).scrollIntoView({ block: "nearest", behavior: still ? "auto" : "smooth" });
     },
   };
 }
@@ -123,6 +149,7 @@ export function useRelatedDecision(item: ItemDetail, cand: DecisionCand | null, 
  */
 export function RelatedChoices({ s, layout = "stack", legend = "visible" }: { s: RelatedDecisionState; layout?: "stack" | "band"; legend?: "visible" | "hidden" }) {
   const reasonId = useId();
+  const choiceErrId = useId();
   const { cand, decision } = s;
   // The effect of a choice is said before anything is recorded: bring it into view in a short column.
   const effectRef = useRef<HTMLParagraphElement>(null);
@@ -134,8 +161,9 @@ export function RelatedChoices({ s, layout = "stack", legend = "visible" }: { s:
   const band = layout === "band";
   const options = (
     <div className={band ? "space-y-0.5" : "space-y-1"}>
-      {DECISIONS.map((d) => {
+      {DECISIONS.map((d, i) => {
         const disabled = cand.duplicateRecordKind && d.value === "single_accession_approved";
+        const first = i === DECISIONS.findIndex((x) => !(cand.duplicateRecordKind && x.value === "single_accession_approved"));
         return (
           <label
             key={d.value}
@@ -149,11 +177,14 @@ export function RelatedChoices({ s, layout = "stack", legend = "visible" }: { s:
             )}
           >
             <input
+              ref={first ? s.choiceRef : undefined}
               type="radio"
               name={`rel-${cand.id}-${layout}`}
               value={d.value}
               checked={decision === d.value}
               disabled={disabled}
+              aria-invalid={s.choiceError ? true : undefined}
+              aria-describedby={s.choiceError ? choiceErrId : undefined}
               onChange={() => s.choose(d.value)}
               className="mt-1 size-4 shrink-0 accent-[var(--hlo-brand)]"
             />
@@ -170,22 +201,29 @@ export function RelatedChoices({ s, layout = "stack", legend = "visible" }: { s:
           </label>
         );
       })}
+      {s.choiceError ? (
+        <p id={choiceErrId} className="flex items-start gap-1 px-2 pt-0.5 text-xs font-medium text-warning-fg">
+          <TriangleAlert className="mt-px size-3.5 shrink-0 text-warning-solid" aria-hidden />
+          <span>{s.choiceError}</span>
+        </p>
+      ) : null}
     </div>
   );
   const reasonField = (
     <div data-cut-keep="">
-      <Field label="Reason, recorded with your name" required id={reasonId}>
-        <Textarea rows={2} value={s.reason} onChange={(e) => s.setReason(e.target.value)} />
+      <Field label="Reason, recorded with your name" required id={reasonId} error={s.reasonError}>
+        <Textarea ref={s.reasonRef} rows={2} value={s.reason} onChange={(e) => s.setReason(e.target.value)} />
       </Field>
     </div>
   );
   if (band) {
     return (
-      <fieldset className="min-w-0">
+      <fieldset data-rel-choices="" className="min-w-0 scroll-mb-3">
         <legend className="sr-only">
           Decision on <span className="id-mono">{cand.displayId}</span>
         </legend>
-        <div className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] items-start gap-x-4">
+        {/* Side by side while the band is wide; one column (choices, effect, reason) when it is narrow or the text is large. */}
+        <div className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] items-start gap-x-4 gap-y-2 @max-[34rem]:grid-cols-1">
           {options}
           <div className="flex min-w-0 flex-col gap-1.5">
             {/* Dashed: what would happen is not real until it is recorded. */}
@@ -203,7 +241,7 @@ export function RelatedChoices({ s, layout = "stack", legend = "visible" }: { s:
     );
   }
   return (
-    <fieldset className="space-y-2">
+    <fieldset data-rel-choices="" className="space-y-2">
       <legend className={legend === "hidden" ? "sr-only" : "text-base font-semibold text-ink"}>
         Decision on <span className="id-mono">{cand.displayId}</span>
       </legend>
@@ -218,7 +256,15 @@ export function RelatedChoices({ s, layout = "stack", legend = "visible" }: { s:
   );
 }
 
-/** "Record decision" with the reason it cannot run yet. As the current step it carries the Ctrl+Enter badge. */
+/** Reads like the shared disabled button, but stays pressable so a press can say what is missing (aria-disabled). */
+const NOT_YET = "aria-disabled:cursor-not-allowed aria-disabled:border aria-disabled:border-line aria-disabled:bg-surface-subtle aria-disabled:text-ink-muted aria-disabled:hover:bg-surface-subtle";
+
+/**
+ * "Record decision" with the reason it cannot run yet. As the current step it
+ * carries the Ctrl+Enter badge. Until a choice and a reason are given it is
+ * aria-disabled, not disabled: pressing it records nothing, shows what is
+ * missing beside the choices or the reason, and moves focus there.
+ */
 export function RecordDecision({ s, primary = false }: { s: RelatedDecisionState; primary?: boolean }) {
   const whyId = useId();
   return (
@@ -229,7 +275,8 @@ export function RecordDecision({ s, primary = false }: { s: RelatedDecisionState
           size={primary ? "block" : "md"}
           loading={s.pending}
           loadingLabel="Recording..."
-          disabled={!!s.why}
+          aria-disabled={s.why ? true : undefined}
+          className={NOT_YET}
           reasonId={s.why ? whyId : undefined}
           aria-keyshortcuts={primary ? "Control+Enter Meta+Enter" : undefined}
           data-intake-primary={primary ? "" : undefined}
@@ -293,93 +340,177 @@ function SideValue({ value }: { value: string | null }) {
 
 /**
  * The lead's "one case or two" when it is their next step, leading the centre
- * (bench widths; the decision column keeps the step heading, "Record decision"
- * with its Ctrl+Enter badge, who else is waited on and the accession request).
- * Both submissions side by side, each reason and conflict of the detection
- * read from both records in aligned columns; then the four choices, the effect
- * of the chosen one and the required reason as one wide band. A review, never
- * a merge.
+ * at every size (the choices never sit anywhere without the evidence above
+ * them). Both submissions side by side in aligned columns, differences first:
+ * what keeps them apart, read from each record, then what they share; then
+ * the four choices, the effect of the chosen one and the required reason. A
+ * review, never a merge.
+ *
+ * The column header and what keeps the two apart stay pinned at the top of
+ * the scrolling region while the rest of the workspace scrolls under them, so
+ * a choice is never made with the conflict off screen. On short windows
+ * (200% zoom) the pinned chrome would pass a third of the view: there the
+ * conflict alone is restated in one pinned line right above the choices.
+ * At bench sizes "Record decision" stays pinned in the decision column; stacked
+ * (`withRecord`) it follows the reason here.
  */
-export function RelatedDecisionWorkspace({ item, cand, s }: { item: ItemDetail; cand: RelatedView; s: RelatedDecisionState }) {
+export function RelatedDecisionWorkspace({ item, cand, s, withRecord = false }: { item: ItemDetail; cand: RelatedView; s: RelatedDecisionState; withRecord?: boolean }) {
   const titleId = useId();
+  const sectionRef = useRef<HTMLElement>(null);
+  const pinnedRef = useRef<HTMLDivElement>(null);
+  const recapRef = useRef<HTMLDivElement>(null);
   const sides = [...cand.sides].sort((a, b) => (a.parts[0] ?? "").localeCompare(b.parts[0] ?? ""));
-  const rows = [
-    ...cand.reasons.map((r) => ({ ...r, kind: "shared" as const })),
-    ...cand.conflicts.map((r) => ({ ...r, kind: r.code === "separate_orders" ? ("apart" as const) : ("caution" as const) })),
-  ];
+  const apart = cand.conflicts.map((r) => ({ ...r, kind: r.code === "separate_orders" ? ("apart" as const) : ("caution" as const) }));
+  const shared = cand.reasons.map((r) => ({ ...r, kind: "shared" as const }));
+  // Focus and "scroll into view" inside the workspace land below whatever is pinned (WCAG 2.4.11).
+  useEffect(() => {
+    const section = sectionRef.current;
+    if (!section) return;
+    const measure = () => {
+      const pinned = [pinnedRef.current, recapRef.current].find((el) => el && getComputedStyle(el).position === "sticky");
+      section.style.setProperty("--rel-pinned-h", `${pinned ? pinned.offsetHeight : 0}px`);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    for (const el of [pinnedRef.current, recapRef.current, section]) if (el) ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const cols = (
+    <colgroup>
+      <col className="w-[42%] @max-[34rem]:w-[36%]" />
+      <col />
+      <col />
+    </colgroup>
+  );
+  const rowsOf = (list: (typeof apart)[number][] | (typeof shared)[number][]) =>
+    list.map((r, i) => (
+      <tr key={r.code} className={cn("align-top", i < list.length - 1 && "border-b border-line")}>
+        <th scope="row" className="py-0.5 pr-2 pl-4 text-left leading-[1.125rem] font-normal">
+          <span className={cn("flex items-start gap-1.5", r.kind === "caution" ? "font-medium text-warning-fg" : r.kind === "apart" ? "font-medium text-ink" : "text-ink-secondary")}>
+            {r.kind === "shared" ? (
+              <Check className="mt-0.5 size-3.5 shrink-0 text-ink-muted" aria-hidden />
+            ) : r.kind === "apart" ? (
+              <EqualNot className="mt-0.5 size-3.5 shrink-0 text-ink-secondary" aria-hidden />
+            ) : (
+              <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning-solid" aria-hidden />
+            )}
+            {r.label}
+          </span>
+        </th>
+        {sides.map((sd) => (
+          <td key={sd.orderId} className="py-0.5 pr-3 leading-[1.125rem] text-ink">
+            <SideValue value={sd.values[r.code] ?? (r.detail || null)} />
+          </td>
+        ))}
+      </tr>
+    ));
   return (
     <section
+      ref={sectionRef}
       id="related-orders"
       tabIndex={-1}
       aria-labelledby={titleId}
       data-intake-decision=""
-      className="scroll-mt-3 rounded-lg border border-line bg-surface focus:outline-none"
+      className={cn(
+        "@container scroll-mt-3 rounded-lg border border-line bg-surface focus:outline-none",
+        "[&_:is(input,textarea,a,fieldset)]:scroll-mt-[calc(var(--rel-pinned-h,0px)+0.75rem)]",
+      )}
     >
-      <table className="w-full table-fixed border-collapse text-sm">
-        <caption className="sr-only">
-          {cand.displayId}: the two submissions side by side. Each row is a reason the orders were proposed as related, or what keeps them apart, as each submission&apos;s own record states it.
-        </caption>
-        <colgroup>
-          <col className="w-[19rem] max-[1365px]:w-[16.5rem]" />
-          <col />
-          <col />
-        </colgroup>
-        <thead>
-          <tr className="border-b border-line-strong text-left">
-            <th scope="col" className="py-1 pr-2 pl-4 align-middle font-normal">
-              <span id={titleId} className="text-md font-semibold text-ink">
-                <span className="id-mono">{cand.displayId}</span> <span className="font-normal text-ink-secondary">side by side</span>
-              </span>
-            </th>
-            {sides.map((sd) => {
-              const isThis = sd.intakeDisplayId === item.displayId;
-              return (
-                <th key={sd.orderId} scope="col" className="py-1 pr-3 align-middle font-normal">
-                  <span className="flex items-center gap-2 whitespace-nowrap">
-                    <span className="text-base font-semibold text-ink">Part {sd.parts.join(" ") || "?"}</span>
-                    {sd.intakeDisplayId ? (
-                      <LabelRef id={sd.intakeDisplayId} provisional href={isThis ? undefined : `/intake?item=${encodeURIComponent(sd.intakeDisplayId)}`} />
-                    ) : (
-                      <span className="text-ink-muted">Not received</span>
-                    )}
-                    {isThis ? <span className="sr-only">(this item)</span> : null}
-                  </span>
-                </th>
-              );
-            })}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={r.code} className={cn("align-top", i < rows.length - 1 && "border-b border-line", r.kind !== "shared" && rows[i - 1]?.kind === "shared" && "border-t border-line-strong")}>
-              <th scope="row" className="py-0.5 pr-2 pl-4 text-left leading-[1.125rem] font-normal">
-                <span className={cn("flex items-start gap-1.5 min-[1366px]:whitespace-nowrap", r.kind === "caution" ? "font-medium text-warning-fg" : r.kind === "apart" ? "font-medium text-ink" : "text-ink-secondary")}>
-                  {r.kind === "shared" ? (
-                    <Check className="mt-0.5 size-3.5 shrink-0 text-ink-muted" aria-hidden />
-                  ) : r.kind === "apart" ? (
-                    <EqualNot className="mt-0.5 size-3.5 shrink-0 text-ink-secondary" aria-hidden />
-                  ) : (
-                    <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-warning-solid" aria-hidden />
-                  )}
-                  {r.label}
+      {/* Never folded and always before the choices. Columns and headers wrap rather than overflow with larger
+          text or a narrow centre. Pinned while the workspace scrolls (not on short windows). */}
+      <div
+        ref={pinnedRef}
+        data-rel-pinned=""
+        // Bench: pinned to the top edge of the centre pane (it pads its top by 0.5rem while this workspace leads it).
+        className="-top-2 z-[2] rounded-t-lg border-b border-line-strong bg-surface stacked:top-[var(--hlo-chrome-h)] [@media(min-height:35.00125rem)]:sticky"
+      >
+        <table className="w-full table-fixed border-collapse text-sm">
+          <caption className="sr-only">
+            {cand.displayId}: the two submissions side by side, as each submission&apos;s own record states it. First what keeps them apart, then what they share.
+          </caption>
+          {cols}
+          <thead>
+            <tr className={cn("text-left", apart.length && "border-b border-line-strong")}>
+              <th scope="col" className="py-1 pr-2 pl-4 align-middle font-normal">
+                <span id={titleId} className="text-md font-semibold text-ink">
+                  <span className="id-mono">{cand.displayId}</span> <span className="font-normal text-ink-secondary">side by side</span>
                 </span>
               </th>
-              {sides.map((sd) => (
-                <td key={sd.orderId} className="py-0.5 pr-3 leading-[1.125rem] text-ink">
-                  <SideValue value={sd.values[r.code] ?? (r.detail || null)} />
-                </td>
-              ))}
+              {sides.map((sd) => {
+                const isThis = sd.intakeDisplayId === item.displayId;
+                return (
+                  <th key={sd.orderId} scope="col" className="py-1 pr-3 align-middle font-normal">
+                    <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                      <span className="text-base font-semibold whitespace-nowrap text-ink">Part {sd.parts.join(" ") || "?"}</span>
+                      {sd.intakeDisplayId ? (
+                        <LabelRef id={sd.intakeDisplayId} provisional href={isThis ? undefined : `/intake?item=${encodeURIComponent(sd.intakeDisplayId)}`} />
+                      ) : (
+                        <span className="text-ink-muted">Not received</span>
+                      )}
+                      {isThis ? <span className="sr-only">(this item)</span> : null}
+                    </span>
+                  </th>
+                );
+              })}
             </tr>
-          ))}
-        </tbody>
+          </thead>
+          {apart.length ? <tbody>{rowsOf(apart)}</tbody> : null}
+        </table>
+      </div>
+      <table className="w-full table-fixed border-collapse text-sm">
+        <caption className="sr-only">What both submissions share ({shared.length})</caption>
+        {cols}
+        <thead className="sr-only">
+          <tr>
+            <th scope="col">Reason</th>
+            {sides.map((sd) => (
+              <th key={sd.orderId} scope="col">
+                Part {sd.parts.join(" ") || "?"}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>{rowsOf(shared)}</tbody>
       </table>
-      <div className="border-t border-line-strong px-4 pt-2 pb-2.5">
+      {apart.length ? (
+        // Short windows only: what keeps them apart, again, pinned right above the choices (one line under the top bar).
+        <div
+          ref={recapRef}
+          aria-hidden
+          data-rel-recap=""
+          className="top-[var(--hlo-chrome-h)] z-[2] hidden border-y border-line-strong bg-surface px-4 py-1 text-sm [@media(max-height:35rem)]:sticky [@media(max-height:35rem)]:block"
+        >
+          {apart.map((r) => (
+            <p key={r.code} className={cn("flex flex-wrap items-baseline gap-x-2", r.kind === "caution" ? "text-warning-fg" : "text-ink")}>
+              <span className="inline-flex items-baseline gap-1.5 font-medium">
+                {r.kind === "caution" ? (
+                  <TriangleAlert className="size-3.5 shrink-0 self-center text-warning-solid" aria-hidden />
+                ) : (
+                  <EqualNot className="size-3.5 shrink-0 self-center text-ink-secondary" aria-hidden />
+                )}
+                {r.label}:
+              </span>
+              {sides.map((sd) => (
+                <span key={sd.orderId} className="whitespace-nowrap">
+                  <span className="text-ink-secondary">Part {sd.parts.join(" ") || "?"}</span> <SideValue value={sd.values[r.code] ?? (r.detail || null)} />
+                </span>
+              ))}
+            </p>
+          ))}
+        </div>
+      ) : null}
+      <div className={cn("border-t border-line-strong px-4 pt-2 pb-2.5", apart.length && "[@media(max-height:35rem)]:border-t-0")}>
         <RelatedChoices s={s} layout="band" />
       </div>
+      {withRecord ? (
+        // Stacked (one page-scrolling column): the action follows the reason, after the evidence and the choices.
+        <div className="border-t border-line px-4 pt-3 pb-3.5">
+          <RecordDecision s={s} primary />
+        </div>
+      ) : null}
     </section>
   );
 }
-
 
 function Plate({ display, part, orderRef, site, procedure, verification, differing, holdId, accession, isThis }: {
   display: string;
