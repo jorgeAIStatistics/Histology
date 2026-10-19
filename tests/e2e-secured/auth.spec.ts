@@ -17,6 +17,7 @@ import {
   expectNoLabData,
   expireSession,
   labEventsSince,
+  loopbackOnly,
   newWorkstation,
   postCommand,
   providerLogin,
@@ -187,12 +188,24 @@ test.describe("secured mode: sign-in, the server guard, lock, hand-over, re-auth
       await signIn(page, who, "/operations");
       await expect(page).toHaveURL(/\/forbidden$/);
       await expect(page.getByRole("heading", { level: 1, name: "Not allowed" })).toBeVisible();
-      for (const path of BENCH_PAGES.filter((p) => p !== "/demo")) {
+      for (const path of BENCH_PAGES.filter((p) => p !== "/demo" && p !== "/")) {
         await page.goto(path);
         await expect(page, path).toHaveURL(/\/forbidden$/);
         await expect(page.getByRole("heading", { level: 1, name: "Not allowed" })).toBeVisible();
         await expectNoLabData(page);
       }
+      // Stage 6 Phase F: the 403 page offers the top bar's Lock and Sign out (it has no app chrome), and "Go to your start
+      // page" (like "/") leads to their own screen, the audit report, never back to the 403 page. Their top bar offers no
+      // bench screen (every link would be a 403).
+      await expect(page.getByRole("button", { name: "Lock" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+      await page.getByRole("link", { name: "Go to your start page" }).click();
+      await expect(page).toHaveURL(/\/audit$/);
+      await expect(page.getByRole("heading", { level: 1, name: "Audit trail integrity" })).toBeVisible();
+      await expect(page.getByRole("banner").getByRole("navigation", { name: "Main" })).toHaveCount(0);
+      await page.goto("/");
+      await expect(page).toHaveURL(/\/audit$/);
+      await expectNoLabData(page);
       const csv = await page.evaluate(async (actor) => {
         const res = await fetch("/api/worklist/export", { method: "POST", headers: { "Content-Type": "application/json", "X-HLOS-Actor": actor }, body: JSON.stringify({ view: "histotech", filters: {} }) });
         return { status: res.status, type: res.headers.get("content-type") };
@@ -596,6 +609,52 @@ test.describe("secured mode: sign-in, the server guard, lock, hand-over, re-auth
     await expect(second).toHaveTitle(/^Signed out/);
     await expectNoLabData(second, ["Kim Nguyen", "CLR-0453", "Harbor Point", "Tobias"]);
     await second.close();
+  });
+
+  test("the 403 page's Lock locks the session on the server, and its Sign out ends it (a shared workstation is never left signed in)", async ({ page, context, browser }) => {
+    await signIn(page, LOGIN.admin, "/operations");
+    await expect(page).toHaveURL(/\/forbidden$/);
+    await page.getByRole("button", { name: "Lock" }).click();
+    await expect(page).toHaveURL(/\/signin\?reason=locked/);
+    await expect(page.getByRole("heading", { level: 1, name: "Workstation locked" })).toBeVisible();
+    await expect.poll(async () => (await sessionRow(context)).locked_at).not.toBeNull();
+
+    const other = await newWorkstation(browser);
+    const second = await other.newPage();
+    await signIn(second, LOGIN.auditor, "/operations");
+    await expect(second).toHaveURL(/\/forbidden$/);
+    const auditor = await sessionRow(other);
+    await second.getByRole("button", { name: "Sign out" }).click();
+    await second.getByRole("button", { name: "Yes, sign me out" }).click();
+    await expect(second).toHaveURL(/\/signed-out$/);
+    const ended = db().prepare("SELECT revoked_reason FROM auth_session WHERE id_hash = ?").get(auditor.id_hash) as { revoked_reason: string };
+    expect(ended.revoked_reason).toBe("signed_out");
+    await other.close();
+  });
+
+  test("at 200% zoom (720x450) the signed-in top bar keeps its two rows: every control sits inside the bar, the scan target whole", async ({ browser, baseURL }) => {
+    const zoomed = await browser.newContext({ baseURL, viewport: { width: 720, height: 450 }, deviceScaleFactor: 2 });
+    await loopbackOnly(zoomed);
+    const page = await zoomed.newPage();
+    await signIn(page, LOGIN.kim, `/intake?item=${ITEM}`);
+    await expect(sessionGroup(page).getByRole("button", { name: "Sign out" })).toBeVisible();
+    const outside = await page.evaluate(() => {
+      const bar = document.querySelector("header[data-shell-chrome]")!.getBoundingClientRect();
+      const label = document.querySelector('label[for="scan-field"] span[title]') as HTMLElement | null;
+      return {
+        height: Math.round(bar.height),
+        outside: [...document.querySelectorAll<HTMLElement>("header[data-shell-chrome] a[href], header[data-shell-chrome] button, header[data-shell-chrome] input")]
+          .filter((el) => el.getBoundingClientRect().width > 2 && !el.closest(".sr-only"))
+          .filter((el) => {
+            const r = el.getBoundingClientRect();
+            return r.top < bar.top - 0.5 || r.bottom > bar.bottom + 0.5 || r.right > document.documentElement.clientWidth + 0.5;
+          })
+          .map((el) => el.getAttribute("aria-label") ?? el.textContent?.trim() ?? el.tagName),
+        targetCut: !label || label.scrollWidth > label.clientWidth + 1 || label.scrollHeight > label.clientHeight + 1,
+      };
+    });
+    expect(outside).toEqual({ height: 102, outside: [], targetCut: false });
+    await zoomed.close();
   });
 
   test("the identity provider unavailable: sign-in fails closed with a clear message and shows no data", async ({ page, request }) => {

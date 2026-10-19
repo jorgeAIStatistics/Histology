@@ -58,7 +58,10 @@ export const BENCH_GRID =
 export const BENCH_DECISION = "col-start-2 row-start-1 stacked:col-start-auto stacked:row-start-auto";
 export const BENCH_WORK = "col-start-1 row-start-1 stacked:col-start-auto stacked:row-start-auto";
 
-/** The record band (tray, retrieval request): pinned under the top bar in the bench frame only. */
+/**
+ * The record band (tray, retrieval request): pinned under the top bar in the bench frame only. The element carrying
+ * it also carries data-identity-sticky, so focus scrolled into view stays clear of it (globals.css scroll padding).
+ */
 export const BENCH_BAND =
   "sticky top-[var(--hlo-chrome-h)] z-20 flex min-h-[var(--hlo-identity-h)] flex-wrap items-center gap-x-6 gap-y-2 border-b border-line bg-surface px-6 py-2 max-xl:gap-x-4 max-xl:px-4 stacked:static";
 
@@ -69,11 +72,20 @@ export const BENCH_BAND =
  */
 export const STICKY_COLUMN = "sticky top-[calc(var(--hlo-chrome-h)+6.5rem)] max-h-[calc(100vh-17.5rem)] stacked:static stacked:max-h-none";
 
+/** The least of a pinned column's scrolling middle (marked data-fit-scroller) that must stay in view: about one row and its heading. */
+const MIN_MIDDLE_REM = 7.5;
+
 /**
  * Keeps a pinned decision column inside the viewport: its height is what is
  * left below its current top (the record band can wrap to two rows after a
  * scan, and the column gains room once it is pinned). Without script, or in
  * the stacked page where it is not pinned, STICKY_COLUMN's limit applies.
+ * It never squeezes the scrolling middle (the rows to act on) below
+ * MIN_MIDDLE_REM: with larger browser text the column reaches below the fold
+ * until the page is scrolled and it is pinned; and when even the pinned column
+ * cannot hold its heading, that much of the middle and its action (larger text
+ * on a short screen), it is not pinned at all and scrolls with the page, whole,
+ * instead of hiding every row under its cue.
  */
 export function useFitColumn(ref: RefObject<HTMLElement | null>) {
   useEffect(() => {
@@ -82,11 +94,30 @@ export function useFitColumn(ref: RefObject<HTMLElement | null>) {
     let frame = 0;
     const fit = () => {
       frame = 0;
+      el.style.position = "";
       if (getComputedStyle(el).position !== "sticky") {
         el.style.maxHeight = "";
         return;
       }
-      el.style.maxHeight = `${Math.max(280, Math.floor(window.innerHeight - el.getBoundingClientRect().top - 16))}px`;
+      let floor = 280;
+      const middle = el.querySelector<HTMLElement>("[data-fit-scroller]");
+      if (middle) {
+        const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+        // Heading and action as laid out now, plus the middle's content up to the minimum, plus the cue when the rest is
+        // cut. Counted the same whether the cue shows now or not, so pinning never flips back and forth.
+        const min = MIN_MIDDLE_REM * rem;
+        const cue = el.querySelector<HTMLElement>("[data-cut-cue]")?.offsetHeight ?? 0;
+        const cueIfCut = middle.scrollHeight > min ? Math.max(cue, 2.5 * rem) : 0;
+        const needed = Math.ceil(el.offsetHeight - cue - middle.clientHeight + Math.min(middle.scrollHeight, min) + cueIfCut);
+        const pinned = Math.floor(window.innerHeight - (parseFloat(getComputedStyle(el).top) || 0) - 16);
+        if (needed > pinned) {
+          el.style.position = "static";
+          el.style.maxHeight = "none";
+          return;
+        }
+        floor = Math.max(floor, needed);
+      }
+      el.style.maxHeight = `${Math.max(floor, Math.floor(window.innerHeight - el.getBoundingClientRect().top - 16))}px`;
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(fit);
@@ -96,12 +127,15 @@ export function useFitColumn(ref: RefObject<HTMLElement | null>) {
     window.addEventListener("resize", schedule);
     const ro = new ResizeObserver(schedule);
     ro.observe(document.body);
+    // The column itself too: its cue and action can change height after a scan (the floor follows them).
+    ro.observe(el);
     return () => {
       cancelAnimationFrame(frame);
       window.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", schedule);
       ro.disconnect();
       el.style.maxHeight = "";
+      el.style.position = "";
     };
   }, [ref]);
 }
@@ -204,6 +238,7 @@ export function CutCue({ cut, noun, describe }: { cut: Cut; noun: [string, strin
   return (
     <button
       type="button"
+      data-cut-cue
       onClick={show}
       className="flex min-h-[max(2rem,var(--hlo-target-min))] shrink-0 items-center justify-center gap-1.5 border-t border-line text-sm font-medium text-brand hover:bg-brand-50"
     >

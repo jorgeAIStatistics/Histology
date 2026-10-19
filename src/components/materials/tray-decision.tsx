@@ -360,7 +360,7 @@ export function TrayDecision({
       </div>
       {/* The items scroll inside the column when they are many; the headline and the action stay in view, and a cut item is covered and counted. */}
       <div className="relative flex min-h-0 flex-col">
-        <div ref={items} className="flex min-h-0 flex-col gap-3 overflow-y-auto px-4 pb-4">
+        <div ref={items} data-fit-scroller className="flex min-h-0 flex-col gap-3 overflow-y-auto px-4 pb-4">
           {!view.isActive && tray.close_note ? (
             <p data-cut-unit className="text-sm text-ink-secondary">
               <IdText text={tray.close_note} />

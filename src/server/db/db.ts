@@ -54,7 +54,7 @@ export function getDb(): DB {
   if (g.__hlosDb && g.__hlosDbPath === file && g.__hlosDb.open) return g.__hlosDb;
   // Outside demo mode a missing database is never created silently: an empty database would start with no staff, no
   // history and a healthy-looking status. Creating one is an explicit initialization step.
-  if (!isDemoMode() && file !== ":memory:" && !fs.existsSync(file) && process.env.HLOS_SEED_SYNTHETIC !== "1" && process.env.HLOS_DB_ALLOW_CREATE !== "1") {
+  if (!isDemoMode() && file !== ":memory:" && !fs.existsSync(/* turbopackIgnore: true */ file) && process.env.HLOS_SEED_SYNTHETIC !== "1" && process.env.HLOS_DB_ALLOW_CREATE !== "1") {
     throw new Error(`No database at ${file}. Outside demo mode an empty database is not created automatically; set HLOS_DB_ALLOW_CREATE=1 once to initialize it.`);
   }
   const db = openDatabase(file);

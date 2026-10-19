@@ -12,7 +12,7 @@ import { useCan, isReadOnlyRole, useActor } from "@/lib/client/shell-context";
 import { CommandButton } from "@/components/ui/command-button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Table, TBody, TD, TH, THead, TR, TableCount } from "@/components/ui/table";
-import { Tabs } from "@/components/ui/tabs";
+import { TabPanel, Tabs } from "@/components/ui/tabs";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { PageBody } from "@/components/ui/page-header";
 import { DoctorChip } from "@/components/domain/doctor-chip";
@@ -233,111 +233,114 @@ function BenchQueue({ rows, now }: { rows: QueueRow[]; now: string }) {
         />
         <TableCount shown={shown.length} total={rows.length} noun="parts" />
       </div>
-      <Table
-        caption="Grossing queue, grouped by who acts next: records a grosser can move now, held parts, parts awaiting grossing, then approved parts."
-        scroll="page"
-        // Narrower than 1024px (a bench screen at 200% zoom) the owner folds into the next-step cell and the columns relax,
-        // so every column still fits without sideways scrolling.
-        wrapperClassName="max-xl:[&_[data-priority='3']]:hidden max-[68.75rem]:[&_[data-priority='2']]:hidden max-[63.99875rem]:[&_[data-col='owner']]:hidden"
-      >
-        <THead>
-          <tr>
-            <TH stickyFirst className="max-xl:min-w-[13.75rem] max-[63.99875rem]:min-w-0">
-              Part
-            </TH>
-            <TH>Site, procedure</TH>
-            <TH priority={2}>Dermatopathologist</TH>
-            <TH>Gross record</TH>
-            <TH>Next step</TH>
-            <TH data-col="owner">Owner</TH>
-            <TH priority={3}>Other parts of the case</TH>
-          </tr>
-        </THead>
-        {groups.length === 0 ? (
-          <TBody>
+      {/* The filter tabs control this panel (their aria-controls points here). */}
+      <TabPanel idBase="gross-filter" tabKey={filter} active className="min-w-0">
+        <Table
+          caption="Grossing queue, grouped by who acts next: records a grosser can move now, held parts, parts awaiting grossing, then approved parts."
+          scroll="page"
+          // Narrower than 1024px (a bench screen at 200% zoom) the owner folds into the next-step cell and the columns relax,
+          // so every column still fits without sideways scrolling.
+          wrapperClassName="max-xl:[&_[data-priority='3']]:hidden max-[68.75rem]:[&_[data-priority='2']]:hidden max-[63.99875rem]:[&_[data-col='owner']]:hidden"
+        >
+          <THead>
             <tr>
-              <td colSpan={COLS} className="px-3 py-6 text-center text-sm text-ink-secondary">
-                Nothing in this filter. Choose another filter above.
-              </td>
+              <TH stickyFirst className="max-xl:min-w-[13.75rem] max-[63.99875rem]:min-w-0">
+                Part
+              </TH>
+              <TH>Site, procedure</TH>
+              <TH priority={2}>Dermatopathologist</TH>
+              <TH>Gross record</TH>
+              <TH>Next step</TH>
+              <TH data-col="owner">Owner</TH>
+              <TH priority={3}>Other parts of the case</TH>
             </tr>
-          </TBody>
-        ) : null}
-        {groups.map((g) => (
-          <TBody key={g.key}>
-            <tr>
-              <th colSpan={COLS} scope="colgroup" className="border-b border-line bg-surface-subtle px-3 pt-3 pb-1.5 text-left">
-                <span className="text-sm font-semibold text-ink">{g.title}</span>{" "}
-                <span className="text-sm font-normal text-ink-muted">
-                  ({g.rows.length}) {g.note}
-                </span>
-              </th>
-            </tr>
-            {g.rows.map((r) => {
-              index += 1;
-              const i = index;
-              const next = nextStep(r);
-              const href = `/grossing?part=${encodeURIComponent(r.ref)}`;
-              const amber = r.state === "needs_clarification";
-              const selected = i === sel;
-              const held = r.holds.length > 0;
-              return (
-                <TR key={r.partId} interactive selected={selected} hold={held} onClick={() => open(r)}>
-                  <TD stickyFirst className="py-1.5">
-                    <Link href={href} onClick={(e) => e.stopPropagation()} className="rounded-sm text-ink underline-offset-2 hover:underline">
-                      <span className="id-mono font-semibold">{r.accessionNumber}</span> <span className="font-medium">Part {r.designation}</span>
-                    </Link>
-                    {r.priority === "rush" ? <span className="ml-1.5 text-xs font-semibold text-danger-fg">Rush</span> : null}
-                    {/* Below 1280px the "Other parts" column folds into the part cell. */}
-                    {r.otherParts.length ? (
-                      <ul className="mt-0.5 flex flex-wrap gap-x-2 text-sm whitespace-normal text-ink-secondary min-[80rem]:hidden" aria-label="Other parts of the case">
-                        {r.otherParts.map((o) => (
-                          <li key={o.designation} className="inline-flex items-center gap-1">
-                            <PartStateIcon state={o.state} className="size-3.5" />
-                            <span className="font-medium text-ink">{o.designation}</span> {partShort(o.state)}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                  </TD>
-                  <TD wrap className="min-w-[9rem] py-1.5 max-[63.99875rem]:min-w-[7rem]">
-                    {r.site}, {r.procedure ? (PROCEDURE[r.procedure as keyof typeof PROCEDURE]?.toLowerCase() ?? r.procedure) : "procedure unknown"}
-                  </TD>
-                  <TD priority={2}>
-                    <DoctorChip name={r.pathologist?.name ?? null} color={r.pathologist?.color} compact shortName={shortDoctor(r.pathologist?.name)} />
-                  </TD>
-                  <TD wrap className="min-w-[10rem] py-1.5 max-[63.99875rem]:min-w-[8rem]">
-                    <span className={cn("inline-flex items-start gap-1.5", amber ? "font-semibold text-warning-fg" : r.state === "approved_acknowledged" ? "text-ink-muted" : "text-ink")}>
-                      <PartStateIcon state={r.state} className="mt-px" />
-                      {recordText(r)}
-                    </span>
-                  </TD>
-                  <TD wrap className="min-w-[13rem] py-1.5 text-ink-secondary max-[63.99875rem]:min-w-[9rem]">
-                    <IdText text={next.what} />
-                    <span className="mt-0.5 block text-ink min-[64rem]:hidden">Owner: {next.who}</span>
-                  </TD>
-                  <TD data-col="owner" className="text-ink">
-                    {next.who}
-                  </TD>
-                  <TD priority={3} wrap className="min-w-[9rem]">
-                    {r.otherParts.length ? (
-                      <ul className="flex flex-wrap gap-x-2.5 gap-y-0.5" aria-label="Other parts of the case">
-                        {r.otherParts.map((o) => (
-                          <li key={o.designation} className="inline-flex items-center gap-1 text-ink-secondary">
-                            <PartStateIcon state={o.state} className="size-3.5" />
-                            <span className="font-medium text-ink">{o.designation}</span> {partShort(o.state)}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <span className="text-ink-muted">None</span>
-                    )}
-                  </TD>
-                </TR>
-              );
-            })}
-          </TBody>
-        ))}
-      </Table>
+          </THead>
+          {groups.length === 0 ? (
+            <TBody>
+              <tr>
+                <td colSpan={COLS} className="px-3 py-6 text-center text-sm text-ink-secondary">
+                  Nothing in this filter. Choose another filter above.
+                </td>
+              </tr>
+            </TBody>
+          ) : null}
+          {groups.map((g) => (
+            <TBody key={g.key}>
+              <tr>
+                <th colSpan={COLS} scope="colgroup" className="border-b border-line bg-surface-subtle px-3 pt-3 pb-1.5 text-left">
+                  <span className="text-sm font-semibold text-ink">{g.title}</span>{" "}
+                  <span className="text-sm font-normal text-ink-muted">
+                    ({g.rows.length}) {g.note}
+                  </span>
+                </th>
+              </tr>
+              {g.rows.map((r) => {
+                index += 1;
+                const i = index;
+                const next = nextStep(r);
+                const href = `/grossing?part=${encodeURIComponent(r.ref)}`;
+                const amber = r.state === "needs_clarification";
+                const selected = i === sel;
+                const held = r.holds.length > 0;
+                return (
+                  <TR key={r.partId} interactive selected={selected} hold={held} onClick={() => open(r)}>
+                    <TD stickyFirst className="py-1.5">
+                      <Link href={href} onClick={(e) => e.stopPropagation()} className="rounded-sm text-ink underline-offset-2 hover:underline">
+                        <span className="id-mono font-semibold">{r.accessionNumber}</span> <span className="font-medium">Part {r.designation}</span>
+                      </Link>
+                      {r.priority === "rush" ? <span className="ml-1.5 text-xs font-semibold text-danger-fg">Rush</span> : null}
+                      {/* Below 1280px the "Other parts" column folds into the part cell. */}
+                      {r.otherParts.length ? (
+                        <ul className="mt-0.5 flex flex-wrap gap-x-2 text-sm whitespace-normal text-ink-secondary min-[80rem]:hidden" aria-label="Other parts of the case">
+                          {r.otherParts.map((o) => (
+                            <li key={o.designation} className="inline-flex items-center gap-1">
+                              <PartStateIcon state={o.state} className="size-3.5" />
+                              <span className="font-medium text-ink">{o.designation}</span> {partShort(o.state)}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </TD>
+                    <TD wrap className="min-w-[9rem] py-1.5 max-[63.99875rem]:min-w-[7rem]">
+                      {r.site}, {r.procedure ? (PROCEDURE[r.procedure as keyof typeof PROCEDURE]?.toLowerCase() ?? r.procedure) : "procedure unknown"}
+                    </TD>
+                    <TD priority={2}>
+                      <DoctorChip name={r.pathologist?.name ?? null} color={r.pathologist?.color} compact shortName={shortDoctor(r.pathologist?.name)} />
+                    </TD>
+                    <TD wrap className="min-w-[10rem] py-1.5 max-[63.99875rem]:min-w-[8rem]">
+                      <span className={cn("inline-flex items-start gap-1.5", amber ? "font-semibold text-warning-fg" : r.state === "approved_acknowledged" ? "text-ink-muted" : "text-ink")}>
+                        <PartStateIcon state={r.state} className="mt-px" />
+                        {recordText(r)}
+                      </span>
+                    </TD>
+                    <TD wrap className="min-w-[13rem] py-1.5 text-ink-secondary max-[63.99875rem]:min-w-[9rem]">
+                      <IdText text={next.what} />
+                      <span className="mt-0.5 block text-ink min-[64rem]:hidden">Owner: {next.who}</span>
+                    </TD>
+                    <TD data-col="owner" className="text-ink">
+                      {next.who}
+                    </TD>
+                    <TD priority={3} wrap className="min-w-[9rem]">
+                      {r.otherParts.length ? (
+                        <ul className="flex flex-wrap gap-x-2.5 gap-y-0.5" aria-label="Other parts of the case">
+                          {r.otherParts.map((o) => (
+                            <li key={o.designation} className="inline-flex items-center gap-1 text-ink-secondary">
+                              <PartStateIcon state={o.state} className="size-3.5" />
+                              <span className="font-medium text-ink">{o.designation}</span> {partShort(o.state)}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <span className="text-ink-muted">None</span>
+                      )}
+                    </TD>
+                  </TR>
+                );
+              })}
+            </TBody>
+          ))}
+        </Table>
+      </TabPanel>
       <p className="text-sm text-ink-muted">
         J/K or arrow keys move, Enter opens. Times are demo-clock times (ET). Now: <Timestamp iso={now} now={now} />.
       </p>

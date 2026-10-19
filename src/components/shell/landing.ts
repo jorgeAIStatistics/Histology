@@ -12,6 +12,10 @@ export function landingPathFor(role: Role): string {
       return "/worklist?view=grossing";
     case "histotech":
       return "/worklist?view=histotech";
+    // No bench screen (src/lib/roles.ts): their one screen is the audit report, never the 403 page.
+    case "lab_admin":
+    case "auditor":
+      return "/audit";
     default:
       return "/operations";
   }

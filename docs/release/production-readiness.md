@@ -1,82 +1,58 @@
-# Production readiness (release candidate, Stage 5)
+# Production readiness (Stage 6)
 
-*2026-10-19. This is a **synthetic demonstration**, not a product cleared for clinical use. "Verified" below means verified by automated tests and the development team's own review on synthetic data. It is not clinical validation, not a regulatory assessment, and not an independent security assessment. Nothing here claims HIPAA, CLIA, CAP, FDA or any other compliance. Test counts and runs are in [verification.md](verification.md).*
+*2026-10-19, branch `stage-6-production-foundation`. Histology Lab OS is a **synthetic demonstration with a production-grade foundation**, not a system cleared for clinical use.*
 
-## 1. Demonstrated and verified
-Each item is covered by automated tests that pass on a clean production build.
+- **"Verified"** means verified by automated tests and the development team's review on synthetic data in this environment.
+- It is **not** clinical validation, not an independent security assessment, and not a regulatory assessment.
+- **No HIPAA, CLIA, CAP, FDA or other compliance is claimed.**
+
+Test counts and runs are in [verification-stage6.md](verification-stage6.md).
+
+## VERIFIED
+Covered by automated tests that pass on a clean production build.
 
 | Capability | Evidence |
 |---|---|
-| One write path: input validation, server-side role check, one transaction, append-only audit with before/after and reason | `src/server/commands/registry.ts`; `tests/domain/*` |
-| Scoped idempotency: owner, lab scope, command and payload fingerprint; 24-hour expiry; atomic under two connections; the stored result is never disclosed to another actor | `src/server/core/idempotency.ts`; `tests/domain/security.test.ts`; `tests/e2e/journeys.spec.ts` (repeated request in every journey) |
-| Fail-closed runtime mode: a locked build refuses changes (401), the role switch (403), demo reset, design previews and the presenter console (404); the source pump is off | `src/server/runtime-mode.ts`, `src/app/demo/gate.ts`; `security.test.ts`, `presenter.test.ts` |
-| Optimistic concurrency on edited records, plus state guards on event-style transitions (27 versioned lab commands, 48 state-guarded) | [mutation-audit.md](mutation-audit.md); `integrity.test.ts`; `guards.spec.ts`; journeys (stale state) |
-| Human control of identity, relationships, holds, routing exceptions, gross approval and tray completion. Nothing merges orders or patients. | `integrity.test.ts`, `intake.test.ts`; `director-journey.spec.ts` steps 2–3; journeys 2–3 |
-| Scoped holds that block named transitions only, with the next step and owner computed in one place (Operations, Case, Gross and Clarify agree) | `src/server/queries/hold-next.ts`; `consistency.test.ts` |
-| A source amendment to an issued part opens a correction review and holds that part | `src/server/domain/sourceImport.ts`, `correction.ts`; `consistency.test.ts` |
-| Chain of custody: a block's location is the last confirmed one; delivery records a hand-over, not a location | `src/server/domain/retrieval.ts`; `consistency.test.ts`; journey 5 |
-| Honest unknowns: a missing manifest shows "Unknown"; no doctor is guessed for an office with no rule; "Sent on tray" records no pathologist receipt | `director-journey.spec.ts` steps 1 and 6; journeys 1 and 4 |
-| A connector outage turns screens stale and queues messages; restoring imports each one exactly once | `guards.spec.ts` check 13; journeys (unavailable dependency) |
-| Presenter isolation: no presenter control on any bench screen; world events, clock, role and outages only on `/demo` | `presenter-console.spec.ts`; `presenter.test.ts` |
-| The Intake bench works by keyboard and scanner at 1366×768, 1440, 1024, 200% zoom and 125% text (REL-0112 included) | `tests/e2e/intake-keyboard.spec.ts` |
+| **Fail-closed runtime modes.** `demo` (synthetic data, demo role switch) and `secured` (OIDC sign-in required for every page, read API and command). `locked` is anything else, and shows no data. | `src/server/runtime-mode.ts`, `src/server/auth/config.ts`; `tests/domain/auth.test.ts`; locked-build curl check |
+| **OIDC sign-in.** Authorization code flow with PKCE, state, nonce, and a forced login at every sign-in. Session ids are stored hashed. Idle lock, absolute expiry, sign-out, workstation hand-over (`ACTOR_MISMATCH`), re-authentication for sensitive commands. Exercised end to end against a real local OIDC provider (`oidc-provider`). | `src/server/auth/*`; `tests/domain/oidc.test.ts`; `tests/e2e-secured/auth.spec.ts` |
+| **Server-side authorization of reads and writes.** `view.*` permissions for every page, action permissions for every command, and lab scope. `lab_admin` and `auditor` have no clinical access. `identity.resolve` gates identity and source-conflict decisions. | `src/lib/roles.ts`, `src/server/auth/guard.ts`; `auth.test.ts`, secured suite |
+| **Demo isolation.** The demo cookie, presenter commands, fixtures, reset and the source pump never work in secured mode. Demo mode refuses any database that is not the synthetic one. | `auth.test.ts`, `demo-db-guard.test.ts`, `presenter.test.ts` |
+| **Scoped idempotency and receipt maintenance.** Expired receipts become tombstones that are still refused; tombstones are purged after retention, in bounded batches. | `security.test.ts`, `receipts.test.ts` |
+| **Tamper-evident audit.** An HMAC chain seals every event. Verification detects edits, deletions, reordering, forged seals and unsealed events. External anchors catch an insider rewrite before the last anchor. | `src/server/core/audit-seal.ts`; `audit-seal.test.ts` |
+| **Traceability.** Actor, role, permission, session reference, record references, before/after, reason, correlation id and source reference. | `traceability.test.ts` |
+| **No patient name, birth date or MRN in audit summaries or before/after values.** Typed reasons are excluded. | `audit-phi.test.ts` |
+| **Structured logs with redaction.** Generic server errors carry a correlation id. | `log.test.ts`, `privacy.test.ts` |
+| **Integration boundary.** A versioned, signed contract. Duplicate, stale, conflicting, invalid, outage and recovery cases are all handled; accessioned identity is never changed by a message; provenance (source event time against receipt time) is kept. | `src/server/integration/*`; `tests/contract/*` (73), `tests/e2e/integration.spec.ts` |
+| **Backup and restore.** An encrypted backup restores to a new path, and integrity, foreign keys, counts, schema and the audit chain are verified. Tampering is detected. | `scripts/backup.ts`, `scripts/restore.ts`; `backup.test.ts`; drill in [backup-restore.md](backup-restore.md) |
+| **Health and error recovery.** Health is healthy, degraded or unavailable without secrets. The client never reports unconfirmed success. A retry keeps its key. Storage failures are typed. | `health.test.ts`, `recovery.test.ts`, `tests/e2e/recovery.spec.ts` |
+| **Bench workflows (Stage 5 suites).** Holds, readiness, custody, grossing confirmations and presenter isolation. | the demo browser suite (all journeys and guards) |
+| **Accessibility, automated.** axe (WCAG 2.2 AA tags), 0 violations on the listed screens; keyboard and focus after errors; no WCAG 2.5.8 target failures. | `tests/e2e/accessibility.spec.ts`, `target-size.spec.ts` |
 
-## 2. Implemented, not yet verified enough
-| Item | What is missing |
-|---|---|
-| Layout resilience on screens other than Intake under browser text-size preferences | The top bar was measured at 16, 20 and 24px default text, 1024–1920px wide (126 checks, 0 overflow; development measurement in the Stage 5 log). Only Intake has automated resilience tests. |
-| Print output of the worklist snapshot | The e2e test checks the generation time, version and data age in print media. Paper output on real printers has not been checked. |
-| Correlation ids across a whole user flow | They are per HTTP request. A multi-request flow (for example draft then send) has no shared parent id. |
-| Receipt expiry | Tested with a backdated receipt. There is no cleanup job, so receipts accumulate. |
-| Source-conflict review UI | Domain tests cover it. There is no browser test, because only the importer can create the state. |
-| Accessibility | Keyboard and focus are tested on Intake and in the journeys. There has been no screen-reader session or audit by assistive-technology users. |
+## IMPLEMENTED BUT NOT VERIFIED (enough)
+- **Behaviour with a real identity provider** (Entra ID, Okta, Auth0): claims, MFA (`amr`/`acr`), logout and clock skew. Tested only against `oidc-provider`.
+- **HSTS and `Secure` cookies behind a real TLS proxy.** Unit-checked from configuration; no TLS deployment exists.
+- **Per-client rate limiting of sign-in attempts.** Left to the reverse proxy.
+- **Audit-chain verification on a very large trail.** Every verification is a full pass; the cost is not measured at scale.
+- **Concurrency beyond a single SQLite file on one host.**
 
-## 3. Simulated (works only against simulators)
-- **Source systems.** EMA-SIM and OTHER-EHR-SIM: orders, amendments, cancellations, accession numbers, acknowledgements (`src/server/sim/*`).
-- **Courier and container contents.** These include the "unpack" scan path.
-- **Label and cassette printers.** Acknowledged, completed, timeout leading to an unknown outcome, and failed.
-- **Office notifications and answers.**
-- **Drafting and extraction assistant.** Fixed rules, not a model.
-- **Demo clock.**
-- **Barcode scanners.** A keyboard-wedge emulation through the scan field.
+## SIMULATED
+- **Order, accession and acknowledgement source.** Simulated EMA-SIM and OTHER-EHR-SIM, the HTTP simulator and the in-process pump.
+- **Label and cassette printers, office notifications, courier contents, scanners** (keyboard wedge), the drafting assistant and the demo clock.
+- **All patient, order and case data.**
 
-Each simulated surface is labelled "simulated" on screen. Boundaries are in [integration-readiness.md](integration-readiness.md).
+## PLANNED (designed, not built)
+- Instrument events, IHC quality control, reagent lots, live operational views and evaluated operational predictions: see [stage7-proposal.md](stage7-proposal.md).
+- Provider-group role mapping, multi-lab data partitioning, SQLCipher, and an independent anchoring service.
 
-## 4. Planned (designed, not built)
-- Instrument events from processors, stainers and coverslippers, through middleware.
-- Real label templates validated on stock after processing.
-- A retention and cleanup job for receipts and exports.
-- A worklist downtime procedure built around the printed snapshot.
+## BLOCKED (needs an external decision, credentials or environment)
+1. A real identity provider tenant, app registration and claims agreement. Production activation stays off until then.
+2. A deployment environment: TLS, a secret store, encrypted volumes, off-host backups, monitoring.
+3. A real LIS/EHR interface (contract, test environment, interface engine); real printers, scanners and instruments.
+4. An independent penetration test and threat-model review.
 
-## 5. Production-blocking (must exist before any real patient data)
-1. **Authentication and authorization.** No sign-in exists; "Acting as" is a demo cookie. Needed:
-   - an identity provider;
-   - sessions with bench auto sign-out;
-   - administrator-managed roles;
-   - re-authentication for consequential actions.
-2. **Audit integrity beyond SQLite triggers.** Needed:
-   - tamper evidence anchored outside the database;
-   - trusted time;
-   - a read-access log.
-3. **Data protection.** Needed:
-   - encryption at rest and in transit, with key management;
-   - minimum necessary display of patient data on bench screens;
-   - de-identified exports.
-4. **Retention, deletion, backup and restore.** None exist; the demo reset deletes everything.
-5. **Real integrations.** Each needs a contract, a test environment, error handling, monitoring and its own validation.
-6. **Validation by the laboratory.** Needed:
-   - a written intended use;
-   - workflow validation on the laboratory's own specimens and labels;
-   - the laboratory's quality-system sign-off.
-
-   Automated tests are not a substitute.
-7. **Security testing.** Needed:
-   - a threat model;
-   - dependency and container scanning;
-   - an independent penetration test.
-8. **Operations.** Needed:
-   - hosting;
-   - monitoring and alerting (idempotency conflicts, connector failures);
-   - an incident process;
-   - multi-user SQLite limits replaced or load-tested.
-
-Details are in [security-privacy.md](security-privacy.md).
+## REQUIRES HUMAN VALIDATION
+- **Screen-reader sessions** (NVDA and VoiceOver): the checklist in [screen-reader-checklist.md](screen-reader-checklist.md) has not been run.
+- **Paper printing** of the worklist on the laboratory's printers: only print-to-PDF has been checked ([print-verification.md](print-verification.md)).
+- **Touchscreen ergonomics** on the laboratory's actual hardware ([touch-targets.md](touch-targets.md)).
+- **Workflow validation** by the laboratory on its own specimens, labels and staff, under its quality system.
+- **Role assignments, retention periods, RPO and RTO**, decided by the laboratory director and IT.

@@ -9,6 +9,24 @@ import { useScan } from "@/lib/client/scan";
 import { TONE_CLASSES, TONE_ICON } from "@/components/ui/tone";
 import { IdText } from "@/components/domain/id-text";
 
+/** The scan target's words, with each hyphenated identifier (TRY-M-03, RR-0192) kept on one line. */
+function TargetLabel({ label }: { label: string }) {
+  const parts = label.split(/(\S+-\S+)/);
+  return (
+    <>
+      {parts.map((part, i) =>
+        i % 2 === 1 ? (
+          <span key={i} className="whitespace-nowrap">
+            {part}
+          </span>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+}
+
 /**
  * Global scan / search field (spec §5.1, §7). Same place on every page, 40px
  * tall, 20px mono input, prefix chip with the current scan target.
@@ -30,6 +48,8 @@ export function ScanField() {
   const [suffix] = usePref(PREFS.scannerSuffix);
   const resultId = useId();
   const lastAt = useRef(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const lineRef = useRef<HTMLDivElement>(null);
 
   const result = scan.result;
 
@@ -56,6 +76,30 @@ export function ScanField() {
     };
   }, [result]);
 
+  // Keyboard focus never sits under the result line (WCAG 2.4.11): when focus moves to a control of the page that the
+  // line covers (the screen's tabs under it, at 200% zoom all of them), the line closes, as Esc or its X would close it.
+  // The result was already announced; focus within the scan field and the line itself leaves it open.
+  useEffect(() => {
+    if (!visible) return;
+    let frame = 0;
+    const onFocusIn = (e: FocusEvent) => {
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      if (!target || wrapRef.current?.contains(target)) return;
+      cancelAnimationFrame(frame);
+      // After the browser has scrolled the focused control into view.
+      frame = requestAnimationFrame(() => {
+        const line = lineRef.current?.getBoundingClientRect();
+        const r = target.getBoundingClientRect();
+        if (line && r.left < line.right && r.right > line.left && r.top < line.bottom && r.bottom > line.top) setVisible(false);
+      });
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("focusin", onFocusIn);
+    };
+  }, [visible]);
+
   // "Show all" only when the two-line clamp actually hides text (any width, any message).
   useLayoutEffect(() => {
     const el = messageRef.current;
@@ -75,7 +119,7 @@ export function ScanField() {
   const c = TONE_CLASSES[tone];
 
   return (
-    <div className="relative min-w-[200px] max-w-[560px] flex-1 max-lg:max-w-none">
+    <div ref={wrapRef} className="relative min-w-[200px] max-w-[560px] flex-1 max-lg:max-w-none">
       <div
         className={cn(
           "flex h-10 items-stretch overflow-hidden rounded-md border border-line-strong bg-surface",
@@ -91,7 +135,11 @@ export function ScanField() {
         >
           <ScanLine className="size-4 shrink-0" aria-hidden />
           <span className="sr-only">Scan target: </span>
-          <span className="truncate">{scan.target.label}</span>
+          {/* Where the field is narrow (1024px, a signed-in bar) the target takes a second line instead of cutting its
+              identifier ("Check block for RR-01…"); an identifier never splits across the two lines. */}
+          <span className="line-clamp-2 leading-tight" title={scan.target.label}>
+            <TargetLabel label={scan.target.label} />
+          </span>
         </label>
         <input
           id="scan-field"
@@ -137,6 +185,7 @@ export function ScanField() {
 
       {visible && result ? (
         <div
+          ref={lineRef}
           id={resultId}
           className={cn(
             "animate-rise-in absolute left-0 right-0 top-[calc(100%+4px)] z-50 flex items-start gap-2 rounded-lg border bg-surface px-2.5 py-1.5 text-sm shadow-3",

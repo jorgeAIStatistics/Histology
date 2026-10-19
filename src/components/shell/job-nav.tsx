@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChartColumn, Inbox, LayoutDashboard, ListChecks, MessageSquareWarning, Microscope, Printer, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { roleCan, type ViewPermission } from "@/lib/roles";
+import { useActor } from "@/lib/client/shell-context";
 import type { NavCounts } from "@/lib/client/types";
 import { Tooltip } from "@/components/ui/tooltip";
 
@@ -11,6 +13,8 @@ interface JobLink {
   href: string;
   label: string;
   icon: LucideIcon;
+  /** The screen's view permission (src/lib/roles.ts): a role without it is not offered the link. */
+  view: ViewPermission;
   /** Count key and how it is read aloud ("Clarify, 7 open"). */
   count?: { key: keyof NavCounts; phrase: (n: number) => string };
 }
@@ -20,19 +24,20 @@ const JOBS: { job: string; items: JobLink[] }[] = [
   {
     job: "Receive and reconcile",
     items: [
-      { href: "/intake", label: "Intake", icon: Inbox, count: { key: "intake", phrase: (n) => `${n} to review` } },
-      { href: "/clarifications", label: "Clarify", icon: MessageSquareWarning, count: { key: "clarifications", phrase: (n) => `${n} open` } },
+      { href: "/intake", label: "Intake", icon: Inbox, view: "view.intake", count: { key: "intake", phrase: (n) => `${n} to review` } },
+      { href: "/clarifications", label: "Clarify", icon: MessageSquareWarning, view: "view.clarifications", count: { key: "clarifications", phrase: (n) => `${n} open` } },
     ],
   },
-  { job: "Gross and enter", items: [{ href: "/grossing", label: "Gross", icon: Microscope }] },
+  { job: "Gross and enter", items: [{ href: "/grossing", label: "Gross", icon: Microscope, view: "view.grossing" }] },
   {
     job: "Bench histology",
     items: [
-      { href: "/worklist", label: "Worklist", icon: ListChecks },
+      { href: "/worklist", label: "Worklist", icon: ListChecks, view: "view.worklist" },
       {
         href: "/materials",
         label: "Materials",
         icon: Printer,
+        view: "view.materials",
         count: { key: "materials", phrase: (n) => `${n} ${n === 1 ? "needs" : "need"} attention` },
       },
     ],
@@ -44,9 +49,10 @@ const JOBS: { job: string; items: JobLink[] }[] = [
         href: "/operations",
         label: "Operations",
         icon: LayoutDashboard,
+        view: "view.operations",
         count: { key: "operations", phrase: (n) => `${n} ${n === 1 ? "hold" : "holds"} open` },
       },
-      { href: "/insights", label: "Insights", icon: ChartColumn },
+      { href: "/insights", label: "Insights", icon: ChartColumn, view: "view.insights" },
     ],
   },
 ];
@@ -110,9 +116,14 @@ function JobNavLink({ item, active, count }: { item: JobLink; active: boolean; c
  */
 export function JobNav({ counts }: { counts: NavCounts }) {
   const pathname = usePathname() ?? "/";
+  const { role } = useActor();
+  // Only the screens this role may open (every bench role: all of them; the laboratory administrator and the
+  // auditor: none, so no link leads to the 403 page).
+  const jobs = JOBS.map((g) => ({ ...g, items: g.items.filter((item) => roleCan(role, item.view)) })).filter((g) => g.items.length);
+  if (!jobs.length) return null;
   return (
     <nav aria-label="Main" className="flex min-w-0 shrink-0 items-center">
-      {JOBS.map((group, gi) => (
+      {jobs.map((group, gi) => (
         <div key={group.job} role="group" aria-label={group.job} className={cn("flex items-center gap-0.5", gi > 0 && "ml-1 border-l border-shell-line pl-1")}>
           {group.items.map((item) => (
             <JobNavLink key={item.href} item={item} active={isActivePath(pathname, item.href)} count={item.count ? counts[item.count.key] : null} />

@@ -287,7 +287,7 @@ function PickStop({ group, items, total, now, requestDisplayId, canAct }: { grou
 function RequestBand({ detail, now, mismatches }: { detail: RetrievalDetail; now: string; mismatches: number }) {
   const req = detail.request;
   return (
-    <section aria-label="Current retrieval request" className={BENCH_BAND}>
+    <section aria-label="Current retrieval request" data-identity-sticky className={BENCH_BAND}>
       <div className="flex shrink-0 flex-col justify-center rounded-md border-[1.5px] border-ink bg-surface py-1 pr-3 pl-2.5 leading-5">
         <p className="flex items-baseline gap-1.5 whitespace-nowrap">
           <span className="text-sm font-medium text-ink-muted">Retrieval request</span>
@@ -436,7 +436,7 @@ function ScanCheck({
       </div>
 
       <div className="relative flex min-h-0 flex-col">
-        <div ref={middle} className="flex min-h-0 flex-col gap-3 overflow-y-auto px-4 pb-4">
+        <div ref={middle} data-fit-scroller className="flex min-h-0 flex-col gap-3 overflow-y-auto px-4 pb-4">
           {last && !last.accepted && last.result !== "duplicate" ? (
             // Short: the scan field's line already carries the server's full sentence, and the list below says what is still to pick.
             <AlertBanner

@@ -49,7 +49,7 @@ function TrayBand({ view, color, now }: { view: TrayView; color: string | null; 
   const exceptions = view.unresolved.length + view.counts.canceledOnTray;
   const leftToScan = view.isActive ? view.expected.filter((e) => !e.canceledOnTray && e.state !== "scanned" && e.state !== "canceled").length : 0;
   return (
-    <section aria-label="Current tray" className={BENCH_BAND}>
+    <section aria-label="Current tray" data-identity-sticky className={BENCH_BAND}>
       <div className="flex shrink-0 flex-col justify-center rounded-md border-[1.5px] border-ink bg-surface py-1 pr-3 pl-2.5 leading-5">
         <p className="flex items-baseline gap-1.5 whitespace-nowrap">
           <span className="text-sm font-medium text-ink-muted">Tray</span>
@@ -166,7 +166,11 @@ function TrayPicker({ trays, selectedId, pathologists, readOnly }: { trays: Tray
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-6 pt-3 pb-1 max-xl:px-4">
       {/* Stacked page (200% zoom): one row that scrolls sideways, so the tray in hand is in the first view. */}
       <nav aria-label="Trays" className="min-w-0 stacked:flex-1">
-        <ul className="flex flex-wrap items-center gap-1.5 stacked:-m-1 stacked:flex-nowrap stacked:overflow-x-auto stacked:p-1">
+        <ul
+          className="flex flex-wrap items-center gap-1.5 stacked:-m-1 stacked:flex-nowrap stacked:overflow-x-auto stacked:p-1"
+          // In the sideways row a tray reached with Tab comes fully into view (the browser leaves a partly visible one where it is).
+          onFocus={(e) => e.target.scrollIntoView({ block: "nearest", inline: "nearest" })}
+        >
           {[...active, ...recent].map((t) => {
             const isSel = selectedId === t.id;
             return (

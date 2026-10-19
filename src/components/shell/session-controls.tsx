@@ -22,12 +22,17 @@ const BAR_BUTTON = cn(
 export function SessionControls({ actor }: { actor: ShellActor }) {
   const sentence = `Signed in: ${actor.name}, ${ROLE_LABEL[actor.role]}`;
   return (
-    <div role="group" aria-label="Session" className="flex min-w-0 shrink items-center gap-1.5">
+    // Below 1280px it folds the way the demo role indicator does (first name; the full sentence stays in the
+    // accessible name and tooltip), so at 200% zoom the bar keeps its two rows and the scan field keeps its width.
+    <div role="group" aria-label="Session" className="flex min-w-0 shrink items-center gap-1.5 max-lg:gap-1">
       <p role="note" aria-label={sentence} title={sentence} className="flex h-10 min-w-0 shrink flex-col justify-center px-1 leading-tight text-shell-fg max-xl:px-0">
-        <span aria-hidden className="min-w-0 max-w-[11rem] truncate text-sm font-semibold max-xl:max-w-[7rem]">
+        <span aria-hidden className="min-w-0 max-w-[11rem] truncate text-sm font-semibold max-xl:hidden">
           {actor.name}
         </span>
-        <span aria-hidden className="min-w-0 max-w-[11rem] truncate text-xs text-shell-muted max-xl:max-w-[7rem]">
+        <span aria-hidden className="min-w-0 max-w-[5.5rem] truncate text-sm font-semibold xl:hidden">
+          {firstName(actor.name)}
+        </span>
+        <span aria-hidden className="min-w-0 max-w-[11rem] truncate text-xs text-shell-muted max-xl:max-w-[5.5rem]">
           {ROLE_SHORT[actor.role]}
         </span>
       </p>
@@ -41,6 +46,12 @@ export function SessionControls({ actor }: { actor: ShellActor }) {
       </button>
     </div>
   );
+}
+
+/** "Kim" for "Kim Nguyen", "Dr. Marsh" for "Dr. Elena Marsh" (as the demo role indicator shortens names). */
+function firstName(name: string): string {
+  const words = name.trim().split(/\s+/);
+  return words[0] === "Dr." && words.length > 1 ? `Dr. ${words[words.length - 1]}` : words[0];
 }
 
 /**

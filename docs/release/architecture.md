@@ -79,3 +79,30 @@ Each needs a named role and is audited, with a reason where the domain asks for 
 - correlation id.
 
 Refused attempts (`command.denied`) and refused key reuse (`command.idempotency_rejected`) are recorded too. Receipts link to their audit rows through the correlation id. The case History tab and Operations read these.
+
+## 5. Stage 6 additions
+```
+request ── proxy.ts (optimistic: locked → /locked; secured page without cookie → /signin)
+   ▼
+server/auth/guard.ts (authoritative, one place)
+   demo:    demo role cookie → actor            secured: session cookie → auth_session (hashed id)
+            view.* permission per page/API               idle lock, expiry, revocation, lab scope,
+                                                         staff active, role read fresh, X-HLOS-Actor
+   ▼
+executeCommand (registry.ts)
+   mode → actor → permission → (sensitive? fresh auth_time) → zod → scoped idempotency → transaction
+   ctx.permission, ctx.sessionRef (HMAC) ─▶ audit() ─▶ audit_event + audit_seal (HMAC chain, same transaction)
+   ▼
+after commit: opportunistic receipt maintenance (tombstones, purge)
+```
+
+- **Integration boundary.** `POST /api/integration/inbound` (demo plus `HLOS_INTEGRATION_SIMULATOR=1` only) and the in-process pump both call `server/integration/inbound.ts handleEnvelope`:
+  - the signature, envelope (`hlos.source-message` 1.0) and payload are checked;
+  - orders go to `importSourceMessage`; accession messages are compared only.
+
+  `server/integration/reconciliation.ts` is a read model behind `/integration`.
+- **Operations:**
+  - `server/ops/backup.ts` and `backup-manifest.ts` (backup and verified restore);
+  - `server/ops/health.ts` (`/api/health`, `/api/health/details`);
+  - `server/ops/request-log.ts` and `server/core/log.ts` (structured, redacted logs).
+- **Audit verification:** `server/core/audit-seal.ts verifyAuditChain`, `/audit`, `npm run audit:verify`, and `npm run audit:anchor`.
