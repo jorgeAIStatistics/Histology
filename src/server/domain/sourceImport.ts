@@ -12,6 +12,8 @@ import { holdPartForSourceAmendment } from "./correction";
 import { fmtTime } from "@/lib/time";
 import { log } from "../core/log";
 import { LATERALITY } from "@/lib/domain";
+import { isAccessionMessageType } from "../integration/accession-schemas";
+import { processAccessionMessage } from "../integration/accession-messages";
 
 /**
  * Inbound import from a SIMULATED source system (S6).
@@ -29,6 +31,16 @@ import { LATERALITY } from "@/lib/domain";
  * never interpreted as an instruction and cannot change roles or permissions.
  * Nothing here writes back to the source: local completion never implies a
  * source-system write.
+ *
+ * Stage 6 Phase D (contract "hlos.source-message" 1.0, docs/release/integration-contract.md):
+ * every inbound path (the HTTP endpoint and the in-process pump) reaches this
+ * function through src/server/integration/inbound.ts handleEnvelope. It now
+ * also takes `specimen.submitted` (an order snapshot that names the specimen
+ * lines the source recorded as sent) and dispatches `accession.issued` /
+ * `accession.acknowledged` to src/server/integration/accession-messages.ts,
+ * inside the same duplicate → failed → applied pipeline. The envelope's
+ * `sent_at` (the source's claimed event time) is stored as
+ * integration_event.source_updated_at; received_at stays the local time.
  */
 
 // ------------------------------------------------------------------ payload
@@ -69,13 +81,49 @@ export const SimulatedOrderSchema = z.object({
 export type SimulatedOrder = z.infer<typeof SimulatedOrderSchema>;
 type Specimen = z.infer<typeof SpecimenSchema>;
 
-export const SUPPORTED_MESSAGE_TYPES = ["order.upsert", "order.amend", "order.cancel"] as const;
+/**
+ * `specimen.submitted`: the full order snapshot (same schema, same versioning) plus the specimen lines the
+ * source recorded as sent with this version and how many containers. Each named line must be on the order,
+ * and its container count must equal the line's expected_containers when that is given. It is imported as an
+ * order version (a new line → part_added; after accession → a review task, no part is created). It never
+ * marks a container as received here: receipt is a local, staff-attested event.
+ */
+export const SpecimenSubmittedSchema = SimulatedOrderSchema.extend({
+  submitted: z
+    .array(z.object({ designation: z.string().trim().min(1).max(4), containers: z.number().int().min(1).max(20) }))
+    .min(1)
+    .max(26),
+}).superRefine((p, ctx) => {
+  if (p.status === "canceled") {
+    ctx.addIssue({ code: "custom", path: ["status"], message: "A canceled order cannot submit specimens; send order.cancel instead." });
+  }
+  const seen = new Set<string>();
+  p.submitted.forEach((s, i) => {
+    const key = s.designation.toUpperCase();
+    if (seen.has(key)) ctx.addIssue({ code: "custom", path: ["submitted", i, "designation"], message: "Named twice in submitted." });
+    seen.add(key);
+    const line = p.specimens.find((x) => x.designation.toUpperCase() === key);
+    if (!line) {
+      ctx.addIssue({ code: "custom", path: ["submitted", i, "designation"], message: "Names no specimen line on this order version." });
+    } else if (line.expected_containers !== null && line.expected_containers !== undefined && line.expected_containers !== s.containers) {
+      ctx.addIssue({ code: "custom", path: ["submitted", i, "containers"], message: "Differs from that specimen line's expected_containers." });
+    }
+  });
+});
+
+/** Order-snapshot message types the order importer applies itself (accession.* are dispatched; see above). */
+export const SUPPORTED_MESSAGE_TYPES = ["order.upsert", "order.amend", "order.cancel", "specimen.submitted"] as const;
 
 export interface SourceMessage {
   messageId: string;
   messageType: string;
   /** Object or JSON text. Stored verbatim either way. */
   payload: unknown;
+  /**
+   * The source's claimed event time (contract envelope `sent_at`). Stored as integration_event.source_updated_at.
+   * Absent (direct callers): the payload's own updated_at, as before.
+   */
+  sentAt?: string | null;
 }
 
 export type ImportOutcome = "applied" | "duplicate_ignored" | "stale_ignored" | "failed";
@@ -99,22 +147,27 @@ export interface ReconciliationNote {
     | "order_values_updated"
     | "correction_review_updated"
     | "new_office_review"
-    | "content_conflict_review";
+    | "content_conflict_review"
+    | "accession_confirmed"
+    | "accession_acknowledged"
+    | "accession_mismatch_review";
   summary: string;
   ref?: string;
 }
 
 /** Notes that only describe what changed; every other kind opened (or is) a review item. */
-const INFO_ONLY: ReadonlySet<ReconciliationNote["kind"]> = new Set([
+export const INFO_ONLY: ReadonlySet<ReconciliationNote["kind"]> = new Set([
   "working_values_updated",
   "order_values_updated",
   "part_added",
   "clarification_linked",
   "correction_review_updated",
   "order_created",
+  "accession_confirmed",
+  "accession_acknowledged",
 ]);
 /** Notes that opened a task or review for a person. */
-const OPENS_REVIEW: ReadonlySet<ReconciliationNote["kind"]> = new Set([
+export const OPENS_REVIEW: ReadonlySet<ReconciliationNote["kind"]> = new Set([
   "work_order_cancel_review",
   "work_order_added",
   "correction_review_opened",
@@ -125,6 +178,7 @@ const OPENS_REVIEW: ReadonlySet<ReconciliationNote["kind"]> = new Set([
   "order_level_review",
   "new_office_review",
   "content_conflict_review",
+  "accession_mismatch_review",
 ]);
 
 export interface ImportResult {
@@ -140,7 +194,8 @@ export interface ImportResult {
   reconciliation: ReconciliationNote[];
 }
 
-export type ReceiptVia = "pump" | "replay" | "retry" | "sync";
+/** How a delivery reached the importer: the in-process pump, a demo replay, a staff retry, a sync, or the inbound contract endpoint. */
+export type ReceiptVia = "pump" | "replay" | "retry" | "sync" | "inbound";
 
 class ImportFailure extends Error {}
 
@@ -209,6 +264,7 @@ export function importSourceMessage(ctx: Ctx, sourceId: string, message: SourceM
   const payloadText = typeof message.payload === "string" ? message.payload : JSON.stringify(message.payload ?? null);
   const messageId = String(message.messageId ?? "").trim();
   const messageType = String(message.messageType ?? "").trim() || "unknown";
+  const sentAt = typeof message.sentAt === "string" && message.sentAt.trim() ? message.sentAt.trim() : null;
 
   const existing = messageId
     ? (db.prepare("SELECT * FROM integration_event WHERE source_id = ? AND message_id = ?").get(sourceId, messageId) as EventRow | undefined)
@@ -246,9 +302,9 @@ export function importSourceMessage(ctx: Ctx, sourceId: string, message: SourceM
     }
     // Nested transaction = savepoint: a failure rolls back every partial change
     // (including the integration_event row), so the failure path below never collides with it.
-    result = db.transaction(() => processMessage(ctx, source, { eventId, messageId, messageType, payloadText, isRetry, existing }))();
+    result = db.transaction(() => processMessage(ctx, source, { eventId, messageId, messageType, payloadText, isRetry, existing, sentAt }))();
   } catch (e) {
-    result = recordFailure(ctx, source, { eventId, messageId, messageType, payloadText, existing }, e);
+    result = recordFailure(ctx, source, { eventId, messageId, messageType, payloadText, existing, sentAt }, e);
   }
   // The receipt is a log line written after the outcome is settled; logging can never undo or fail the import.
   logReceipt(ctx, { eventId, sourceId, messageId: result.messageId || `missing-id:${eventId}`, messageType, outcome: result.outcome, detail: result.detail, via });
@@ -258,7 +314,7 @@ export function importSourceMessage(ctx: Ctx, sourceId: string, message: SourceM
 function recordFailure(
   ctx: Ctx,
   source: SourceRow,
-  m: { eventId: string; messageId: string; messageType: string; payloadText: string; existing?: EventRow },
+  m: { eventId: string; messageId: string; messageType: string; payloadText: string; existing?: EventRow; sentAt?: string | null },
   e: unknown,
 ): ImportResult {
   const db = ctx.db;
@@ -278,7 +334,7 @@ function recordFailure(
       `INSERT INTO integration_event (id, source_id, message_id, message_type, entity_key, source_version, source_updated_at, received_at, outcome, detail, payload, receipt_count)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'failed', ?, ?, 1)
        ON CONFLICT(source_id, message_id) DO UPDATE SET outcome = 'failed', detail = excluded.detail, receipt_count = receipt_count + 1`,
-    ).run(m.eventId, source.id, storedMessageId, m.messageType, entityKey.key, entityKey.version, entityKey.updatedAt, ctx.now, detail, m.payloadText);
+    ).run(m.eventId, source.id, storedMessageId, m.messageType, entityKey.key, entityKey.version, m.sentAt ?? entityKey.updatedAt, ctx.now, detail, m.payloadText);
   }
   audit(ctx, {
     action: "integration.import_failed",
@@ -302,13 +358,17 @@ interface ProcessInput {
   payloadText: string;
   isRetry: boolean;
   existing?: EventRow;
+  /** The source's claimed event time (envelope sent_at); null → the payload's updated_at. */
+  sentAt?: string | null;
 }
 
 function processMessage(ctx: Ctx, source: SourceRow, m: ProcessInput): ImportResult {
   const db = ctx.db;
   if (!source.tenant_id) throw new ImportFailure(`${source.name} has no source tenant, so its identifiers have no namespace. Message not applied.`);
+  // accession.issued / accession.acknowledged: compared with the local record and recorded; never issue or renumber.
+  if (isAccessionMessageType(m.messageType)) return processAccessionMessage(ctx, source, m);
   if (!(SUPPORTED_MESSAGE_TYPES as readonly string[]).includes(m.messageType)) {
-    throw new ImportFailure(`Unsupported message type "${m.messageType}". Supported: ${SUPPORTED_MESSAGE_TYPES.join(", ")}.`);
+    throw new ImportFailure(`Unsupported message type "${m.messageType}". Supported: ${[...SUPPORTED_MESSAGE_TYPES, "accession.issued", "accession.acknowledged"].join(", ")}.`);
   }
   let raw: unknown;
   try {
@@ -316,7 +376,7 @@ function processMessage(ctx: Ctx, source: SourceRow, m: ProcessInput): ImportRes
   } catch {
     throw new ImportFailure("Payload is not valid JSON. Stored verbatim; nothing was applied.");
   }
-  const parsed = SimulatedOrderSchema.safeParse(raw);
+  const parsed = (m.messageType === "specimen.submitted" ? SpecimenSubmittedSchema : SimulatedOrderSchema).safeParse(raw);
   if (!parsed.success) {
     const issues = parsed.error.issues.slice(0, 4).map((i) => `${i.path.join(".") || "payload"}: ${i.message}`).join("; ");
     throw new ImportFailure(`Payload failed validation (${issues}). Stored verbatim; nothing was applied.`);
@@ -332,12 +392,12 @@ function processMessage(ctx: Ctx, source: SourceRow, m: ProcessInput): ImportRes
     if (m.existing) {
       db.prepare(
         `UPDATE integration_event SET outcome = ?, detail = ?, entity_key = ?, source_version = ?, source_updated_at = ?, receipt_count = receipt_count + 1 WHERE id = ?`,
-      ).run(outcome, `${detail} (${outcome === "applied" ? "applied" : "processed"} on retry at ${fmtTime(ctx.now)} ET)`, entityKey, p.version, p.updated_at, m.eventId);
+      ).run(outcome, `${detail} (${outcome === "applied" ? "applied" : "processed"} on retry at ${fmtTime(ctx.now)} ET)`, entityKey, p.version, m.sentAt ?? p.updated_at, m.eventId);
     } else {
       db.prepare(
         `INSERT INTO integration_event (id, source_id, message_id, message_type, entity_key, source_version, source_updated_at, received_at, outcome, detail, payload, receipt_count)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      ).run(m.eventId, source.id, m.messageId, m.messageType, entityKey, p.version, p.updated_at, ctx.now, outcome, detail, m.payloadText);
+      ).run(m.eventId, source.id, m.messageId, m.messageType, entityKey, p.version, m.sentAt ?? p.updated_at, ctx.now, outcome, detail, m.payloadText);
     }
     return { outcome, eventId: m.eventId, messageId: m.messageId, detail, sourceOrderId: p.order_id, version: p.version, reconciliation: [], ...extra };
   };
@@ -1459,7 +1519,11 @@ function sortKeys(v: unknown): unknown {
 
 function guessEntityKey(source: SourceRow, payloadText: string): { key: string; version: number | null; updatedAt: string | null } {
   try {
-    const p = JSON.parse(payloadText) as { order_id?: unknown; version?: unknown; updated_at?: unknown };
+    const p = JSON.parse(payloadText) as { order_id?: unknown; version?: unknown; updated_at?: unknown; request_id?: unknown };
+    if (typeof p.order_id !== "string" && typeof p.request_id === "string") {
+      // An accession message (accession.issued / accession.acknowledged): keyed by the lab's request id.
+      return { key: `${source.tenant_id ?? source.id}:accession_request:${p.request_id.slice(0, 40)}`, version: null, updatedAt: null };
+    }
     return {
       key: `${source.tenant_id ?? source.id}:${typeof p.order_id === "string" ? p.order_id : "unknown"}`,
       version: typeof p.version === "number" ? p.version : null,

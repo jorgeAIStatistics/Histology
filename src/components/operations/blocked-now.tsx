@@ -8,6 +8,7 @@ import { IdText } from "@/components/domain/id-text";
 import { BlockedTable, keepPart } from "./blocked-table";
 import { IdentityMark } from "@/components/domain/identity-mark";
 import { CLEAR_LABEL, FILTER_LABEL, type BlockedSummary } from "./summary";
+import { IntegrationLink } from "./integration-link";
 
 export interface BlockedFilter {
   category: BlockedCategory | null;
@@ -141,6 +142,9 @@ export function BlockedNow({ summary, items, filter, now }: { summary: BlockedSu
           </Link>
         </p>
       ) : null}
+
+      {/* The Integration category leads to the integration screen, with its own counts (source vs local reconciliation). */}
+      {filter.category === "integration" ? <IntegrationLink className="border-b border-line px-5 py-1 max-xl:px-4" /> : null}
 
       {items.length ? (
         <BlockedTable

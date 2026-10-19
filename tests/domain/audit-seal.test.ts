@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { z } from "zod";
+import Database from "better-sqlite3";
 import { closeSharedDb, getDb, openDatabase, type DB } from "@/server/db/db";
 import { seedDemo } from "@/server/seed/seed";
 import { defineCommand } from "@/server/commands/registry";
@@ -263,8 +264,10 @@ describe("tampering by someone with file access is detected", () => {
   });
 
   it("an edit of any single column is detected (every column is covered)", () => {
+    // One busy database, copied in memory for each column (re-seeding per column made this test slow under load).
+    const image = busyDb().serialize();
     for (const col of AUDIT_COLUMNS.filter((c) => c !== "seq" && c !== "id")) {
-      const db = busyDb();
+      const db = new Database(image);
       const target = counts(db).head - 2;
       dropTriggers(db, EVENT_TRIGGERS);
       db.prepare(`UPDATE audit_event SET ${col} = COALESCE(${col}, '') || 'x' WHERE seq = ?`).run(target);

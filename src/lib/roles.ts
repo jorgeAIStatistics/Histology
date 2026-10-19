@@ -13,6 +13,10 @@
  *   (accessioning lead and supervisor only; never an administrator).
  * - view permissions `view.*`. Every role that existed before keeps every
  *   bench view it had (all of them), so the synthetic demo is unchanged.
+ *
+ * Stage 6 Phase D added `view.integration` (the /integration screen: source status and source-versus-local
+ * reconciliation). It is clinical data, so it goes to exactly the roles that hold `view.operations` (every bench
+ * role), never to lab_admin or auditor.
  */
 export const ROLES = [
   "accessioner",
@@ -109,6 +113,8 @@ export const PERMISSIONS = {
   "view.worklist": BENCH_ROLES,
   "view.materials": BENCH_ROLES,
   "view.operations": BENCH_ROLES,
+  // The same roles as view.operations (clinical data; never lab_admin or auditor).
+  "view.integration": BENCH_ROLES,
   "view.cases": BENCH_ROLES,
   "view.insights": BENCH_ROLES,
   "view.settings": BENCH_ROLES,
@@ -126,6 +132,7 @@ export const VIEW_PERMISSIONS = [
   "view.worklist",
   "view.materials",
   "view.operations",
+  "view.integration",
   "view.cases",
   "view.insights",
   "view.settings",
@@ -142,6 +149,7 @@ export const BENCH_VIEWS = [
   "view.worklist",
   "view.materials",
   "view.operations",
+  "view.integration",
   "view.cases",
   "view.insights",
   "view.settings",
@@ -198,6 +206,7 @@ export const PERMISSION_LABEL: Record<Permission, string> = {
   "view.worklist": "view the worklist",
   "view.materials": "view materials",
   "view.operations": "view operations",
+  "view.integration": "view the integration screen (source status and reconciliation)",
   "view.cases": "view cases",
   "view.insights": "view insights",
   "view.settings": "view settings",

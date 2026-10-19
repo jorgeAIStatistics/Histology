@@ -46,6 +46,7 @@ export const VIA_LABEL: Record<string, string> = {
   seed: "Before this session (seed)",
   accession_sim: "Accession simulator (recorded directly)",
   direct: "Recorded directly (no delivery receipt)",
+  inbound: "Signed inbound message (simulated source)",
 };
 
 export function FreshnessPill({ state }: { state: FreshnessState }) {

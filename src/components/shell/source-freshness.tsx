@@ -146,9 +146,17 @@ export function SourceFreshness() {
             Delayed after {SYNC_THRESHOLDS_MIN.delayed} min, offline after {SYNC_THRESHOLDS_MIN.offline} min without a successful sync. These
             are demo settings, not clinical rules. Times use the demo clock.
           </p>
-          <Link href="/settings?tab=integration" className="mt-2 inline-block text-xs font-medium text-brand underline underline-offset-2">
-            What is simulated?
-          </Link>
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+            {/* Only a viewer who receives source data (a bench role) gets the link; every bench role may open /integration. */}
+            {tenants.length > 0 ? (
+              <Link href="/integration" className="inline-flex min-h-6 items-center text-xs font-medium text-brand underline underline-offset-2">
+                Open Integration: source messages and reviews
+              </Link>
+            ) : null}
+            <Link href="/settings?tab=integration" className="inline-flex min-h-6 items-center text-xs font-medium text-brand underline underline-offset-2">
+              What is simulated?
+            </Link>
+          </div>
           <Popover.Arrow className="fill-surface" width={12} height={6} />
         </Popover.Content>
       </Popover.Portal>

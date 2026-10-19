@@ -20,6 +20,18 @@ if (!/^[A-Za-z0-9_-]{32,256}$/.test(FIXTURE_TOKEN)) {
   throw new Error("HLOS_TEST_FIXTURE_TOKEN must be 32 to 256 letters, digits, '-' or '_' (leave it unset to get a random one per run).");
 }
 
+// The integration simulator's signed inbound endpoint (POST /api/integration/inbound, src/server/integration/inbound.ts)
+// for tests/e2e/integration.spec.ts: switched on for this demo-mode test server only, with a random root secret per
+// run (generated here like the fixture token, inherited by the web server and the workers; never a real credential).
+// The endpoint accepts only simulated source adapters and is a 404 in secured and locked mode whatever is set.
+if (!process.env.HLOS_INTEGRATION_SIM_SECRET) process.env.HLOS_INTEGRATION_SIM_SECRET = crypto.randomBytes(32).toString("hex");
+const SIM_SECRET = process.env.HLOS_INTEGRATION_SIM_SECRET;
+if (!/^[A-Za-z0-9_-]{32,256}$/.test(SIM_SECRET)) {
+  throw new Error("HLOS_INTEGRATION_SIM_SECRET must be 32 to 256 letters, digits, '-' or '_' (leave it unset to get a random one per run).");
+}
+// What the integration spec reads (read only) to build the simulator's synthetic world: this run's database file.
+process.env.E2E_DB = DB;
+
 export default defineConfig({
   testDir: "tests/e2e",
   timeout: 60_000,
@@ -38,10 +50,18 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1366, height: 768 } } }],
   webServer: {
-    command: `rm -f ${DB} ${DB}-wal ${DB}-shm && node scripts/gen-schema-module.mjs && NEXT_DIST_DIR=${DIST} HLOS_DB_PATH=${DB} npx next build && HLOS_MODE=demo HLOS_TEST_FIXTURES=1 HLOS_TEST_FIXTURE_TOKEN=${FIXTURE_TOKEN} NEXT_DIST_DIR=${DIST} HLOS_DB_PATH=${DB} npx next start -p ${PORT}`,
+    command: `rm -f ${DB} ${DB}-wal ${DB}-shm && node scripts/gen-schema-module.mjs && NEXT_DIST_DIR=${DIST} HLOS_DB_PATH=${DB} npx next build && HLOS_MODE=demo HLOS_TEST_FIXTURES=1 HLOS_TEST_FIXTURE_TOKEN=${FIXTURE_TOKEN} HLOS_INTEGRATION_SIMULATOR=1 HLOS_INTEGRATION_SIM_SECRET=${SIM_SECRET} NEXT_DIST_DIR=${DIST} HLOS_DB_PATH=${DB} npx next start -p ${PORT}`,
     url: `http://localhost:${PORT}/api/live`,
     timeout: 300_000,
     reuseExistingServer: false,
-    env: { NEXT_DIST_DIR: DIST, HLOS_DB_PATH: DB, HLOS_MODE: "demo", HLOS_TEST_FIXTURES: "1", HLOS_TEST_FIXTURE_TOKEN: FIXTURE_TOKEN },
+    env: {
+      NEXT_DIST_DIR: DIST,
+      HLOS_DB_PATH: DB,
+      HLOS_MODE: "demo",
+      HLOS_TEST_FIXTURES: "1",
+      HLOS_TEST_FIXTURE_TOKEN: FIXTURE_TOKEN,
+      HLOS_INTEGRATION_SIMULATOR: "1",
+      HLOS_INTEGRATION_SIM_SECRET: SIM_SECRET,
+    },
   },
 });

@@ -4,7 +4,7 @@ import path from "node:path";
 export default defineConfig({
   resolve: { alias: { "@": path.resolve(import.meta.dirname, "src") } },
   test: {
-    include: ["tests/domain/**/*.test.ts"],
+    include: ["tests/domain/**/*.test.ts", "tests/contract/**/*.test.ts"],
     environment: "node",
     pool: "forks",
     testTimeout: 20000,

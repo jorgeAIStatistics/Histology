@@ -3,7 +3,8 @@ import { makeCtx, SYSTEM_ACTOR, type Ctx } from "@/server/core/context";
 import { demoNow } from "@/server/core/clock";
 import { audit } from "@/server/core/audit";
 import { setSetting, getSetting } from "@/server/core/settings";
-import { importSourceMessage, type ImportOutcome, type ReceiptVia } from "@/server/domain/sourceImport";
+import type { ImportOutcome, ReceiptVia } from "@/server/domain/sourceImport";
+import { handleEnvelope, messageFromOutbox } from "@/server/integration/inbound";
 import { retireExpiredRuleSets } from "@/server/domain/routingRules";
 import { log } from "@/server/core/log";
 
@@ -18,6 +19,10 @@ import { log } from "@/server/core/log";
  *
  * Called on every GET /api/live poll and by integration.syncNow. It is cheap
  * when there is nothing to do and never throws.
+ *
+ * Every delivery goes through handleEnvelope (src/server/integration/inbound.ts),
+ * the same mapping the inbound contract endpoint uses, so there is ONE
+ * validation path for in-process and HTTP messages.
  */
 
 export const DEGRADED_DELAY_MINUTES = 5;
@@ -125,7 +130,7 @@ function countPending(db: DB, sourceId: string, now: string): number {
   return (db.prepare("SELECT COUNT(*) n FROM sim_source_outbox WHERE source_id = ? AND delivered_at IS NULL AND available_at <= ?").get(sourceId, now) as { n: number }).n;
 }
 
-/** One message in its own transaction (or savepoint): import, then mark delivered. Never throws. */
+/** One message in its own transaction (or savepoint): map it through the contract's handleEnvelope, then mark delivered. Never throws. */
 function deliverOne(db: DB, s: SourceRow, row: OutboxRow, via: ReceiptVia): { messageId: string; outcome: ImportOutcome; detail: string } | null {
   try {
     return db.transaction(() => {
@@ -133,9 +138,11 @@ function deliverOne(db: DB, s: SourceRow, row: OutboxRow, via: ReceiptVia): { me
       const fresh = db.prepare("SELECT delivered_at FROM sim_source_outbox WHERE id = ?").get(row.id) as { delivered_at: string | null } | undefined;
       if (!fresh || fresh.delivered_at) return null;
       const ctx = makeCtx(db, SYSTEM_ACTOR, "import", `pump-${row.id}`);
-      const res = importSourceMessage(ctx, s.id, { messageId: row.message_id, messageType: row.message_type, payload: row.payload }, { via });
+      const out = handleEnvelope(ctx, messageFromOutbox(s.id, row), { via });
+      // Refused before the importer (not a simulated source, or set offline meanwhile): it stays queued.
+      if (!out.result) return null;
       db.prepare("UPDATE sim_source_outbox SET delivered_at = ? WHERE id = ?").run(ctx.now, row.id);
-      return { messageId: row.message_id, outcome: res.outcome, detail: res.detail };
+      return { messageId: row.message_id, outcome: out.result.outcome, detail: out.result.detail };
     })();
   } catch (e) {
     log("error", "pump.delivery_failed", { correlationId: `pump-${row.id}`, sourceId: s.id, messageId: row.message_id, error: e });

@@ -4,6 +4,7 @@ import { StatePill } from "@/components/ui/status-pill";
 import { SimulatedLabel, UnknownValue } from "@/components/domain/honesty";
 import { Timestamp } from "@/components/domain/timestamp";
 import type { FreshnessSummary } from "@/server/queries/worklist";
+import { IntegrationLink } from "./integration-link";
 
 const SYNC_PILL: Record<string, string> = { current: "synced", delayed: "delayed", offline: "offline", unknown: "unknown" };
 
@@ -44,6 +45,7 @@ export function SourceFreshness({ freshness, now }: { freshness: FreshnessSummar
         ))}
         {freshness.sources.length === 0 ? <li className="px-4 py-2.5 text-sm text-ink-secondary">No source systems configured.</li> : null}
       </ul>
+      <IntegrationLink className="border-t border-line px-4 py-1" />
       <p className="border-t border-line px-4 py-2.5 text-xs text-ink-muted">
         Thresholds (5 and 15 min) are demo settings, not clinical rules. Local task completion never writes to a source system in this demo.
       </p>
