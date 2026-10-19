@@ -1,10 +1,11 @@
 import "@/server/commands"; // registers every command
-import { executeCommand } from "@/server/commands/registry";
+import { commandAudience, executeCommand } from "@/server/commands/registry";
 import { httpStatusFor } from "@/server/core/errors";
 import { getDb } from "@/server/db/db";
 import { LOCKED_MESSAGE, runtimeMode } from "@/server/runtime-mode";
 import { actorIdFromRequest, correlationIdFor, rejectCrossOrigin } from "@/server/session";
 import { guardFailureResponse, requireApiActor, requireSameOrigin } from "@/server/auth/guard";
+import { withRequestLog, type RequestLogScope } from "@/server/ops/request-log";
 
 /**
  * POST /api/commands/<name>  body: { input, idempotencyKey }
@@ -24,6 +25,10 @@ import { guardFailureResponse, requireApiActor, requireSameOrigin } from "@/serv
  * Permissions, validation, transactions and scoped idempotency (owned by the
  * acting staff member) are handled by executeCommand. Each request gets one
  * correlation id (X-Correlation-Id) that is written to its audit events.
+ *
+ * Every request writes one structured `http.request` log line (src/server/ops/request-log.ts): method, the route
+ * template, status, duration, correlation id, the acting staff id (never a name), the command name when it is a
+ * registered command, and the error code. Never the input.
  */
 export const dynamic = "force-dynamic";
 
@@ -44,9 +49,18 @@ async function readBody(req: Request): Promise<{ ok: true; body: { input?: unkno
   }
 }
 
-export async function POST(req: Request, ctx: { params: Promise<{ name: string }> }) {
+type Ctx = { params: Promise<{ name: string }> };
+
+export const POST = withRequestLog("/api/commands/[name]", (req: Request, scope: RequestLogScope, ctx: Ctx) => post(req, scope, ctx));
+
+/** The command name for the log line: a registered command, else "unknown" (never an arbitrary path segment). */
+function logName(name: string): string {
+  return commandAudience(name) ? name : "unknown";
+}
+
+async function post(req: Request, scope: RequestLogScope, ctx: Ctx) {
   const mode = runtimeMode();
-  if (mode === "secured") return securedPost(req, ctx);
+  if (mode === "secured") return securedPost(req, scope, ctx);
 
   const blocked = rejectCrossOrigin(req);
   if (blocked) return blocked;
@@ -55,6 +69,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ name: string }
   }
 
   const { name } = await ctx.params;
+  scope.command = logName(name);
   const parsed = await readBody(req);
   if (!parsed.ok) return parsed.response;
   const body = parsed.body;
@@ -63,19 +78,24 @@ export async function POST(req: Request, ctx: { params: Promise<{ name: string }
   const idempotencyKey = typeof body.idempotencyKey === "string" && body.idempotencyKey.length > 0 ? body.idempotencyKey : undefined;
   const correlationId = correlationIdFor(req);
 
-  const result = executeCommand(getDb(), actorIdFromRequest(req), name, body.input ?? {}, { idempotencyKey, correlationId });
+  const actorId = actorIdFromRequest(req);
+  scope.actorId = actorId;
+  const result = executeCommand(getDb(), actorId, name, body.input ?? {}, { idempotencyKey, correlationId });
+  if (!result.ok) scope.code = result.error.code;
   const status = result.ok ? 200 : (httpStatusFor[result.error.code] ?? 400);
   return Response.json(result, { status, headers: { ...NO_STORE, "X-Correlation-Id": correlationId } });
 }
 
-async function securedPost(req: Request, ctx: { params: Promise<{ name: string }> }) {
+async function securedPost(req: Request, scope: RequestLogScope, ctx: Ctx) {
   const crossOrigin = requireSameOrigin(req);
   if (crossOrigin) return crossOrigin;
   // The session decides who acts; the page's actor header must match it before anything is touched or recorded.
   const g = requireApiActor(req, { touch: true, checkActorHeader: true });
   if (!g.ok) return guardFailureResponse(g);
+  scope.actorId = g.actor.id;
 
   const { name } = await ctx.params;
+  scope.command = logName(name);
   const parsed = await readBody(req);
   if (!parsed.ok) return parsed.response;
   const body = parsed.body;
@@ -83,6 +103,7 @@ async function securedPost(req: Request, ctx: { params: Promise<{ name: string }
   const correlationId = correlationIdFor(req);
 
   const result = executeCommand(getDb(), g.actor.id, name, body.input ?? {}, { idempotencyKey, correlationId, auth: g.auth });
+  if (!result.ok) scope.code = result.error.code;
   const status = result.ok ? 200 : (httpStatusFor[result.error.code] ?? 400);
   return Response.json(result, { status, headers: { ...NO_STORE, "X-Correlation-Id": correlationId } });
 }

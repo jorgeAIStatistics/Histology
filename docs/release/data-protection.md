@@ -10,7 +10,7 @@
 | Encryption at rest | Nothing. **The SQLite file is not encrypted by this application.** | Put the database, its `-wal` and `-shm` files, the anchor file, logs and backups on an encrypted volume. Restrict file permissions to the service account. | SQLCipher or any database-level encryption (deferred) |
 | Secrets | Read from the environment only. Never stored in the database, never logged, never echoed. Secured mode refuses missing, short, weak or reused secrets (locked build; names the key, never the value). | Inject them from a secret store. Keep the audit key apart from database backups. Rotate the client secret at the provider. | An HSM or KMS integration; audit-key rotation |
 | Retention | Receipts expire after 24 h, then become tombstones; tombstones are purged after `HLOS_RECEIPT_TOMBSTONE_DAYS`. The audit trail is kept indefinitely; no deletion path exists. | Decide and document retention for every other table (section 5) under the laboratory's policy. | Retention or purge for sessions, integration payloads and clinical records |
-| Backups | Nothing yet: Phase E. | Requirements in section 6: encrypted, access-controlled, restore-tested. | |
+| Backups | `npm run db:backup` / `db:restore` (Phase E): SQLite online backup, AES-256-GCM with `HLOS_BACKUP_KEY` (required in secured mode), verified restore to a new path only. | Restore drill and tests: `backup-restore.md`, `tests/domain/backup.test.ts`. Off-host copies, retention and key custody are deployment decisions. | |
 | Secure deletion | Nothing beyond SQLite `DELETE`. | Crypto-erase (destroy the volume key) when data must be unrecoverable. | Any guarantee of erasure (section 7) |
 
 ## 2. Encryption in transit
@@ -85,9 +85,9 @@
 | Server logs (stdout and stderr) | Not stored by the application | The deployment's log retention |
 | Audit anchor file | Not managed by the application (append only, by `npm run audit:anchor`) | The operator's storage |
 
-## 6. Backups (Phase E will build them)
+## 6. Backups (built in Phase E; see `backup-restore.md`)
 
-There is no backup or restore code in the application yet. **Requirements** for Phase E and for any interim deployment:
+`npm run db:backup` and `npm run db:restore` implement the requirements below: an online backup, AES-256-GCM encryption (required in secured mode), a manifest bound to the encryption, and a restore that only writes a new path and then verifies integrity, foreign keys, row counts, schema and the audit chain. A real drill and its output are in `backup-restore.md`. What remains for the deployment: off-host copies, backup retention, access control and auditing of backup reads, and custody of `HLOS_BACKUP_KEY` and the audit key away from the backups. **Requirements:**
 1. **Encrypted.** A backup holds everything the database holds, in plain form: patient identifiers, raw payloads and the audit trail. Encrypt it with a key that is not stored with the backup, and not on the database host when that can be avoided.
 2. **Consistent.** Take it with SQLite's online backup API (or `VACUUM INTO`), not by copying the file while the server writes. Copying the main file without its `-wal` file loses committed transactions.
 3. **The audit key and the anchors are stored apart from the database backups.** A backup plus the key is enough to rewrite history undetectably (`audit-integrity.md`, section 1).

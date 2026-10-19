@@ -2,6 +2,10 @@ node_modules
 .next
 data/*.db
 data/*.db-*
+# Database backups and their manifests (scripts/backup.ts): never committed. An encrypted backup's plaintext
+# snapshot is made in a temporary .hlos-backup-* folder beside the database and removed; a crash could leave one.
+data/backups/
+data/.hlos-backup-*/
 test-results
 playwright-report
 next-env.d.ts

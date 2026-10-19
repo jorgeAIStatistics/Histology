@@ -16,7 +16,11 @@ export type DomainErrorCode =
   | "SESSION_EXPIRED" // the session reached its absolute lifetime; nothing was recorded
   | "SESSION_LOCKED" // idle or manual lock; sign in again to unlock; nothing was recorded
   | "REAUTH_REQUIRED" // a sensitive command needs a recent sign-in ("Confirm it's you"); nothing was recorded
-  | "ACTOR_MISMATCH"; // the page was rendered for another staff member than the session's (X-HLOS-Actor); nothing was recorded
+  | "ACTOR_MISMATCH" // the page was rendered for another staff member than the session's (X-HLOS-Actor); nothing was recorded
+  // Server-side failures (never the user's input):
+  | "STORAGE_UNAVAILABLE" // the database refuses writes (read-only, full, cannot be opened); nothing was committed
+  | "STORAGE_FAILED" // a storage error while saving; the outcome of the commit is not known
+  | "SERVER_ERROR"; // an unexpected error; nothing was changed (the transaction rolled back)
 
 export class DomainError extends Error {
   readonly code: DomainErrorCode;
@@ -40,6 +44,9 @@ export const httpStatusFor: Record<DomainErrorCode, number> = {
   ASSISTANT_UNAVAILABLE: 503,
   IDEMPOTENCY_CONFLICT: 409,
   IDEMPOTENCY_EXPIRED: 409,
+  STORAGE_UNAVAILABLE: 503,
+  STORAGE_FAILED: 500,
+  SERVER_ERROR: 500,
   AUTH_REQUIRED: 401,
   SIGN_IN_REQUIRED: 401,
   SESSION_EXPIRED: 401,

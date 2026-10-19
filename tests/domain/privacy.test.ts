@@ -243,7 +243,7 @@ describe("C4.3 the CSV export and C4.2 error responses (HTTP routes)", () => {
     expect(cid).toBeTruthy();
     expect(JSON.parse(text)).toEqual({
       ok: false,
-      error: { code: "VALIDATION", message: `The request could not be completed because of an unexpected error on the server. Nothing was changed. Reference: ${cid}.` },
+      error: { code: "SERVER_ERROR", message: `The request could not be completed because of an unexpected error on the server. Nothing was changed. Reference: ${cid}.` },
     });
     expect(text).not.toMatch(/Barnes|1972|447902|SyntaxError|JSON|\bat\s|\.ts:\d+/);
     // A body that is not JSON: refused without echoing it.

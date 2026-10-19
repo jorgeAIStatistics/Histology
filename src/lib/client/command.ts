@@ -16,6 +16,10 @@ import { handleCommandAuthFailure, isShownBySession, withActorHeader } from "./s
  * action starts and reuses it when the same input is retried (after a network
  * error the server may already have done the work; the retry replays the
  * stored result instead of creating a duplicate). A successful run clears it.
+ * An intent whose outcome is unknown (NETWORK, UNCONFIRMED) is also remembered
+ * for this document (by command and input, for an hour), so the same action
+ * retried from a form that was closed and opened again reuses its key too. A
+ * reload forgets it (the screens then say to check what was recorded first).
  *
  * Secured mode (src/lib/client/session.ts): every command carries
  * X-HLOS-Actor, the staff member this page was rendered for, so a screen left
@@ -26,7 +30,12 @@ import { handleCommandAuthFailure, isShownBySession, withActorHeader } from "./s
  * replayed automatically. The synthetic demo sends exactly what it sent before.
  */
 
-/** NETWORK: the request never reached the server. UNCONFIRMED: the server answered without a result (for example an HTTP 500), so the outcome is unknown. */
+/**
+ * NETWORK: no answer arrived (offline, refused, aborted, or the connection dropped). The request may still have reached
+ * the server and been recorded, so a retry of the same intent reuses its idempotency key (useCommand) and is replayed,
+ * never duplicated. UNCONFIRMED: an answer arrived without a confirmed result (an HTTP 5xx, a proxy page, a cut-off or
+ * malformed body), so the outcome is unknown. Neither is ever shown as success.
+ */
 export type CommandErrorCode = DomainErrorCode | "NETWORK" | "UNCONFIRMED";
 
 export interface CommandFailure {
@@ -95,9 +104,17 @@ export async function runCommand<R = unknown>(
       },
     };
   }
-  const body = json as { ok?: boolean; result?: R; replayed?: boolean; error?: CommandFailure };
-  if (body.ok) return { ok: true, result: body.result as R, replayed: Boolean(body.replayed) };
-  const error = body.error ?? { code: res.status >= 500 ? "UNCONFIRMED" : (STATUS_CODE[res.status] ?? "UNCONFIRMED"), message: `Request failed (HTTP ${res.status}).` };
+  // Only exactly { ok: true } on a 2xx answer is a confirmed result. Anything else (null, an array, ok: "true", ok: true
+  // on an error status from a proxy) is a failure, and an error without a typed code is unconfirmed when it is a 5xx.
+  const body = (json !== null && typeof json === "object" && !Array.isArray(json) ? json : {}) as { ok?: unknown; result?: R; replayed?: unknown; error?: unknown };
+  if (res.ok && body.ok === true) return { ok: true, result: body.result as R, replayed: body.replayed === true };
+  const typed = body.error as Partial<CommandFailure> | null | undefined;
+  const error: CommandFailure =
+    typed && typeof typed === "object" && typeof typed.code === "string"
+      ? { code: typed.code as CommandErrorCode, message: typeof typed.message === "string" ? typed.message : `Request failed (HTTP ${res.status}).`, ...(typed.details !== undefined ? { details: typed.details } : {}) }
+      : res.ok || res.status >= 500
+        ? { code: "UNCONFIRMED", message: `Unexpected response from the local server (HTTP ${res.status}). Reload to see what was recorded before trying again.` }
+        : { code: STATUS_CODE[res.status] ?? "UNCONFIRMED", message: `Request failed (HTTP ${res.status}).` };
   // Secured mode: a session failure updates the session screens and is worded for the screen (demo: unchanged).
   return { ok: false, error: await handleCommandAuthFailure(error) };
 }
@@ -123,6 +140,9 @@ export const ERROR_TITLE: Record<CommandErrorCode, string> = {
   ACTOR_MISMATCH: "Signed in as someone else",
   NETWORK: "Could not reach the local server",
   UNCONFIRMED: "The server did not confirm this action",
+  STORAGE_UNAVAILABLE: "The laboratory database is not accepting changes",
+  STORAGE_FAILED: "Saving may not have completed",
+  SERVER_ERROR: "The server could not complete this action",
 };
 
 /**
@@ -172,6 +192,36 @@ export interface UseCommandResult<R, I> {
 }
 
 /**
+ * Keys of intents whose outcome is unknown (NETWORK or UNCONFIRMED), by command and input, for this browser document.
+ * A form that is closed and opened again is a new component with no memory of its own: without this, its retry of an
+ * action the server did record would carry a new key and be recorded twice. Forgotten on a confirmed result, when the
+ * server refuses the key for this requester (IDEMPOTENCY_CONFLICT), after an hour, or on reload. Bounded.
+ */
+const unconfirmedIntents = new Map<string, { key: string; at: number }>();
+const UNCONFIRMED_INTENT_MS = 60 * 60_000;
+const UNCONFIRMED_INTENT_MAX = 100;
+
+function recallUnconfirmed(id: string, now: number): string | null {
+  const remembered = unconfirmedIntents.get(id);
+  if (!remembered) return null;
+  if (now - remembered.at > UNCONFIRMED_INTENT_MS) {
+    unconfirmedIntents.delete(id);
+    return null;
+  }
+  return remembered.key;
+}
+
+function rememberUnconfirmed(id: string, key: string, now: number): void {
+  unconfirmedIntents.delete(id);
+  unconfirmedIntents.set(id, { key, at: now });
+  while (unconfirmedIntents.size > UNCONFIRMED_INTENT_MAX) {
+    const oldest = unconfirmedIntents.keys().next().value;
+    if (oldest === undefined) break;
+    unconfirmedIntents.delete(oldest);
+  }
+}
+
+/**
  * `const { run, pending, error } = useCommand<Result, Input>("intake.verifyContainer", { successToast: "Verification recorded" })`
  */
 export function useCommand<R = unknown, I = unknown>(name: string, options: UseCommandOptions<R, I> = {}): UseCommandResult<R, I> {
@@ -196,8 +246,9 @@ export function useCommand<R = unknown, I = unknown>(name: string, options: UseC
       } catch {
         fingerprint = String(Date.now());
       }
+      const intentId = `${name}\u0000${fingerprint}`;
       if (!intent.current || intent.current.fingerprint !== fingerprint) {
-        intent.current = { key: newIdempotencyKey(name), fingerprint };
+        intent.current = { key: recallUnconfirmed(intentId, Date.now()) ?? newIdempotencyKey(name), fingerprint };
       }
       const key = intent.current.key;
       setPending(true);
@@ -208,6 +259,7 @@ export function useCommand<R = unknown, I = unknown>(name: string, options: UseC
         const o = optsRef.current;
         if (out.ok) {
           intent.current = null;
+          unconfirmedIntents.delete(intentId);
           setResult(out.result);
           if (o.refresh !== false) startTransition(() => router.refresh());
           void liveSync();
@@ -220,6 +272,13 @@ export function useCommand<R = unknown, I = unknown>(name: string, options: UseC
           }
           o.onSuccess?.(out.result, { replayed: out.replayed, input });
         } else {
+          if (out.error.code === "NETWORK" || out.error.code === "UNCONFIRMED") {
+            rememberUnconfirmed(intentId, key, Date.now());
+          } else if (out.error.code === "IDEMPOTENCY_CONFLICT") {
+            // This key can never be used by this requester (another demo role, another command): the next press is a new intent.
+            unconfirmedIntents.delete(intentId);
+            if (intent.current?.key === key) intent.current = null;
+          }
           setError(out.error);
           if (out.error.code === "CONFLICT" && o.conflict !== false) {
             conflict.open({

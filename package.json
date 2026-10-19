@@ -21,6 +21,8 @@
     "audit:verify": "tsx scripts/audit.ts verify",
     "audit:anchor": "tsx scripts/audit.ts anchor",
     "maintenance": "tsx scripts/maintenance.ts",
+    "db:backup": "tsx scripts/backup.ts",
+    "db:restore": "tsx scripts/restore.ts",
     "integration:sim": "tsx scripts/integration-sim.ts",
     "pretest": "node scripts/gen-schema-module.mjs",
     "test": "vitest run",

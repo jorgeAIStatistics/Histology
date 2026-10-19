@@ -53,3 +53,25 @@ describe("demo mode refuses a database that is not the synthetic demo database",
     expect(() => getDb()).toThrow(/linked sign-in identities/);
   });
 });
+
+describe("outside demo mode a missing database is never created silently", () => {
+  it("secured mode with no file at HLOS_DB_PATH refuses, and creates nothing", () => {
+    const file = tmp();
+    process.env.HLOS_MODE = "secured";
+    process.env.HLOS_DB_PATH = file;
+    delete process.env.HLOS_SEED_SYNTHETIC;
+    delete process.env.HLOS_DB_ALLOW_CREATE;
+    expect(() => getDb()).toThrow(/not created automatically/);
+    expect(fs.existsSync(file)).toBe(false);
+  });
+
+  it("an explicit initialization (HLOS_DB_ALLOW_CREATE=1) creates it", () => {
+    const file = tmp();
+    process.env.HLOS_MODE = "secured";
+    process.env.HLOS_DB_PATH = file;
+    process.env.HLOS_DB_ALLOW_CREATE = "1";
+    delete process.env.HLOS_SEED_SYNTHETIC;
+    getDb();
+    expect(fs.existsSync(file)).toBe(true);
+  });
+});

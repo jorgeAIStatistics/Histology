@@ -258,10 +258,20 @@ describe("runtime modes fail closed", () => {
   });
 
   it("getDb() seeds synthetic data only in demo mode or with HLOS_SEED_SYNTHETIC=1, never silently in secured or locked builds", () => {
+    // Outside demo mode a missing database is not even created without an explicit initialization (HLOS_DB_ALLOW_CREATE=1);
+    // once initialized it is still never seeded.
     const fresh = (name: string) => {
       closeSharedDb();
-      process.env.HLOS_DB_PATH = path.join(dir, `${name}-${++fileNo}.db`);
-      return (getDb().prepare("SELECT COUNT(*) n FROM staff").get() as { n: number }).n;
+      const file = path.join(dir, `${name}-${++fileNo}.db`);
+      process.env.HLOS_DB_PATH = file;
+      expect(() => getDb()).toThrow(/not created automatically/);
+      expect(fs.existsSync(file)).toBe(false);
+      process.env.HLOS_DB_ALLOW_CREATE = "1";
+      try {
+        return (getDb().prepare("SELECT COUNT(*) n FROM staff").get() as { n: number }).n;
+      } finally {
+        delete process.env.HLOS_DB_ALLOW_CREATE;
+      }
     };
     // (The seed itself is loaded lazily through the server bundle; here the gate is checked directly.)
     expect(syntheticSeedAllowed()).toBe(false);

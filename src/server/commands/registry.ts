@@ -201,7 +201,8 @@ export function executeCommand<R = unknown>(
       assertValidKey(key);
       ensureReceiptSchema(db);
     } catch (e) {
-      return toFailure(e);
+      // (The first keyed command on a connection may write the receipt columns: a storage failure can surface here.)
+      return toFailure(e, { command: name, correlationId: ctx.correlationId });
     }
     fingerprint = requestFingerprint(name, parsed.data);
     scope = labScope(db);
@@ -296,9 +297,27 @@ function toFailure(e: unknown, info: { command?: string; correlationId?: string 
   if (message.startsWith("INVARIANT:")) {
     return { ok: false, error: { code: "INVARIANT", message: message.replace(/^INVARIANT:\s*/, "") } };
   }
-  if (/database is locked|SQLITE_BUSY/i.test(message)) {
+  const sqlite = sqliteCodeOf(e);
+  if (/database is locked|SQLITE_BUSY/i.test(message) || /^SQLITE_(BUSY|LOCKED)/.test(sqlite)) {
     // Another request holds the write lock (one change at a time); nothing from this request was written.
     return { ok: false, error: { code: "CONFLICT", message: "Another change is being saved right now. Nothing was changed; try again." } };
+  }
+  if (STORAGE_REFUSED.test(sqlite) || STORAGE_FAILED.test(sqlite)) {
+    // The database itself cannot take writes (read-only, full, cannot be opened) or failed while saving. Never the
+    // "fix your input" answer: a storage failure is the server's, and it is logged for the operator with its SQLite
+    // code only. Refused writes never committed; after an I/O error during the commit the outcome is not known, so
+    // that answer does not claim nothing changed (a retry with the same idempotency key still cannot run twice).
+    log("error", "command.storage_failure", { correlationId: info.correlationId, command: info.command, error: e });
+    const refused = STORAGE_REFUSED.test(sqlite);
+    return {
+      ok: false,
+      error: {
+        code: refused ? "STORAGE_UNAVAILABLE" : "STORAGE_FAILED",
+        message: refused
+          ? "The laboratory database cannot save changes right now (it is read-only, full or cannot be opened). Nothing was changed. Try again later; if it keeps happening, tell the laboratory administrator."
+          : "The laboratory database reported a storage error while saving this change. Reload to see what was recorded before trying again; if it keeps happening, tell the laboratory administrator.",
+      },
+    };
   }
   if (/UNIQUE constraint failed: print_job/.test(message)) {
     return { ok: false, error: { code: "INVARIANT", message: "A print job for this label is already in flight or awaiting reconciliation" } };
@@ -307,10 +326,20 @@ function toFailure(e: unknown, info: { command?: string; correlationId?: string 
   return {
     ok: false,
     error: {
-      code: "VALIDATION",
+      code: "SERVER_ERROR",
       message: `The request could not be completed because of an unexpected error on the server. Nothing was changed.${info.correlationId ? ` Reference: ${info.correlationId}.` : ""}`,
     },
   };
+}
+
+/** SQLite result codes (better-sqlite3 SqliteError.code) for a database that refuses every write: nothing was committed. */
+const STORAGE_REFUSED = /^SQLITE_(READONLY|CANTOPEN|PERM|FULL|NOLFS)(_|$)/;
+/** SQLite result codes for a storage failure while reading or writing (the outcome of a failed commit is not known). */
+const STORAGE_FAILED = /^SQLITE_(IOERR|CORRUPT|NOTADB|PROTOCOL)(_|$)/;
+
+function sqliteCodeOf(e: unknown): string {
+  const code = (e as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : "";
 }
 
 /** Run a command directly as a given actor and throw on failure (tests, simulator, seed). */
