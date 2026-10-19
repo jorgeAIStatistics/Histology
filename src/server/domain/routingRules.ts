@@ -162,11 +162,27 @@ export function approveRuleSet(ctx: Ctx, input: { ruleSetId: string; effectiveFr
     ctx.now,
     set.id,
   );
+  const ruleRows = db.prepare("SELECT id, office_id, pathologist_id FROM routing_rule WHERE rule_set_id = ? ORDER BY office_id").all(set.id) as {
+    id: string;
+    office_id: string;
+    pathologist_id: string;
+  }[];
   audit(ctx, {
     action: "routing.rule_set_approved",
     entityType: "routing_rule_set",
     entityId: set.id,
     summary: `Routing rules v${set.version} approved by ${ctx.actor.name}, effective ${fmtDateTime(effectiveFrom)} ET. Rules are now frozen. Items already received are not re-routed.`,
+    before: { status: set.status, effectiveFrom: set.effective_from, approvedBy: set.approved_by },
+    after: {
+      status: "approved",
+      version: set.version,
+      effectiveFrom,
+      approvedBy: ctx.actor.id,
+      approvedAt: ctx.now,
+      retiredVersions: retired,
+      supersededRuleSetIds: previous.map((p) => p.id),
+      rules: ruleRows.map((r) => ({ ruleId: r.id, officeId: r.office_id, pathologistId: r.pathologist_id })),
+    },
   });
   return { ruleSetId: set.id, version: set.version, effectiveFrom, retired };
 }

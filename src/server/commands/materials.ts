@@ -130,9 +130,10 @@ export const slideAdvance = defineCommand({
 
 export const slideOrderAdditional = defineCommand({
   name: "slide.orderAdditional",
-  description: "Order an additional slide (stain, level or recut): creates a work order and a new planned slide. Not a reprint.",
+  description:
+    "Order an additional slide (stain, level or recut): creates a work order and a new planned slide. Not a reprint. Entered by someone other than a dermatopathologist, it is recorded as theirs (staff_entered_request) and needs requestReference: who asked and how.",
   permission: "workorder.review",
-  input: z.object({ blockId: id, stain: text(40), level: text(40).optional().nullable(), reason: text(500) }),
+  input: z.object({ blockId: id, stain: text(40), level: text(40).optional().nullable(), reason: text(500), requestReference: text(200).optional().nullable() }),
   run: withSchema((ctx, input) => orderAdditionalSlide(ctx, input)),
 });
 
@@ -188,10 +189,11 @@ export const trayComplete = defineCommand({
 
 export const trayReleaseWithExceptions = defineCommand({
   name: "tray.releaseWithExceptions",
-  description: "Supervisor only: release a tray with documented exceptions (never shown as verified complete).",
+  description:
+    "Supervisor only: release a tray with documented exceptions (never shown as verified complete). expectedVersion is the tray version the supervisor reviewed; a newer scan or decision is a conflict.",
   permission: "tray.releaseWithExceptions",
-  input: z.object({ trayId: id, note: text(1000) }),
-  run: withSchema((ctx, input) => releaseTrayWithExceptions(ctx, input.trayId, input.note)),
+  input: z.object({ trayId: id, note: text(1000), expectedVersion: z.number().int().positive() }),
+  run: withSchema((ctx, input) => releaseTrayWithExceptions(ctx, input.trayId, input.note, input.expectedVersion)),
 });
 
 export const trayDeliver = defineCommand({
@@ -238,10 +240,11 @@ export const retrievalDeliver = defineCommand({
 
 export const retrievalReturn = defineCommand({
   name: "retrieval.return",
-  description: "Return a block to a storage slot (confirms this block's location only).",
+  description:
+    "Return a block to a storage slot (confirms this block's location only). Only a checked-out block or one under a missing-material investigation can be returned; a block that was missing needs a note saying where it was found.",
   permission: "retrieval.pick",
-  input: z.object({ blockId: id, locationCode: text(80) }),
-  run: withSchema((ctx, input) => returnBlock(ctx, input.blockId, input.locationCode)),
+  input: z.object({ blockId: id, locationCode: text(80), note: z.string().trim().max(300).optional() }),
+  run: withSchema((ctx, input) => returnBlock(ctx, input.blockId, input.locationCode, input.note ?? null)),
 });
 
 export const __materialsCommands = [

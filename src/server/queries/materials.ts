@@ -380,14 +380,14 @@ export function slidesAwaitingLabel(db: DB, limit = 8): { total: number; rows: {
   const rows = db
     .prepare(
       `SELECT s.id, wo.display_id AS wo_display, wo.authorization_source AS auth FROM slide s LEFT JOIN work_order wo ON wo.id = s.work_order_id
-        WHERE ${where} ORDER BY (wo.authorization_source = 'pathologist_request') DESC, wo.requested_at DESC, s.accession_id, s.block_id, s.slide_seq LIMIT ?`,
+        WHERE ${where} ORDER BY (wo.authorization_source IN ('pathologist_request','staff_entered_request')) DESC, wo.requested_at DESC, s.accession_id, s.block_id, s.slide_seq LIMIT ?`,
     )
     .all(limit) as { id: string; wo_display: string | null; auth: string | null }[];
   return {
     total,
     rows: rows.map((r) => {
       const info = getSlide(db, r.id)!;
-      return { slideId: r.id, label: slideText(info), workOrderDisplayId: r.wo_display, physicalState: info.physical_state, purpose: r.auth === "pathologist_request" ? "additional_work" : "initial" };
+      return { slideId: r.id, label: slideText(info), workOrderDisplayId: r.wo_display, physicalState: info.physical_state, purpose: r.auth === "pathologist_request" || r.auth === "staff_entered_request" ? "additional_work" : "initial" };
     }),
   };
 }

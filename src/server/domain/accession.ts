@@ -16,12 +16,14 @@ import {
   comparisonForContainer,
   containersFor,
   coveringCategories,
+  identityCoverage,
   intakeStaffName,
   loadIntakeItem,
   type CompareField,
   type DiscrepancyRow,
   type IntakeItemRow,
 } from "./intake";
+import { openSourceConflictsForOrder } from "./sourceConflict";
 import { accessionSourceStatus, issueNumber, recordIssuedEvent, simulatorCtx, type IssuedNumber } from "../sim/authoritative";
 import { labDay } from "@/lib/time";
 
@@ -32,8 +34,12 @@ import { labDay } from "@/lib/time";
  *     current now), or each recorded mismatch covered by a clarification of a
  *     matching category that is still open or was resolved after the finding;
  *   - a patient identity mismatch (name, birth date, MRN) blocks until an
- *     identity clarification is RESOLVED by a lead: an open question or a
- *     scoped hold is not enough;
+ *     identity clarification is RESOLVED by a lead as "office confirmed the
+ *     order is correct" (confirmed_order): an open question, a scoped hold, a
+ *     clarification of another category or any other resolution code is not
+ *     enough (intake.ts identityCoverage);
+ *   - no open source-conflict review on a linked order or its patient
+ *     reference (the source sent different patient or order-level details);
  *   - every expected container received (or its absence covered by a
  *     clarification); more containers than expected covered or accepted;
  *   - routing confirmed or overridden (an exception must be resolved by a lead);
@@ -48,7 +54,7 @@ import { labDay } from "@/lib/time";
 export interface Blocker {
   code:
     | "not_found" | "status" | "office_unknown" | "order_not_linked" | "order_canceled" | "container_unverified" | "discrepancy_uncovered"
-    | "identity_unresolved" | "verification_stale" | "missing_container" | "extra_container" | "unmatched_container"
+    | "identity_unresolved" | "source_conflict_open" | "verification_stale" | "missing_container" | "extra_container" | "unmatched_container"
     | "routing_not_confirmed" | "routing_exception" | "routing_differs" | "related_pending"
     | "related_request_together" | "related_kept_separate" | "not_grouped" | "different_patients" | "hold" | "pending_request";
   intakeItemId: string | null;
@@ -119,6 +125,20 @@ export function accessionBlockers(db: DB, intakeItemIds: string[], ownRequestId?
     if (!item.office_id) b("office_unknown", `${item.display_id}: office "${item.observed_office_text ?? "unknown"}" is not in the office directory`);
     if (!orders.length) b("order_not_linked", `${item.display_id}: no source order is linked (order ids are looked up within the office's tenant)`);
     for (const o of orders) if (o.source_status === "canceled") b("order_canceled", `${o.source_order_id} is canceled at the source`);
+    // The source sent patient (or order-level) details that differ from what is on file: a lead reviews it first.
+    const seenConflicts = new Set<string>();
+    for (const o of orders) {
+      for (const t of openSourceConflictsForOrder(db, o)) {
+        if (seenConflicts.has(t.id)) continue;
+        seenConflicts.add(t.id);
+        b(
+          "source_conflict_open",
+          t.entity_type === "patient_ref"
+            ? `${o.source_order_id}: the source sent patient details that differ from the patient on file. Accession waits until an accessioning lead or supervisor reviews the source conflict; nothing is merged or changed automatically`
+            : `${o.source_order_id}: a newer order version changed order-level details (patient, office or encounter) that were not applied. Accession waits until an accessioning lead or supervisor reviews the source conflict`,
+        );
+      }
+    }
 
     // Containers and expected parts.
     const containers = containersFor(db, item.id);
@@ -143,12 +163,14 @@ export function accessionBlockers(db: DB, intakeItemIds: string[], ownRequestId?
       }
       if (identity.length) {
         const since = identity.map((i) => i.since).filter((x): x is string => !!x).sort()[0] ?? null;
-        const cov = clarificationCovering(db, { ...refs, intakeItemId: item.id }, { categories: coveringCategories("field_mismatch", "patient_name"), since, resolvedOnly: true });
-        if (!cov) {
+        const cov = identityCoverage(db, { ...refs, intakeItemId: item.id }, since);
+        if (!cov.covering) {
           const labels = [...new Set(identity.map((i) => COMPARE_FIELD_LABEL[i.field as CompareField]?.toLowerCase() ?? i.field))].join(", ");
           b(
             "identity_unresolved",
-            `${where}: patient identity differs (${labels}). Accession waits until an identity clarification is resolved by a lead; an open question or a scoped hold is not enough`,
+            cov.notCovering
+              ? `${where}: patient identity differs (${labels}). ${cov.notCovering.clarification.display_id} was ${cov.notCovering.why}`
+              : `${where}: patient identity differs (${labels}). Accession waits until a lead resolves an identity clarification as "office confirmed the order is correct"; an open question or a scoped hold is not enough`,
           );
         }
       }
@@ -383,15 +405,24 @@ export function requestAccession(ctx: Ctx, intakeItemIds: string[], relatedCandi
       `INSERT INTO accession_request (id, display_id, status, related_candidate_id, requested_by, requested_at, idempotency_key, accession_id, failure_detail, version)
        VALUES (?, ?, 'submitted', ?, ?, ?, ?, NULL, NULL, 1)`,
     ).run(id, disp, relatedCandidateId ?? null, ctx.actor.id, ctx.now, key);
+    const refs = {
+      request: { id, displayId: disp, idempotencyKey: key },
+      intakeItems: items.map((i) => ({ id: i.id, displayId: i.display_id })),
+      relatedCandidateId: relatedCandidateId ?? null,
+      sourceOrders: [...new Set(items.flatMap((i) => itemOrders(db, i).orders.map((o) => `${o.tenant_id}:${o.source_order_id}`)))],
+      routingDecisionIds: items.map((i) => currentRouting(db, i.id)?.id ?? null),
+    };
     for (const it of items) {
       db.prepare("INSERT INTO accession_request_item (request_id, intake_item_id) VALUES (?, ?)").run(id, it.id);
-      updateVersioned(db, "intake_item", it.id, undefined, { status: "accession_requested", updated_at: ctx.now, updated_by: ctx.actor.id });
+      const next = updateVersioned(db, "intake_item", it.id, undefined, { status: "accession_requested", updated_at: ctx.now, updated_by: ctx.actor.id });
       audit(ctx, {
         action: "accession.requested",
         entityType: "accession_request",
         entityId: id,
         intakeItemId: it.id,
         summary: `${ctx.actor.name} requested an accession from the simulated source for ${label} (request ${disp})`,
+        before: { intakeItem: { id: it.id, status: it.status, version: it.version }, request: null },
+        after: { intakeItem: { id: it.id, status: "accession_requested", version: next.version }, ...refs, request: { ...refs.request, status: "submitted" } },
       });
     }
     req = db.prepare("SELECT * FROM accession_request WHERE id = ?").get(id) as RequestRow;

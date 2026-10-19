@@ -14,7 +14,7 @@ import { SourceFreshness } from "./source-freshness";
  * affects decisions), the always-visible Synthetic demo status, and one
  * presenter menu (role switch, demo clock, guided demo, settings, keys).
  */
-export function TopBar({ actor, staff, counts }: { actor: ShellActor; staff: ShellStaff[]; counts: NavCounts }) {
+export function TopBar({ actor, staff, counts, demo }: { actor: ShellActor; staff: ShellStaff[]; counts: NavCounts; demo: boolean }) {
   return (
     <div
       data-on-dark
@@ -36,8 +36,17 @@ export function TopBar({ actor, staff, counts }: { actor: ShellActor; staff: She
         <ShortcutsButton />
       </div>
       <div className="contents max-lg:ml-auto max-lg:flex max-lg:items-center max-lg:gap-2">
-        <DemoBanner />
-        <PresenterMenu actor={actor} staff={staff} />
+        {demo ? (
+          <>
+            <DemoBanner />
+            <PresenterMenu actor={actor} staff={staff} />
+          </>
+        ) : (
+          // Locked build (no HLOS_MODE=demo, no identity provider): read only, no role switch, no presenter tools.
+          <p role="note" className="inline-flex h-7 items-center gap-1.5 rounded-pill bg-warning-on-dark px-2.5 text-sm font-semibold text-shell">
+            Locked: no sign-in configured, changes are refused
+          </p>
+        )}
       </div>
     </div>
   );

@@ -511,7 +511,7 @@ describe("tasks: claiming, taking over and releasing the next step", () => {
     expect(one<{ n: number }>(db, "SELECT COUNT(*) n FROM audit_event WHERE action = 'command.denied' AND actor_id = ?", STAFF.director).n).toBe(1);
 
     // The owner releases without a reason; the task goes back to the histotech queue.
-    must(db, STAFF.priya, "task.release", { taskId });
+    must(db, STAFF.priya, "task.release", { taskId, expectedVersion: one<{ version: number }>(db, "SELECT version FROM task WHERE id = ?", taskId).version });
     expect(one<{ owner_id: string | null; owner_role: string; status: string }>(db, "SELECT owner_id, owner_role, status FROM task WHERE id = ?", taskId)).toEqual({
       owner_id: null, owner_role: "histotech", status: "open",
     });
@@ -550,13 +550,13 @@ describe("tasks: claiming, taking over and releasing the next step", () => {
     expect(ev.summary).toMatch(/taken over from Sam Ortiz/);
 
     // Someone else's task: a histotech cannot release it; the lead can, with a reason.
-    const notOwner = run(db, STAFF.priya, "task.release", { taskId: task.id });
+    const notOwner = run(db, STAFF.priya, "task.release", { taskId: task.id, expectedVersion: one<{ version: number }>(db, "SELECT version FROM task WHERE id = ?", task.id).version });
     expect(notOwner.ok).toBe(false);
     if (!notOwner.ok) expect(notOwner.error.code).toBe("FORBIDDEN");
-    const leadNoReason = run(db, STAFF.kim, "task.release", { taskId: task.id });
+    const leadNoReason = run(db, STAFF.kim, "task.release", { taskId: task.id, expectedVersion: one<{ version: number }>(db, "SELECT version FROM task WHERE id = ?", task.id).version });
     expect(leadNoReason.ok).toBe(false);
     if (!leadNoReason.ok) expect(leadNoReason.error.code).toBe("VALIDATION");
-    must(db, STAFF.kim, "task.release", { taskId: task.id, reason: "Back to the source-entry queue" });
+    must(db, STAFF.kim, "task.release", { taskId: task.id, reason: "Back to the source-entry queue", expectedVersion: one<{ version: number }>(db, "SELECT version FROM task WHERE id = ?", task.id).version });
     expect(one<{ owner_id: string | null; owner_role: string; status: string }>(db, "SELECT owner_id, owner_role, status FROM task WHERE id = ?", task.id)).toEqual({
       owner_id: null, owner_role: "histology_assistant", status: "open",
     });
@@ -606,7 +606,7 @@ describe("case detail and operations read models", () => {
     expect(c.summary.isComplete).toBe(false);
     expect(c.summary.text).toMatch(/^Not complete: /);
     // The headline gives the count; the parts line under it names the part that is not done.
-    expect(c.summary.text).toMatch(/^Not complete: 0 of 2 parts delivered/);
+    expect(c.summary.text).toMatch(/^Not complete: 0 of 2 parts sent on trays/);
     expect(c.summary.partsSummary).toContain(`${acc.parts[1].designation} awaiting gross`);
     expect(c.operationalSummary.label).toMatch(/Computed summary \(deterministic demo\) — not AI/);
     expect(c.operationalSummary.items.length).toBeGreaterThan(0);
@@ -669,12 +669,12 @@ describe("case detail and operations read models", () => {
     expect(caseIsComplete(target!)).toBe(false);
     const c = getCase(db, target!.accessionNumber)!;
     expect(c.summary.isComplete).toBe(false);
-    expect(c.summary.text).toMatch(/^Not complete: (all \d+ parts|the only part is) delivered, but additional work is open: WO-\d+/);
+    expect(c.summary.text).toMatch(/^Not complete: (all \d+ parts are|the only part is) sent on trays, but additional work is open: WO-\d+/);
     expect(c.operationalSummary.items[c.operationalSummary.items.length - 1].text).toMatch(/^Case not complete/);
     const row = findWorklistRow(db, STAFF.priya, target!.accessionNumber);
     if (row) {
       expect(row.isComplete).toBe(false);
-      expect(row.readinessText).not.toMatch(/^All parts delivered/);
+      expect(row.readinessText).not.toMatch(/^All parts sent on trays/);
     }
   });
 

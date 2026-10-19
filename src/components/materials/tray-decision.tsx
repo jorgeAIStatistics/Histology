@@ -91,14 +91,15 @@ function ReleaseDialog({ open, onClose, view }: { open: boolean; onClose: () => 
   const toast = useToast();
   const [note, setNote] = useState("");
   const [blank, setBlank] = useState(false);
-  const cmd = useCommand<Msg, { trayId: string; note: string }>("tray.releaseWithExceptions", { errorToast: false });
+  const cmd = useCommand<Msg, { trayId: string; note: string; expectedVersion: number }>("tray.releaseWithExceptions", { errorToast: false });
   const outstanding = view.expected.filter((e) => e.state === "missing" || e.state === "follows_separately");
   const submit = async () => {
     if (!note.trim()) {
       setBlank(true);
       return;
     }
-    const out = await cmd.run({ trayId: view.tray.id, note: note.trim() });
+    // The tray version behind the list shown in this dialog: a newer scan or decision is refused as a conflict.
+    const out = await cmd.run({ trayId: view.tray.id, note: note.trim(), expectedVersion: view.tray.version });
     if (out.ok) {
       toast.show({
         tone: "warning",

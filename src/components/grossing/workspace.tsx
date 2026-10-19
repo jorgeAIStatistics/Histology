@@ -373,7 +373,7 @@ function DownstreamSheet({ ws, showOpenTasks }: { ws: PartWorkspace; showOpenTas
         {ws.readiness ? (
           <div className="border-t border-line pt-3 text-sm">
             <p className="text-ink">
-              Case: {ws.readiness.caseSummary}. {ws.readiness.caseComplete ? "All parts delivered." : "The case is not complete."}
+              Case: {ws.readiness.caseSummary}. {ws.readiness.caseComplete ? "All parts sent on trays; receipt not recorded." : "The case is not complete."}
             </p>
             {ws.readiness.blockedBy.length ? <p className="text-ink-secondary">Not ready: {ws.readiness.blockedBy.join("; ")}</p> : null}
           </div>
@@ -758,7 +758,8 @@ export function GrossingWorkspace({ ws }: { ws: PartWorkspace }) {
   };
 
   const attach = async (key: string) => {
-    const out = track(await loadCmd.run({ specimenPartId: id.partId, transcriptKey: key, ...(rec ? { expectedVersion: versionRef.current } : {}) }));
+    // null = no gross record when this screen was opened; a record someone else started meanwhile is a conflict.
+    const out = track(await loadCmd.run({ specimenPartId: id.partId, transcriptKey: key, expectedVersion: rec ? versionRef.current : null }));
     if (out.ok) {
       clearLocal();
       const c = out.result.counts;

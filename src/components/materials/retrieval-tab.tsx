@@ -76,7 +76,9 @@ function BlockItem({ item, total, now, requestDisplayId, canAct, inBox }: { item
   const [nfOpen, setNfOpen] = useState(false);
   const [code, setCode] = useState(item.location.code && item.location.code.startsWith("CAB-") ? item.location.code : "");
   const toast = useToast();
-  const ret = useCommand<{ message: string }, { blockId: string; locationCode: string }>("retrieval.return", { errorToast: false });
+  const ret = useCommand<{ message: string }, { blockId: string; locationCode: string; note?: string }>("retrieval.return", { errorToast: false });
+  const [foundNote, setFoundNote] = useState("");
+  const wasMissing = item.availability === "missing";
   /** Checked out or sent outside the lab: the most recent confirmed custody is the holder, not the storage slot. */
   const away = item.status === "pending" && (item.availability === "checked_out" || item.availability === "sent_out");
   const segs = locationSegments(item.location.code);
@@ -185,18 +187,23 @@ function BlockItem({ item, total, now, requestDisplayId, canAct, inBox }: { item
             </Button>
           </div>
         ) : null}
-        {canAct && (item.status === "picked" || item.status === "delivered") ? (
+        {canAct && (item.status === "picked" || item.status === "delivered" || wasMissing) ? (
           <div className="flex flex-wrap items-end gap-2">
             <Field label="Return to slot" className="w-[260px]" hint="Confirms this block's slot only, not the rest of the box.">
               <Input size="sm" mono value={code} onChange={(e) => setCode(e.target.value)} placeholder="CAB-2/DR-4/BX-11/S-14" />
             </Field>
+            {wasMissing ? (
+              <Field label="Where it was found" required className="w-[300px]" hint="Closes the missing-material investigation with this note.">
+                <Input size="sm" value={foundNote} onChange={(e) => setFoundNote(e.target.value)} placeholder="e.g. found in the embedding-station tray" />
+              </Field>
+            ) : null}
             <Button
               size="sm"
               variant="secondary"
               icon={<Undo2 className="size-4" aria-hidden />}
               loading={ret.pending}
               onClick={async () => {
-                const out = await ret.run({ blockId: item.blockId, locationCode: code });
+                const out = await ret.run({ blockId: item.blockId, locationCode: code, ...(wasMissing ? { note: foundNote } : {}) });
                 if (out.ok) toast.show({ tone: "success", title: "Block returned", body: out.result.message });
               }}
             >

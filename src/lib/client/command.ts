@@ -38,6 +38,7 @@ export function newIdempotencyKey(prefix = "ui"): string {
 
 const STATUS_CODE: Record<number, CommandErrorCode> = {
   400: "VALIDATION",
+  401: "AUTH_REQUIRED",
   403: "FORBIDDEN",
   404: "NOT_FOUND",
   409: "CONFLICT",
@@ -98,6 +99,9 @@ export const ERROR_TITLE: Record<CommandErrorCode, string> = {
   SOURCE_OFFLINE: "Source system unreachable (simulated)",
   PRINTER_UNAVAILABLE: "Printer unavailable (simulated)",
   ASSISTANT_UNAVAILABLE: "Drafting assistant unavailable",
+  IDEMPOTENCY_CONFLICT: "This request was already used",
+  IDEMPOTENCY_EXPIRED: "This request has expired",
+  AUTH_REQUIRED: "Sign-in is not configured",
   NETWORK: "Could not reach the local server",
 };
 

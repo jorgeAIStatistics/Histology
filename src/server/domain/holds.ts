@@ -98,10 +98,33 @@ export function assertNotHeld(db: DB, transition: HoldTransition, scopes: Scope[
 
 // ---------------------------------------------------------------- scope chains
 
+/** Hold scopes that cover a whole specimen part (and everything made from it), as opposed to one block, slide or work order. */
+export const PART_LEVEL_SCOPES: readonly ScopeType[] = ["specimen_part", "order_part", "container", "intake_item", "accession"];
+
+/**
+ * The intake item(s) a part physically came from: its container's intake item, or (no container linked) the
+ * intake items on the same accession that carried its source order. A hold placed on an intake item before
+ * accessioning keeps applying to the parts issued from it.
+ */
+export function intakeItemsForPart(db: DB, p: { accession_id: string; source_order_id: string; container_id: string | null }): string[] {
+  if (p.container_id) {
+    const c = db.prepare("SELECT intake_item_id FROM container WHERE id = ?").get(p.container_id) as { intake_item_id: string } | undefined;
+    if (c) return [c.intake_item_id];
+  }
+  return (
+    db
+      .prepare(
+        `SELECT ii.id FROM intake_item ii JOIN intake_order_link l ON l.intake_item_id = ii.id
+          WHERE ii.accession_id = ? AND l.source_order_id = ? ORDER BY ii.id`,
+      )
+      .all(p.accession_id, p.source_order_id) as { id: string }[]
+  ).map((r) => r.id);
+}
+
 /** Everything whose hold should also apply to this specimen part. */
 export function scopesForPart(db: DB, partId: string): Scope[] {
-  const p = db.prepare("SELECT accession_id, source_order_part_id, container_id FROM specimen_part WHERE id = ?").get(partId) as
-    | { accession_id: string; source_order_part_id: string; container_id: string | null }
+  const p = db.prepare("SELECT accession_id, source_order_id, source_order_part_id, container_id FROM specimen_part WHERE id = ?").get(partId) as
+    | { accession_id: string; source_order_id: string; source_order_part_id: string; container_id: string | null }
     | undefined;
   if (!p) return [{ type: "specimen_part", id: partId }];
   const scopes: Scope[] = [
@@ -110,6 +133,7 @@ export function scopesForPart(db: DB, partId: string): Scope[] {
     { type: "order_part", id: p.source_order_part_id },
   ];
   if (p.container_id) scopes.push({ type: "container", id: p.container_id });
+  for (const ii of intakeItemsForPart(db, p)) scopes.push({ type: "intake_item", id: ii });
   return scopes;
 }
 

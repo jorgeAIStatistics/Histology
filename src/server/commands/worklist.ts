@@ -263,7 +263,7 @@ export const taskRelease = defineCommand({
   input: z.object({
     taskId: z.string().min(1).max(64),
     reason: z.string().trim().max(200).optional(),
-    expectedVersion: z.number().int().min(1).optional(),
+    expectedVersion: z.number().int().min(1),
   }),
   run: (ctx, input) => {
     const t = loadTask(ctx, input.taskId);
@@ -274,7 +274,8 @@ export const taskRelease = defineCommand({
     if (check.othersTask && (!reason || reason.length < 3)) {
       throw new DomainError("VALIDATION", `Releasing ${staffName(ctx, t.owner_id)}'s task needs a reason (recorded in the audit log).`);
     }
-    const updated = updateVersioned(ctx.db, "task", t.id, input.expectedVersion ?? t.version, { owner_id: null, status: "open" }) as unknown as TaskRow;
+    // A stale view (the task was claimed, released or changed after the user loaded it) is a conflict, never applied.
+    const updated = updateVersioned(ctx.db, "task", t.id, input.expectedVersion, { owner_id: null, status: "open" }) as unknown as TaskRow;
     audit(ctx, {
       action: "task.released",
       entityType: "task",

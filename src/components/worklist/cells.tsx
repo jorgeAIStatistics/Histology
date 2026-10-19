@@ -2,7 +2,7 @@ import { Fragment } from "react";
 import { Plug, UserRound } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { HoldPill, PasTag, UnknownValue } from "@/components/domain";
-import { groupParts } from "./format";
+import { groupParts, holdStepsShort } from "./format";
 import type { ChangeTag as ChangeTagKind, HoldEntry, StainEntry, WorklistRow } from "@/server/queries/worklist";
 
 /**
@@ -161,11 +161,15 @@ export function StainText({ stain, className }: { stain: StainEntry; className?:
   );
 }
 
-/** A hold as the shared hatched chip with its scope ("Hold: Part B"); its id and reason in the tooltip. */
-export function HoldChip({ hold }: { hold: Pick<HoldEntry, "displayId" | "scopeLabel" | "reasonText"> }) {
+/**
+ * A hold as the shared hatched chip with its exact scope and the steps it stops ("Hold: Part B (gross approval)",
+ * "Hold: A1 (processing)", "Hold: Whole case (all steps)"); its id and reason in the tooltip.
+ */
+export function HoldChip({ hold }: { hold: Pick<HoldEntry, "displayId" | "scopeLabel" | "reasonText"> & Partial<Pick<HoldEntry, "target" | "blocks">> }) {
+  const steps = hold.blocks?.length ? holdStepsShort(hold.blocks) : null;
   return (
     <span title={`${hold.displayId}: ${hold.reasonText}`} className="inline-flex">
-      <HoldPill scope={shortScope(hold.scopeLabel)} />
+      <HoldPill scope={`${hold.target ?? shortScope(hold.scopeLabel)}${steps ? ` (${steps})` : ""}`} />
     </span>
   );
 }

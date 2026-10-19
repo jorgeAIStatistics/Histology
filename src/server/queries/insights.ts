@@ -2,8 +2,15 @@ import type { DB } from "@/server/db/db";
 import { readClock } from "@/server/core/clock";
 import { getSetting } from "@/server/core/settings";
 import { labDay } from "@/lib/time";
-import { OPEN_CLARIFICATION_STATES } from "@/lib/domain";
+import { AWAITING_SOURCE_ENTRY_SQL, OPEN_CLARIFICATION_STATES } from "@/lib/domain";
 import { ROLE_LABEL, rolesFor, type Permission } from "@/lib/roles";
+import { OPEN_ROUTING_EXCEPTION_SQL } from "./predicates";
+
+/**
+ * Provenance of every "today" figure: the seed writes the demo day's morning (intake items, clarifications,
+ * approved gross records, accessions) and this session adds to it. Both are synthetic; neither is observed.
+ */
+export const TODAY_PROVENANCE = "Seeded synthetic + this session";
 
 /**
  * Insights: how a pilot WOULD be measured (docs/pilot-proposal.md §6), shown on
@@ -89,6 +96,8 @@ export interface DurationSummary {
   /** missing as a percent of total (one decimal); null when total is 0. */
   missingPct: number | null;
   missingRefs: string[];
+  /** Where the sample came from, shown beside it (today: "Seeded synthetic + this session", and what the end events were). */
+  provenance?: string;
 }
 
 /**
@@ -182,7 +191,7 @@ export const DEFINITIONS: Record<"arrivals" | "clarAck" | "clarResolve" | "gross
     exclusions: "None. Items canceled later are still counted as arrivals.",
     stillOpen: "Not applicable.",
     missing: "Arrivals without a recorded time are not plotted; they are counted in the table as 'Arrival time not recorded', never as zero.",
-    dataSource: "Illustrative: seeded prior-day 'received' events. Today: intake item receipt times from this demo session. Both synthetic.",
+    dataSource: "Illustrative: seeded prior-day 'received' events. Today: intake item receipt times on the demo day (seeded synthetic + this session). Both synthetic.",
     summary: "Mean arrivals per day by hour; today's counts so far.",
     relatesTo: "Context for M1 (hands-on accession minutes) and staffing around courier times.",
   },
@@ -196,7 +205,7 @@ export const DEFINITIONS: Record<"arrivals" | "clarAck" | "clarResolve" | "gross
     exclusions: "Questions never sent (drafts) and questions canceled before sending. A question canceled after sending stays in the sample if it was acknowledged; if it was canceled before any acknowledgement it has no end event, so it is excluded from timing and counted separately as 'canceled after sending, never acknowledged'. (This demo has no separate duplicate code; a duplicate is canceled with a reason.)",
     stillOpen: "Sent but not yet acknowledged or answered: counted separately with the oldest current age. Not part of the median or p90.",
     missing: "Marked acknowledged, answered or resolved but a start or end time is missing (or the end is before the start): excluded from timing and counted. Never treated as fast.",
-    dataSource: "Illustrative: seeded prior-day 'clarification sent' and 'clarification answered' events (the illustrative events have no separate acknowledgement, so the reply is the first acknowledgement). Today: clarification sent, acknowledged and answered times from this demo session.",
+    dataSource: "Illustrative: seeded prior-day 'clarification sent' and 'clarification answered' events (the illustrative events have no separate acknowledgement, so the reply is the first acknowledgement). Today: clarification sent, acknowledged and answered times on the demo day (seeded synthetic + this session). Office answers are labeled by how they arrived: simulated office answers (simulated portal or EMA message) are counted apart from answers recorded by staff.",
     summary: "Median and 90th percentile (nearest rank) with n; missing events as a number and a percent. The 90th percentile is shown only when n is 10 or more (demo threshold; the pilot proposal suggests 30).",
     relatesTo: "Pilot metric M2. Office results are for collaboration, not blame.",
   },
@@ -210,7 +219,7 @@ export const DEFINITIONS: Record<"arrivals" | "clarAck" | "clarResolve" | "gross
     exclusions: "Canceled clarifications (before or after sending, including duplicates): they never reach a reviewed resolution. Today's canceled-after-sending count is shown beside the tiles.",
     stillOpen: "Not yet resolved (including answered but not reviewed): counted separately with the oldest current age.",
     missing: "Resolved but a start or end time is missing (or the end is before the start): excluded from timing and counted. Never treated as fast.",
-    dataSource: "Illustrative: seeded prior-day 'clarification sent' and 'clarification resolved' events. Today: clarification sent and resolved times from this demo session.",
+    dataSource: "Illustrative: seeded prior-day 'clarification sent' and 'clarification resolved' events. Today: clarification sent and resolved times on the demo day (seeded synthetic + this session). Simulated office answers are counted apart from answers recorded by staff.",
     summary: "Median and 90th percentile (nearest rank) with n; still-open and missing counts (number and percent) beside them. The 90th percentile needs n of 10 or more (demo threshold; the pilot proposal suggests 30).",
     relatesTo: "Pilot metric M3.",
   },
@@ -224,7 +233,7 @@ export const DEFINITIONS: Record<"arrivals" | "clarAck" | "clarResolve" | "gross
     exclusions: "Canceled parts and superseded record versions.",
     stillOpen: "Approved but not yet entered: counted separately with the oldest current age.",
     missing: "Entered but the approval time is missing, or entry before approval: excluded from timing and counted.",
-    dataSource: "Illustrative: seeded prior-day 'gross approved' and 'source entered' events. Today: gross record approval and attested-entry times from this demo session.",
+    dataSource: "Illustrative: seeded prior-day 'gross approved' and 'source entered' events. Today: gross record approval and attested-entry times on the demo day (seeded synthetic + this session).",
     summary: "Median and 90th percentile (nearest rank) with n; a histogram of delays; time of day entries were made. The 90th percentile needs n of 10 or more (demo threshold; the pilot proposal suggests 30).",
     relatesTo: "Pilot metric M4. Grossing work, transcription, verification, batch waiting and integration lag must be measured separately to find the real constraint.",
   },
@@ -235,7 +244,7 @@ export const DEFINITIONS: Record<"arrivals" | "clarAck" | "clarResolve" | "gross
     denominator: "Open items at the snapshot: clarifications, active holds, approved gross records awaiting source entry (including failed entries), print jobs with unknown outcome, trays not verified, open retrieval requests, open work orders.",
     startEvent: "Item created (first recorded).",
     endEvent: "The snapshot time on the demo clock (a point-in-time measure, not a completion time).",
-    exclusions: "None in this demo (no items are parked under a documented policy).",
+    exclusions: "Canceled parts (their gross records leave the source-entry backlog). No items are parked under a documented policy in this demo.",
     stillOpen: "All items here are open by definition.",
     missing: "Items with an unknown creation time are shown as 'Age unknown', never as age zero. A type whose records cannot be read is shown as 'Unknown: could not be read', never as none open.",
     dataSource: "Current synthetic records in this demo database at the current demo clock time. Not illustrative prior-day data.",
@@ -252,7 +261,7 @@ export const DEFINITIONS: Record<"arrivals" | "clarAck" | "clarResolve" | "gross
     exclusions: "None.",
     stillOpen: "Not applicable.",
     missing: "Cases with no assigned dermatopathologist are shown as 'Unassigned', never dropped.",
-    dataSource: "Illustrative: seeded prior-day 'received' events with the routed dermatopathologist. Today: accessions issued on the demo day.",
+    dataSource: "Illustrative: seeded prior-day 'received' events with the routed dermatopathologist. Today: accessions issued on the demo day (seeded synthetic + this session).",
     summary: "Mean cases per day per dermatopathologist; today's counts so far (always for every dermatopathologist, whatever the filter). Describes workload distribution only; it is not a performance measure.",
     relatesTo: "Context for the worklist (replacing the information role of the printed daily report).",
   },
@@ -338,6 +347,8 @@ export interface DoctorCount {
 export interface InsightsData {
   asOf: string;
   demoDay: string;
+  /** Provenance tag for every "today" figure (TODAY_PROVENANCE): seeded synthetic demo-day rows plus this session's. */
+  todayProvenance: string;
   filters: { from: string; to: string; office: string | null; doctor: string | null };
   options: { days: string[]; offices: Option[]; doctors: DoctorOption[] };
   priorDays: string[];
@@ -496,11 +507,31 @@ export function getInsights(db: DB, f: InsightsFilters = {}): InsightsData {
   // ---- clarifications (today, live synthetic)
   const liveClar = (
     db
-      .prepare(`SELECT display_id, state, created_at, sent_at, acknowledged_at, answered_at, resolved_at FROM clarification`)
+      .prepare(`SELECT display_id, state, created_at, sent_at, acknowledged_at, answered_at, resolved_at, answer_channel FROM clarification`)
       .all() as {
       display_id: string; state: string; created_at: string; sent_at: string | null; acknowledged_at: string | null; answered_at: string | null; resolved_at: string | null;
+      answer_channel: string | null;
     }[]
   ).filter((c) => labDay(c.created_at) === demoDay);
+  /** How an office answer arrived: simulated (portal or EMA message) or recorded by staff (phone, other). */
+  const answerSource = (c: (typeof liveClar)[number]) =>
+    !c.answered_at ? null : c.answer_channel?.startsWith("simulated_") ? "simulated" : c.answer_channel?.endsWith("_recorded_by_staff") ? "staff" : "unknown";
+  const answerSourcesText = (items: (typeof liveClar)[number][], ackCounts: boolean) => {
+    const n = { simulated: 0, staff: 0, unknown: 0, ackOnly: 0 };
+    for (const c of items) {
+      const src = answerSource(c);
+      // M2 ends at the first acknowledgement or reply: an acknowledgement before any answer is its own kind.
+      if (ackCounts && c.acknowledged_at && (!c.answered_at || c.acknowledged_at < c.answered_at)) n.ackOnly += 1;
+      else if (src) n[src] += 1;
+    }
+    const bits = [
+      `${n.simulated} simulated office ${n.simulated === 1 ? "answer" : "answers"}`,
+      `${n.staff} recorded by staff`,
+      ...(n.unknown ? [`${n.unknown} with the channel not recorded`] : []),
+      ...(ackCounts && n.ackOnly ? [`${n.ackOnly} ended by an acknowledgement`] : []),
+    ];
+    return `${TODAY_PROVENANCE}. End events: ${bits.join(", ")}.`;
+  };
   const earliest = (...xs: (string | null)[]) => xs.filter((x): x is string => !!x).sort()[0] ?? null;
   const ackStates = new Set(["acknowledged", "answered", "reviewed", "resolved"]);
   // Excluded: drafts never sent, and questions canceled before sending (pilot M2 exclusions).
@@ -511,20 +542,22 @@ export function getInsights(db: DB, f: InsightsFilters = {}): InsightsData {
   // Canceled after sending: kept for M2 when it was acknowledged first; otherwise it has no end event and is counted apart.
   const canceledAfterSend = sentToday.filter((c) => c.state === "canceled");
   const todayCanceledUnacknowledged = canceledAfterSend.filter((c) => !ackEnd(c)).length;
+  const ackSample = sentToday.filter((c) => c.state !== "canceled" || !!ackEnd(c));
   const todayAck = summarizeTimings(
-    sentToday
-      .filter((c) => c.state !== "canceled" || !!ackEnd(c))
-      .map((c) => {
-        const end = ackEnd(c);
-        return { ref: c.display_id, start: c.sent_at, end, open: !end && !ackStates.has(c.state) && c.state !== "canceled" };
-      }),
+    ackSample.map((c) => {
+      const end = ackEnd(c);
+      return { ref: c.display_id, start: c.sent_at, end, open: !end && !ackStates.has(c.state) && c.state !== "canceled" };
+    }),
     asOf,
   );
+  todayAck.provenance = answerSourcesText(ackSample.filter((c) => !!ackEnd(c)), true);
   // M3: a canceled clarification never reaches a reviewed resolution, so it is excluded (and counted).
+  const resolveSample = sentToday.filter((c) => c.state !== "canceled");
   const todayResolve = summarizeTimings(
-    sentToday.filter((c) => c.state !== "canceled").map((c) => ({ ref: c.display_id, start: c.sent_at, end: c.resolved_at, open: c.state !== "resolved" })),
+    resolveSample.map((c) => ({ ref: c.display_id, start: c.sent_at, end: c.resolved_at, open: c.state !== "resolved" })),
     asOf,
   );
+  todayResolve.provenance = answerSourcesText(resolveSample.filter((c) => c.state === "resolved"), false);
 
   // ---- gross approval -> source entry (illustrative)
   const grossCases = all.filter((c) => c.ev.has("gross_approved") || c.ev.has("source_entered"));
@@ -567,6 +600,7 @@ export function getInsights(db: DB, f: InsightsFilters = {}): InsightsData {
     }),
     asOf,
   );
+  todayGross.provenance = `${TODAY_PROVENANCE}. "Entered" is a staff attestation, not a source acknowledgement.`;
 
   // ---- unresolved work age (live snapshot)
   const workAge = workAgeSnapshot(db, asOf);
@@ -586,7 +620,7 @@ export function getInsights(db: DB, f: InsightsFilters = {}): InsightsData {
     db
       .prepare(
         `SELECT COUNT(*) AS n FROM routing_decision rd JOIN intake_item ii ON ii.id = rd.intake_item_id
-          WHERE rd.status = 'exception' AND ii.accession_id IS NULL`,
+          WHERE ${OPEN_ROUTING_EXCEPTION_SQL}`,
       )
       .get() as { n: number }
   ).n;
@@ -611,6 +645,7 @@ export function getInsights(db: DB, f: InsightsFilters = {}): InsightsData {
   return {
     asOf,
     demoDay,
+    todayProvenance: TODAY_PROVENANCE,
     filters: { from, to, office, doctor },
     options: { days, offices, doctors },
     priorDays,
@@ -654,9 +689,10 @@ export function workAgeSnapshot(db: DB, asOf: string): { rows: WorkAgeRow[]; tot
       label: "Approved gross records awaiting source entry",
       link: "/worklist",
       owner: "gross.recordSourceEntry",
+      // The shared source-entry backlog (lib/domain): canceled parts excluded.
       sql: `SELECT a.accession_number || ' ' || sp.designation AS ref, gr.approved_at AS created FROM gross_record gr
               JOIN specimen_part sp ON sp.id = gr.specimen_part_id JOIN accession a ON a.id = sp.accession_id
-             WHERE gr.state = 'approved_for_downstream' AND gr.source_update_state IN ('not_started','pending_entry','failed')`,
+             WHERE ${AWAITING_SOURCE_ENTRY_SQL}`,
     },
     {
       type: "print_unknown",

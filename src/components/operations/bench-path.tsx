@@ -9,7 +9,7 @@ import { IdText } from "@/components/domain/id-text";
 import { HoldPill } from "@/components/domain/hold";
 
 /**
- * The bench path, intake to delivered, as one sheet: how many orders or parts
+ * The bench path, intake to sent on tray, as one sheet: how many orders or parts
  * sit at each stage, the longest wait there and the record that shows it, and
  * the holds hatched where they sit. Each count opens its records. Zeros
  * recede; delivered is quiet. Same rail vocabulary as the Intake step path
@@ -29,9 +29,9 @@ export function BenchPath({ stages, definition, now }: { stages: PathStage[]; de
           At {fmtSmart(now, now)} ET. {definition}
         </p>
       </div>
-      {/* Ten stages in one line from 1280px; below that the path wraps into two lines of five so no identifier is squeezed or split.
+      {/* Eleven stages in one line from 1280px; below that the path wraps into two lines (six, then five) so no identifier is squeezed or split.
           Tracks size to their content first (a long stage name keeps its line instead of pushing every other label down), then share the rest equally. */}
-      <ol className="grid grid-cols-[repeat(5,auto)] gap-x-1 px-4 pt-2.5 pb-2 max-xl:px-3 max-xl:pb-0.5 xl:grid-cols-[repeat(10,auto)]">
+      <ol className="grid grid-cols-[repeat(6,auto)] gap-x-1 px-4 pt-2.5 pb-2 max-xl:px-3 max-xl:pb-0.5 xl:grid-cols-[repeat(11,auto)]">
         {stages.map((s) => (
           <PathCell key={s.key} stage={s} />
         ))}

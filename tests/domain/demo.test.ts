@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import type { DB } from "@/server/db/db";
-import { testDb, run, must, one, all, STAFF } from "../helpers";
+import { testDb, run, must, one, all, STAFF, simulate } from "../helpers";
 import { listCommands } from "@/server/commands";
 import { loadActor, makeCtx } from "@/server/core/context";
 import { readClock } from "@/server/core/clock";
@@ -629,7 +629,7 @@ describe("guided demo: progress follows the order of events in the records", () 
   itNeeds(heroCommands, "a hold released BEFORE the amended order arrived does not count as 'released after the amendment'", () => {
     const db = testDb();
     const { clarificationId, holdId, orderB } = raisePartBClarification(db);
-    must(db, "system", "clarification.simulateOfficeAnswer", { clarificationId });
+    simulate(db, "clarification.simulateOfficeAnswer", { clarificationId });
     const ver = (t: string, id: string) => one<{ version: number }>(db, `SELECT version FROM ${t} WHERE id = ?`, id).version;
     must(db, STAFF.kim, "clarification.review", { clarificationId, expectedVersion: ver("clarification", clarificationId), note: "Office says left." });
     must(db, STAFF.kim, "clarification.resolve", { clarificationId, expectedVersion: ver("clarification", clarificationId), resolutionCode: "confirmed_observed", note: "Left confirmed." });
@@ -668,7 +668,7 @@ describe("insights: canceled clarifications are excluded per the definition and 
     const { clarificationId } = raisePartBClarification(db);
     const mid = getInsights(db);
     expect(mid.clarAck.today.stillOpen).toBe(base.clarAck.today.stillOpen + 1); // sent, waiting for the office
-    must(db, STAFF.kim, "clarification.cancel", { clarificationId, reason: "Raised on the wrong container (test)." });
+    must(db, STAFF.kim, "clarification.cancel", { clarificationId, reason: "Raised on the wrong container (test).", expectedVersion: one<{ version: number }>(db, "SELECT version FROM clarification WHERE id = ?", clarificationId).version });
     const after = getInsights(db);
     expect(after.clarAck.today.stillOpen).toBe(base.clarAck.today.stillOpen);
     expect(after.clarAck.today.n).toBe(base.clarAck.today.n);

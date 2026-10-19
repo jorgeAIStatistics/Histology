@@ -240,13 +240,14 @@ describe("Acceptance 8: a printer timeout stays unknown until reconciled; no unc
     const db = testDb();
     const block = one<{ id: string }>(db, "SELECT id FROM block WHERE physical_state = 'sectioned' AND custody_state = 'in_workflow' ORDER BY id LIMIT 1");
     const before = { slides: countSlides(db), jobs: countJobs(db) };
+    // Entered by a histotech: recorded as the histotech's entry on a stated request, never as the pathologist's own order.
     const r = must<{ workOrderId: string; slideId: string; slideLabel: string }>(db, STAFF.priya, "slide.orderAdditional", {
-      blockId: block.id, stain: "H&E", level: "deeper L2", reason: "Dr. Marsh asked for a deeper level",
+      blockId: block.id, stain: "H&E", level: "deeper L2", reason: "Dr. Marsh asked for a deeper level", requestReference: "Dr. Marsh, by phone at 10:40",
     });
     expect(countSlides(db)).toBe(before.slides + 1);
     expect(countJobs(db)).toBe(before.jobs);
-    expect(one(db, "SELECT kind, status, authorization_source, target_block_id FROM work_order WHERE id = ?", r.workOrderId)).toEqual({
-      kind: "levels", status: "requested", authorization_source: "pathologist_request", target_block_id: block.id,
+    expect(one(db, "SELECT kind, status, authorization_source, target_block_id, requested_by_staff_id FROM work_order WHERE id = ?", r.workOrderId)).toEqual({
+      kind: "levels", status: "requested", authorization_source: "staff_entered_request", target_block_id: block.id, requested_by_staff_id: STAFF.priya,
     });
     expect(one(db, "SELECT physical_state, label_state, work_order_id FROM slide WHERE id = ?", r.slideId)).toEqual({
       physical_state: "planned", label_state: "none", work_order_id: r.workOrderId,
@@ -293,10 +294,10 @@ describe("Acceptance 9: TRY-M-03 cannot become verified complete with a missing 
     expect(one(db, "SELECT owner_id FROM task WHERE kind = 'tray_exception' AND entity_type = 'tray' AND entity_id = 'tray_m03' AND status = 'open'")).toEqual({ owner_id: STAFF.priya });
 
     // Only a supervisor may release with exceptions; a histotech is refused by the server.
-    const ht = run(db, STAFF.priya, "tray.releaseWithExceptions", { trayId: "tray_m03", note: "Release anyway" });
+    const ht = run(db, STAFF.priya, "tray.releaseWithExceptions", { trayId: "tray_m03", note: "Release anyway", expectedVersion: trayVersion(db) });
     expect(!ht.ok && ht.error.code).toBe("FORBIDDEN");
     // Even a supervisor needs a controlled disposition for the missing slide first.
-    const early = run(db, STAFF.tanya, "tray.releaseWithExceptions", { trayId: "tray_m03", note: "Release" });
+    const early = run(db, STAFF.tanya, "tray.releaseWithExceptions", { trayId: "tray_m03", note: "Release", expectedVersion: trayVersion(db) });
     expect(!early.ok && early.error.code).toBe("BLOCKED");
 
     must(db, STAFF.priya, "tray.setDisposition", { trayId: "tray_m03", slideId: sc.missing, disposition: "follows_separately", note: "Still at the coverslipper; will walk it over" });
@@ -305,7 +306,7 @@ describe("Acceptance 9: TRY-M-03 cannot become verified complete with a missing 
     const stillNot = run(db, STAFF.priya, "tray.complete", { trayId: "tray_m03", expectedVersion: trayVersion(db) });
     expect(!stillNot.ok && stillNot.error.code).toBe("BLOCKED");
 
-    const rel = must<{ status: string }>(db, STAFF.tanya, "tray.releaseWithExceptions", { trayId: "tray_m03", note: "Dr. Marsh agreed to start; A1-2 follows" });
+    const rel = must<{ status: string }>(db, STAFF.tanya, "tray.releaseWithExceptions", { trayId: "tray_m03", note: "Dr. Marsh agreed to start; A1-2 follows", expectedVersion: trayVersion(db) });
     expect(rel.status).toBe("released_with_exceptions");
     // The tray-level exception is decided; the slide that follows separately keeps its own task.
     expect(one(db, "SELECT COUNT(*) n FROM task WHERE kind = 'tray_exception' AND entity_type = 'tray' AND entity_id = 'tray_m03' AND status = 'open'")).toEqual({ n: 0 });

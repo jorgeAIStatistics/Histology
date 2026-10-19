@@ -172,6 +172,7 @@ export const clarificationSimulateOfficeAnswer = defineCommand({
   description:
     "Demo control: the office simulator replies (labeled 'Simulated office reply'). For the hero ORD-77121 laterality question it also queues amended order ORD-77121 v2 in the simulated source, available 1 minute later. Idempotent.",
   permission: null,
+  audience: "presenter",
   input: z.object({ clarificationId: id }),
   run: (ctx, input) => simulateOfficeAnswer(ctx, input.clarificationId),
 });
@@ -225,7 +226,7 @@ export const clarificationCancel = defineCommand({
   name: "clarification.cancel",
   description: "Lead/supervisor cancels an open clarification with a reason. Linked holds stay active until released separately.",
   permission: "clarification.resolve",
-  input: z.object({ clarificationId: id, reason: required(1000, "A reason is required"), expectedVersion: version.optional() }),
+  input: z.object({ clarificationId: id, reason: required(1000, "A reason is required"), expectedVersion: version }),
   run: (ctx, input) => cancelClarification(ctx, input),
 });
 

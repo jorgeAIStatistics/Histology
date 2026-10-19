@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { getDb } from "@/server/db/db";
 import { loadActor } from "@/server/core/context";
+import { isDemoMode } from "@/server/runtime-mode";
 import { ACTOR_COOKIE, getActor, rejectCrossOrigin } from "@/server/session";
 
 /**
@@ -18,6 +19,12 @@ export async function GET() {
 export async function POST(req: Request) {
   const blocked = rejectCrossOrigin(req);
   if (blocked) return blocked;
+  if (!isDemoMode()) {
+    return Response.json(
+      { ok: false, error: { code: "FORBIDDEN", message: "The demo role switch exists only in synthetic demo mode. This build has no sign-in." } },
+      { status: 403, headers: { "Cache-Control": "no-store" } },
+    );
+  }
 
   let staffId: unknown;
   try {

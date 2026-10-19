@@ -9,6 +9,7 @@ import { Checkbox, Field, Input, Select, Textarea } from "@/components/ui/field"
 import { SimulatedLabel } from "@/components/domain/honesty";
 import { useToast } from "@/components/ui/toast";
 import { fieldErrors, useCommand } from "@/lib/client/command";
+import { useActor } from "@/lib/client/shell-context";
 
 interface PrintResult {
   outcome: string;
@@ -133,22 +134,26 @@ export function OrderAdditionalDialog({ open, onClose, blockId, blockLabel }: { 
   const [other, setOther] = useState("");
   const [level, setLevel] = useState("");
   const [reason, setReason] = useState("");
+  const [requestReference, setRequestReference] = useState("");
   const [blank, setBlank] = useState(false);
-  const cmd = useCommand<{ workOrderDisplayId: string; slideLabel: string; message: string }, { blockId: string; stain: string; level: string | null; reason: string }>(
-    "slide.orderAdditional",
-    { errorToast: false },
-  );
+  // Only the dermatopathologist's own order is recorded as a pathologist request; anyone else says who asked and how.
+  const byPathologist = useActor().role === "pathologist";
+  const cmd = useCommand<
+    { workOrderDisplayId: string; slideLabel: string; message: string },
+    { blockId: string; stain: string; level: string | null; reason: string; requestReference: string | null }
+  >("slide.orderAdditional", { errorToast: false });
   const submit = async () => {
     const s = stain === "Other" ? other.trim() : stain;
-    if (!reason.trim() || !s) {
+    if (!reason.trim() || !s || (!byPathologist && requestReference.trim().length < 3)) {
       setBlank(true);
       return;
     }
-    const out = await cmd.run({ blockId, stain: s, level: level.trim() || null, reason: reason.trim() });
+    const out = await cmd.run({ blockId, stain: s, level: level.trim() || null, reason: reason.trim(), requestReference: byPathologist ? null : requestReference.trim() });
     if (out.ok) {
-      toast.show({ tone: "success", title: `${out.result.workOrderDisplayId}: ${out.result.slideLabel} planned`, body: "New work order and new planned slide. Print its label when ready." });
+      toast.show({ tone: "success", title: `${out.result.workOrderDisplayId}: ${out.result.slideLabel} planned`, body: out.result.message });
       setReason("");
       setLevel("");
+      setRequestReference("");
       setBlank(false);
       onClose();
     }
@@ -189,9 +194,20 @@ export function OrderAdditionalDialog({ open, onClose, blockId, blockLabel }: { 
             <Input value={level} onChange={(e) => setLevel(e.target.value)} />
           </Field>
         )}
-        <Field label="Reason" required className="col-span-2" error={blank && !reason.trim() ? "Say why the slide is needed (who asked, what for)." : undefined}>
-          <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="Dr. Marsh asked for a deeper level" />
+        <Field label="Reason" required className="col-span-2" error={blank && !reason.trim() ? "Say why the slide is needed." : undefined}>
+          <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="Deeper level to see the margin" />
         </Field>
+        {byPathologist ? null : (
+          <Field
+            label="Who asked, and how"
+            required
+            className="col-span-2"
+            hint="The work order is recorded as entered by you on this request, not as the dermatopathologist's own order."
+            error={blank && requestReference.trim().length < 3 ? "Say who asked for this slide and how." : undefined}
+          >
+            <Input value={requestReference} onChange={(e) => setRequestReference(e.target.value)} maxLength={200} placeholder="Dr. Marsh, by phone at 10:40" />
+          </Field>
+        )}
         <CommandError error={cmd.error} className="col-span-2" />
       </div>
     </Dialog>

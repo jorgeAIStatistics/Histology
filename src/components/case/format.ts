@@ -100,7 +100,8 @@ type ReadinessPart = Pick<CasePart, "designation" | "status" | "eligible" | "blo
  * "(+2 more)". Lines a hold already explains are left to the hold.
  */
 export function caseReadiness(parts: ReadinessPart[], isComplete: boolean): string {
-  if (isComplete) return "All parts delivered.";
+  // Tray delivery is recorded digitally; no pathologist receipt is recorded.
+  if (isComplete) return "All parts sent on trays; receipt not recorded.";
   const ready = new Map<string, string[]>();
   const waits = new Map<string, string[]>();
   const add = (m: Map<string, string[]>, key: string, subject: string) => m.set(key, [...(m.get(key) ?? []), subject]);
@@ -115,9 +116,13 @@ export function caseReadiness(parts: ReadinessPart[], isComplete: boolean): stri
       else if ((m = /^(\d+) slide\(s\) ready for tray$/.exec(e))) add(ready, "tray", m[1]);
       else add(ready, `\u0000${e}`, e);
     }
-    if (p.holds.length) add(waits, `hold:${p.holds.map((h) => h.displayId).join(", ")}`, p.designation);
+    // A hold names exactly what it holds: the part (by letter), one block or slide ("A1"), or the whole case.
+    for (const h of p.holds) {
+      const t = h.target;
+      add(waits, `hold:${h.displayId}`, !t || t === `Part ${p.designation}` ? p.designation : t);
+    }
     for (const b of p.blockedBy) {
-      if (/^H-\d+ on /.test(b) || /cannot be approved/.test(b) || /held from processing/.test(b) || /^Sectioning held/.test(b)) continue;
+      if (/^H-\d+ on /.test(b) || /cannot be approved/.test(b) || /held from (processing|tray delivery)/.test(b) || /^Sectioning held/.test(b)) continue;
       const m = /^(.+) loaded but not eligible for processing: gross record not approved/.exec(b);
       if (m) add(waits, "approval", m[1]);
       else if (/^Review needed:/.test(b)) add(waits, "review", p.designation);
@@ -132,12 +137,21 @@ export function caseReadiness(parts: ReadinessPart[], isComplete: boolean): stri
     : k === "tray" ? `${s.reduce((n, x) => n + Number(x), 0)} ${s.reduce((n, x) => n + Number(x), 0) === 1 ? "slide" : "slides"} for a tray`
     : s[0],
   );
-  const waitText = [...waits].map(([k, s]) =>
+  // Holds on the same material are said together ("Part B on hold (H-0089, H-0090)").
+  const holdGroups = new Map<string, string[]>();
+  for (const [k, s] of [...waits].filter(([k]) => k.startsWith("hold:"))) {
+    const subject = [...new Set(s)].join("\u0000");
+    holdGroups.set(subject, [...(holdGroups.get(subject) ?? []), k.slice(5)]);
+    waits.delete(k);
+  }
+  const subjectWords = (s: string[]) => (s.every((x) => /^[A-Z]$/.test(x)) ? partsWord(s) : joinWords(s.map((x) => (/^[A-Z]$/.test(x) ? `Part ${x}` : x))));
+  const holdText = [...holdGroups].map(([subject, ids]) => `${subjectWords(subject.split("\u0000"))} on hold (${ids.join(", ")})`);
+  const waitText = [...holdText, ...[...waits].map(([k, s]) =>
     k.startsWith("hold:") ? `${partsWord(s)} on hold (${k.slice(5)})`
     : k === "approval" ? `${joinWords(s)} waiting for gross record approval before processing (local policy setting)`
     : k === "review" ? `${partsWord(s)}: canceled or amended work to review`
     : s[0],
-  );
+  )];
   const out = [readyText.length ? `Eligible: ${readyText.join("; ")}.` : "", waitText.length ? `Not ready: ${waitText.join("; ")}.` : ""].filter(Boolean).join(" ");
   return out || "No eligible work right now.";
 }
@@ -191,8 +205,8 @@ const roleWord = (r: string | null) => (r ? ROLE_WORD[r as keyof typeof ROLE_LAB
  * with the local-policy reason, in the case's readiness line. The next step
  * does not repeat it.
  */
-export function partNext(part: Pick<CasePart, "designation" | "status" | "stageLabel" | "eligible" | "blockedBy" | "openTasks" | "gross" | "physical">, accessionNumber: string): PartNext | null {
-  if (part.status === "canceled" || part.stageLabel === "Delivered") return null;
+export function partNext(part: Pick<CasePart, "designation" | "status" | "stage" | "stageLabel" | "eligible" | "blockedBy" | "openTasks" | "gross" | "physical">, accessionNumber: string): PartNext | null {
+  if (part.status === "canceled" || part.stage === "delivered") return null;
   const d = part.designation;
   const t = part.openTasks[0];
   if (t) {

@@ -6,9 +6,12 @@ import { cn } from "@/lib/cn";
 import { TONE_CLASSES, TONE_ICON } from "./tone";
 
 /**
- * Toasts (spec §7): bottom left, away from the decision columns, docked actions
- * and side panels that sit on the right; on stacked screens (tablet portrait,
- * 200% zoom) top right under the bar. Never take focus; live region "polite".
+ * Toasts (spec §7): bottom centre of the window. On every bench layout that is
+ * the middle working column, clear of the queue on the left, the scan field and
+ * the specimen label at the top and the docked next-step controls on the right.
+ * Success and info confirmations time out; warnings (failed actions) stay until
+ * dismissed and the same error is also shown inline next to the action. Never
+ * take focus; live region "polite".
  * Success auto-dismisses after 6 s (paused on hover/focus), info after 8 s,
  * warning stays until dismissed. Errors that block an action belong in an
  * inline AlertBanner; a toast is never the only record of an event.
@@ -59,7 +62,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
       <section
         aria-label="Notifications"
-        className="no-print pointer-events-none fixed bottom-4 left-4 z-[70] flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2 stacked:top-[calc(var(--hlo-chrome-h)+0.5rem)] stacked:bottom-auto stacked:left-auto stacked:right-2 stacked:w-[min(320px,calc(100vw-1rem))]"
+        className="no-print pointer-events-none fixed bottom-4 left-1/2 z-[70] flex w-[min(360px,calc(100vw-2rem))] -translate-x-1/2 flex-col gap-2"
       >
         <ol aria-live="polite" aria-relevant="additions text" className="flex flex-col gap-2">
           {items.map((t) => (

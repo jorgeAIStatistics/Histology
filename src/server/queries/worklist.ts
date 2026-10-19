@@ -9,9 +9,10 @@
 import type { DB } from "@/server/db/db";
 import { demoNow } from "@/server/core/clock";
 import { currentWorklistSeq } from "@/server/core/feed";
-import { computeReadiness, STAGE_SHORT, type CaseReadiness, type PartReadiness } from "@/server/domain/readiness";
-import { activeHolds, blockedTransitions, scopesForIntake } from "@/server/domain/holds";
-import { AUTHORIZATION_SOURCE, ROUTING_STATUS, type Stage } from "@/lib/domain";
+import { ALL_SENT_ON_TRAYS, computeReadiness, STAGE_SHORT, type CaseReadiness, type PartReadiness } from "@/server/domain/readiness";
+import { activeHolds, blockedTransitions, PART_LEVEL_SCOPES, scopesForIntake } from "@/server/domain/holds";
+import { AUTHORIZATION_SOURCE, AWAITING_SOURCE_ACK, AWAITING_SOURCE_ENTRY_SQL, awaitsSourceEntry, ROUTING_STATUS, type Stage } from "@/lib/domain";
+import { OPEN_ROUTING_EXCEPTION_SQL } from "./predicates";
 import { fmtTime, fmtSmart, fmtFull, labDay, minutesBetween, fmtAge } from "@/lib/time";
 import {
   FRESHNESS_DELAYED_AFTER_MIN,
@@ -22,7 +23,7 @@ import {
   type WorklistFilters,
   type WorklistView,
 } from "@/components/worklist/views";
-import { partsText, tidyPlurals } from "@/components/worklist/format";
+import { holdStepsShort, partsText, tidyPlurals } from "@/components/worklist/format";
 import { encodeLabel, namespaceCode } from "@/lib/identifiers";
 
 // ---------------------------------------------------------------- types
@@ -75,7 +76,11 @@ export interface StainEntry {
 export interface HoldEntry {
   id: string;
   displayId: string;
+  /** What the hold is on (specimen_part, block, slide, accession, intake_item, ...): scope never collapses onto the part. */
+  scopeType?: string;
   scopeLabel: string;
+  /** The exact material held, short ("Part B", "A1", "A1-2", "Whole case", "INT-1014-022"). */
+  target?: string;
   reasonText: string;
   blocks: string[];
   clarificationId: string | null;
@@ -110,6 +115,8 @@ export interface PartTrackView {
   stageLabel: string;
   /** "ready" | "hold" | stage word: the short word used in "A ready · B hold". */
   word: string;
+  /** When word is "hold": the steps the part's holds stop, in short words ("print, tray"). */
+  holdSteps?: string | null;
   physical: { state: string; blocks: { id: string; label: string; state: string }[]; slidesActive: number; slidesTotal: number };
   documentation: { grossState: string; grossRecordVersion: number | null; sourceUpdateState: string };
   blocksPrepared: number;
@@ -283,13 +290,14 @@ export function loadSourceFreshness(db: DB, now: string = demoNow(db)): Freshnes
 const PART_WORD_STAGE: Partial<Record<Stage, string>> = {
   awaiting_gross: "awaiting gross",
   gross_in_progress: "gross in progress",
+  awaiting_processing: "ready for processing",
   processing: "processing",
   embedding: "embedding",
   sectioning: "sectioning",
   staining: "staining",
   qc: "QC",
   ready_for_tray: "ready for tray",
-  delivered: "delivered",
+  delivered: "sent on tray",
   canceled: "canceled",
 };
 
@@ -352,9 +360,15 @@ function isDocumentationEligible(s: string): boolean {
 
 function shortBlocked(part: PartReadiness): string[] {
   const out: string[] = [];
-  if (part.holds.length) out.push(`Part ${part.designation} on hold (${part.holds.map((h) => h.displayId).join(", ")})`);
+  // One line per held material, named exactly (a block hold names the block, not the part), with the steps it stops.
+  const byTarget = new Map<string, typeof part.holds>();
+  for (const h of part.holds) {
+    const target = h.target || `Part ${part.designation}`;
+    byTarget.set(target, [...(byTarget.get(target) ?? []), h]);
+  }
+  for (const [target, hs] of byTarget) out.push(`${target} on hold (${hs.map((h) => h.displayId).join(", ")}: ${holdStepsShort(hs.flatMap((h) => h.blocks))})`);
   for (const b of part.blockedBy) {
-    if (/^H-\d+ on /.test(b) || /cannot be approved/.test(b) || /held from processing/.test(b) || /Sectioning held/.test(b)) continue; // covered by the hold line
+    if (/^H-\d+ on /.test(b) || /cannot be approved/.test(b) || /held from (processing|tray delivery)/.test(b) || /Sectioning held/.test(b)) continue; // covered by the hold line
     const m = b.match(/^(.+) loaded but not eligible for processing: gross record not approved/);
     if (m) out.push(`${m[1]} waiting for gross record approval`);
     else if (/^Review needed:/.test(b)) out.push(`Part ${part.designation}: review canceled/amended work`);
@@ -416,7 +430,7 @@ function buildStains(part: PartReadiness, orderLine: PartStainSourceRow | undefi
   return out;
 }
 
-function holdEntries(list: { id: string; displayId: string; scopeLabel: string; reasonText: string; blocks: string[]; clarificationId: string | null; placedAt: string }[]): HoldEntry[] {
+function holdEntries(list: HoldEntry[]): HoldEntry[] {
   return [...new Map(list.map((h) => [h.id, { ...h }])).values()];
 }
 
@@ -522,7 +536,7 @@ export function loadWorklistRows(db: DB, ackedSeq: number, now: string, opts: Lo
             : `a.case_status <> 'canceled' AND (a.is_prior_day = 0 OR a.case_status = 'open'
            OR EXISTS (SELECT 1 FROM work_order wo WHERE wo.accession_id = a.id AND wo.status IN ('requested','in_progress','cancel_review','amended_review'))
            OR EXISTS (SELECT 1 FROM gross_record gr JOIN specimen_part sp ON sp.id = gr.specimen_part_id
-                       WHERE sp.accession_id = a.id AND sp.status = 'active' AND gr.state = 'approved_for_downstream' AND gr.source_update_state IN ('pending_entry','failed')))`
+                       WHERE sp.accession_id = a.id AND ${AWAITING_SOURCE_ENTRY_SQL}))`
         }
         ORDER BY a.accession_number`,
     )
@@ -669,15 +683,16 @@ export function loadWorklistRows(db: DB, ackedSeq: number, now: string, opts: Lo
       `SELECT ii.id, ii.display_id, ii.office_id, ii.observed_office_text, ii.received_at, ii.status, ii.updated_at,
               o.name AS office_name, rd.status AS routing_status, rd.explanation
          FROM intake_item ii
-         JOIN routing_decision rd ON rd.intake_item_id = ii.id AND rd.status = 'exception'
+         JOIN routing_decision rd ON rd.intake_item_id = ii.id
          LEFT JOIN office o ON o.id = ii.office_id
-        WHERE ii.status NOT IN ('accessioned','canceled')
+        WHERE ${OPEN_ROUTING_EXCEPTION_SQL}
         ORDER BY ii.received_at, ii.display_id`,
     )
     .all() as { id: string; display_id: string; office_id: string | null; observed_office_text: string | null; received_at: string; status: string; updated_at: string; office_name: string | null; routing_status: string; explanation: string }[];
   for (const e of exceptions) {
     const holds = activeHolds(db, scopesForIntake(db, e.id)).map((h) => ({
-      id: h.id, displayId: h.display_id, scopeLabel: h.scope_label, reasonText: h.reason_text, blocks: blockedTransitions(h), clarificationId: h.clarification_id,
+      id: h.id, displayId: h.display_id, scopeType: h.scope_type, scopeLabel: h.scope_label, target: h.scope_type === "intake_item" ? e.display_id : h.scope_label,
+      reasonText: h.reason_text, blocks: blockedTransitions(h), clarificationId: h.clarification_id,
       clarificationDisplayId: h.clarification_id ? clrDisplay.get(h.clarification_id) ?? null : null, placedAt: h.placed_at,
     }));
     const tasks = tasksByIntake.get(e.id) ?? [];
@@ -769,9 +784,12 @@ function buildCaseRow(
     const holds = holdEntries(p.holds.map((h) => ({ ...h, blocks: h.blocks as string[] })));
     const stains = buildStains(p, orderLineByPart.get(p.partId));
     const physicalEligible = p.eligible.filter((e) => !isDocumentationEligible(e));
+    // A part-level hold holds the part; a block or slide hold holds the part only when nothing else of it can move.
+    const partHolds = holds.filter((h) => !h.scopeType || (PART_LEVEL_SCOPES as readonly string[]).includes(h.scopeType));
+    const heldWord = partHolds.length > 0 || (holds.length > 0 && !physicalEligible.length);
     const word =
       p.status === "canceled" ? "canceled"
-      : holds.length ? "hold"
+      : heldWord ? "hold"
       : p.stage === "delivered" ? "delivered"
       : p.stage === "awaiting_gross" ? "awaiting gross"
       : physicalEligible.length ? "ready"
@@ -779,6 +797,7 @@ function buildCaseRow(
     return {
       partId: p.partId, designation: p.designation, site: p.site, laterality: p.laterality, procedure: p.procedure, sourceOrderRef: p.sourceOrderRef,
       status: p.status, stage: p.stage, stageLabel: STAGE_SHORT[p.stage], word,
+      holdSteps: word === "hold" ? holdStepsShort((partHolds.length ? partHolds : holds).flatMap((h) => h.blocks)) : null,
       physical: {
         state: p.physicalState,
         blocks: p.blocks.map((b) => ({ id: b.id, label: b.label, state: b.state })),
@@ -806,13 +825,13 @@ function buildCaseRow(
   const grouped = groupEligible(physical);
   const entryText = documentation.length ? `source entry pending: ${sourceEntryLetters(documentation).join(", ")}` : "";
   if (isComplete && !blockedShort.length) {
-    readinessText = entryText ? `All parts delivered; ${entryText}` : "All parts delivered";
+    readinessText = entryText ? `${ALL_SENT_ON_TRAYS}; ${entryText}` : ALL_SENT_ON_TRAYS;
   } else {
     const bits: string[] = [];
     if (grouped.length) bits.push(`Eligible: ${grouped.slice(0, 2).join("; ")}${grouped.length > 2 ? ` (+${grouped.length - 2} more)` : ""}`);
     if (blockedShort.length) bits.push(`${bits.length ? "not ready" : "Not ready"}: ${blockedShort[0]}${blockedShort.length > 1 ? ` (+${blockedShort.length - 1} more)` : ""}`);
     if (!bits.length && entryText) bits.push(entryText.charAt(0).toUpperCase() + entryText.slice(1));
-    if (!bits.length && r.isComplete && openWos.length) bits.push(`Parts delivered; additional work open: ${openWos.map((w) => w.workOrder).join(", ")}`);
+    if (!bits.length && r.isComplete && openWos.length) bits.push(`Parts sent on trays; additional work open: ${openWos.map((w) => w.workOrder).join(", ")}`);
     readinessText = bits.length ? bits.join("; ") : "No eligible work right now";
   }
 
@@ -830,8 +849,14 @@ function buildCaseRow(
     : anyGrossRecord ? "Unknown (gross record has no cassette count yet)"
     : "Unknown (no gross record yet)";
 
-  const pendingParts = parts.filter((p) => p.documentation.grossState === "approved_for_downstream" && p.documentation.sourceUpdateState === "pending_entry").map((p) => p.designation);
-  const attestedParts = parts.filter((p) => p.documentation.sourceUpdateState === "entered_attested").map((p) => p.designation);
+  // The shared source-entry backlog (lib/domain awaitsSourceEntry: not started, pending or failed) and, apart, entries
+  // attested by staff that the source has not acknowledged yet.
+  const pendingParts = parts
+    .filter((p) => awaitsSourceEntry({ grossState: p.documentation.grossState, sourceUpdateState: p.documentation.sourceUpdateState, partStatus: p.status }))
+    .map((p) => p.designation);
+  const attestedParts = parts
+    .filter((p) => p.status !== "canceled" && p.documentation.grossState === "approved_for_downstream" && (AWAITING_SOURCE_ACK as readonly string[]).includes(p.documentation.sourceUpdateState))
+    .map((p) => p.designation);
   const sourceEntryText = parts
     .map((p) => `${p.designation}: ${p.documentation.grossState === "approved_for_downstream" ? SOURCE_ENTRY_WORD[p.documentation.sourceUpdateState] ?? p.documentation.sourceUpdateState : "no approved record"}`)
     .join(" · ");
@@ -901,7 +926,7 @@ function inViewScope(view: WorklistView, row: WorklistRow, today: string, filter
       return stages.has("awaiting_gross") || stages.has("gross_in_progress") || row.sourceEntry.pendingParts.length > 0;
     case "histotech":
       return (
-        ["processing", "embedding", "sectioning", "staining", "qc", "ready_for_tray"].some((s) => stages.has(s as Stage)) ||
+        ["awaiting_processing", "processing", "embedding", "sectioning", "staining", "qc", "ready_for_tray"].some((s) => stages.has(s as Stage)) ||
         row.stains.some((s) => s.workOrder && OPEN_WO_STATUSES.has(s.status)) ||
         row.parts.some((p) => p.blockedBy.some((b) => /^Review needed/.test(b)))
       );

@@ -4,6 +4,7 @@ import { ShellProviders } from "./providers";
 import { loadShellData } from "./server-data";
 import { SkipLinks } from "./skip-links";
 import { TopBar } from "./top-bar";
+import { isDemoMode } from "@/server/runtime-mode";
 
 /**
  * App shell. Server component: loads the demo actor (cookie), the demo clock,
@@ -30,7 +31,7 @@ export async function AppShell({ children }: { children: ReactNode }) {
       <SkipLinks />
       <div className="flex min-h-screen min-w-0 flex-col">
         <header data-shell-chrome className="sticky top-0 z-30">
-          <TopBar actor={data.actor} staff={data.staff} counts={data.counts} />
+          <TopBar actor={data.actor} staff={data.staff} counts={data.counts} demo={isDemoMode()} />
         </header>
         <main id="main" tabIndex={-1} className="min-w-0 flex-1 focus:outline-none">
           {children}

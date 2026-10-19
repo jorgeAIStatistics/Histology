@@ -429,7 +429,7 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     await expect(partA).toContainText(loose("Left upper back, shave"));
     await expect(partB.getByRole("link", { name: /^Order ORD-77121/ })).toBeVisible();
     await expect(partB).toContainText(loose("Left dorsal forearm, punch"));
-    await expect(page.getByText(loose("Not complete: 0 of 2 parts delivered."))).toBeVisible();
+    await expect(page.getByText(loose("Not complete: 0 of 2 parts sent on trays."))).toBeVisible();
     await expect(page.getByRole("navigation", { name: "Case sections" }).getByRole("link", { name: /^Source documents \(2\)/ })).toBeVisible();
     await expect(page.getByRole("region", { name: "Operational summary" })).toContainText(loose("Not merged: ORD-77120 and ORD-77121 both stay attached to their parts."));
 
@@ -541,7 +541,7 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
 
     // Case page: the case is not complete; part A now has block A1 and Sam Ortiz owns the source entry.
     await page.goto(`/cases/${HERO_ACCESSION}`);
-    await expect(page.getByText(loose("Not complete: 0 of 2 parts delivered."))).toBeVisible();
+    await expect(page.getByText(loose("Not complete: 0 of 2 parts sent on trays."))).toBeVisible();
     await expect(page.getByRole("region", { name: "Part B", exact: true })).toContainText(loose("Awaiting grossing"));
     // Part A's own row names its next step and who it waits on, headed by the step it belongs to (not the physical stage).
     await expect(page.getByRole("region", { name: "Part A", exact: true })).toContainText(loose("Source-system entry"));

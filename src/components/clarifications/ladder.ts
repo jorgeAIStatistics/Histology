@@ -46,6 +46,7 @@ export function holdScopeWords(scope: string): string {
 /** The state of one queue row on the ladder, in words. Drafted never reads as sent. */
 export function rowFlag(r: ClarificationListRow): Flag {
   // Closed, but a linked hold is still active: the lead still has to release it (named, neutral; the hold chip carries the scope).
+  if (r.holdToRelease && r.awaitingAmendedOrder) return { rung: "waiting", text: "Hold waits for the amended order (simulated source)" };
   if (r.holdToRelease) return { rung: "waiting", text: `Hold to release · ${leadName(r)}` };
   if (!r.isOpen) return r.state === "resolved" ? { rung: "done", text: "Resolved" } : { rung: "muted", text: "Canceled" };
   const overdue = r.overdueMinutes !== null ? r.followUpText : null;

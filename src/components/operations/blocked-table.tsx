@@ -19,6 +19,7 @@ export const CATEGORY_WORD: Record<BlockedCategory, string> = {
   routing: "Routing exception",
   retrieval: "Block retrieval",
   review: "Review",
+  integration: "Integration",
   source_entry: "Source-system entry",
 };
 
@@ -156,6 +157,12 @@ export function BlockedTable({ items, caption, now }: { items: BlockedItem[]; ca
                     <IdText text={b.nextStep} />
                   </p>
                 ) : null}
+                {/* Where the material is (last confirmed, never live) and what evidence closes the item. */}
+                <p className="mt-1 text-sm text-ink-secondary">
+                  <span className="text-ink-muted">Where: </span>
+                  <IdText text={b.where} />
+                </p>
+                <p className="mt-0.5 text-xs text-ink-muted">{b.closesWhen}</p>
                 <p className={cn("mt-1 text-sm", NARROW_ONLY)}>
                   <span className="text-ink-muted">Evidence: </span>
                   <Evidence b={b} />

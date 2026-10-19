@@ -11,11 +11,37 @@ import { loadActor, type Actor } from "@/server/core/context";
 export const ACTOR_COOKIE = "hlos_actor";
 export const DEFAULT_ACTOR_ID = "stf_maya";
 
+const ACTOR_ID = /^[a-z0-9_]{1,64}$/i;
+
 /** Staff id from the demo role cookie, or the default demo actor (Maya Torres, Accessioner). */
 export async function getActorId(): Promise<string> {
   const store = await cookies();
   const value = store.get(ACTOR_COOKIE)?.value?.trim();
-  return value && /^[a-z0-9_]{1,64}$/i.test(value) ? value : DEFAULT_ACTOR_ID;
+  return value && ACTOR_ID.test(value) ? value : DEFAULT_ACTOR_ID;
+}
+
+/**
+ * The same demo actor, read from a request's Cookie header (route handlers;
+ * testable without the Next.js request context). The value is only a demo
+ * role selection: executeCommand still resolves it against active staff,
+ * refuses the internal "system" actor for user requests, and checks the role.
+ */
+export function actorIdFromRequest(req: Request): string {
+  const header = req.headers.get("cookie") ?? "";
+  for (const part of header.split(";")) {
+    const [k, ...v] = part.trim().split("=");
+    if (k === ACTOR_COOKIE) {
+      const value = decodeURIComponent(v.join("=")).trim();
+      return ACTOR_ID.test(value) ? value : DEFAULT_ACTOR_ID;
+    }
+  }
+  return DEFAULT_ACTOR_ID;
+}
+
+/** One correlation id per HTTP request: the caller's X-Request-Id when well formed, else a new UUID. Recorded on every audit event and receipt. */
+export function correlationIdFor(req: Request): string {
+  const given = req.headers.get("x-request-id")?.trim();
+  return given && /^[A-Za-z0-9._:-]{8,100}$/.test(given) ? given : `req-${crypto.randomUUID()}`;
 }
 
 /** The current demo actor. Falls back to the default actor if the cookie names an unknown or inactive staff member. */

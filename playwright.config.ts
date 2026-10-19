@@ -24,10 +24,10 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1366, height: 768 } } }],
   webServer: {
-    command: `rm -f ${DB} ${DB}-wal ${DB}-shm && node scripts/gen-schema-module.mjs && NEXT_DIST_DIR=${DIST} HLOS_DB_PATH=${DB} npx next build && NEXT_DIST_DIR=${DIST} HLOS_DB_PATH=${DB} npx next start -p ${PORT}`,
+    command: `rm -f ${DB} ${DB}-wal ${DB}-shm && node scripts/gen-schema-module.mjs && NEXT_DIST_DIR=${DIST} HLOS_DB_PATH=${DB} npx next build && HLOS_MODE=demo NEXT_DIST_DIR=${DIST} HLOS_DB_PATH=${DB} npx next start -p ${PORT}`,
     url: `http://localhost:${PORT}/api/live`,
     timeout: 300_000,
     reuseExistingServer: false,
-    env: { NEXT_DIST_DIR: DIST, HLOS_DB_PATH: DB },
+    env: { NEXT_DIST_DIR: DIST, HLOS_DB_PATH: DB, HLOS_MODE: "demo" },
   },
 });

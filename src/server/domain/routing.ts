@@ -254,6 +254,16 @@ export function confirmRouting(ctx: Ctx, intakeItemId: string): { decision: Rout
     entityId: cur.id,
     intakeItemId,
     summary: `${it.display_id}: routing to ${staffName(ctx.db, cur.suggested_pathologist_id)} confirmed by ${ctx.actor.name}. ${cur.explanation}`,
+    before: { status: cur.status, pathologist: cur.final_pathologist_id, decidedBy: cur.decided_by },
+    after: {
+      status: "confirmed",
+      pathologist: cur.suggested_pathologist_id,
+      decidedBy: ctx.actor.id,
+      decisionId: cur.id,
+      ruleSetId: cur.rule_set_id,
+      ruleId: cur.rule_id,
+      coverageExceptionId: cur.coverage_exception_id,
+    },
   });
   return { decision: currentRouting(ctx.db, intakeItemId)!, duplicate: false };
 }
@@ -283,17 +293,30 @@ function supersedeAndInsert(
   return ctx.db.prepare("SELECT * FROM routing_decision WHERE id = ?").get(id) as RoutingDecisionRow;
 }
 
-/** Lead/supervisor chooses a different pathologist than the rule. The rule's suggestion stays on record. */
-export function overrideRouting(ctx: Ctx, intakeItemId: string, pathologistId: string, reason: string): RoutingDecisionRow {
+/**
+ * Lead/supervisor chooses a different pathologist than the rule. The rule's suggestion stays on record.
+ * `expectedDecisionId` is the routing decision the user saw: every override or exception resolution
+ * supersedes the decision with a new id, so a different current id means someone else changed the
+ * routing first (CONFLICT, nothing written). A `routing_confirm` hold blocks it, as it blocks confirm.
+ */
+export function overrideRouting(ctx: Ctx, intakeItemId: string, pathologistId: string, reason: string, expectedDecisionId: string): RoutingDecisionRow {
   const it = loadIntake(ctx.db, intakeItemId);
   assertPreAccession(it, "Overriding routing");
   if (!reason.trim()) throw new DomainError("VALIDATION", "An override needs a reason");
-  assertPathologist(ctx.db, pathologistId);
   const cur = currentRouting(ctx.db, intakeItemId);
   if (!cur) throw new DomainError("NOT_FOUND", `${it.display_id} has no routing decision yet`);
+  if (cur.id !== expectedDecisionId) {
+    throw new DomainError(
+      "CONFLICT",
+      `The routing for ${it.display_id} was changed by someone else after you opened it (now ${cur.status}${cur.final_pathologist_id ? `, ${staffName(ctx.db, cur.final_pathologist_id)}` : ""}). Review the current routing before overriding it.`,
+      { table: "routing_decision", id: cur.id, expectedDecisionId, currentDecisionId: cur.id, current: cur },
+    );
+  }
+  assertPathologist(ctx.db, pathologistId);
   if (cur.status === "exception") {
     throw new DomainError("VALIDATION", `${it.display_id} is a routing exception. Use "Resolve routing exception" to assign a dermatopathologist.`);
   }
+  assertNotHeld(ctx.db, "routing_confirm", scopesForIntake(ctx.db, intakeItemId), `Overriding routing for ${it.display_id}`);
   const currentFinal = cur.final_pathologist_id ?? cur.suggested_pathologist_id;
   if (currentFinal === pathologistId) {
     throw new DomainError("VALIDATION", `${staffName(ctx.db, pathologistId)} is already the assigned dermatopathologist; nothing to override.`);

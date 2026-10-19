@@ -157,9 +157,11 @@ export function RoutingDialog({
   const choices = pathologists.filter((p) => p.id !== current);
   const [pathologistId, setPathologistId] = useState(choices[0]?.id ?? "");
   const [reason, setReason] = useState("");
+  // The routing decision shown when the dialog opened (kept even if the page refreshes underneath).
+  const [seenDecisionId] = useState(item.routing?.id ?? "");
   useUnsavedChanges(reason.trim().length > 0, `routing ${mode} for ${item.displayId}`);
   const backToScan = useBackToScan();
-  const cmd = useCommand<unknown, { intakeItemId: string; pathologistId: string; reason: string }>(mode === "override" ? "routing.override" : "routing.resolveException", {
+  const cmd = useCommand<unknown, { intakeItemId: string; pathologistId: string; reason: string; expectedDecisionId?: string }>(mode === "override" ? "routing.override" : "routing.resolveException", {
     successToast: mode === "override" ? "Routing overridden. The rule suggestion stays on record." : "Routing exception resolved",
     errorToast: false,
     onSuccess: () => {
@@ -187,7 +189,14 @@ export function RoutingDialog({
             loading={cmd.pending}
             loadingLabel="Saving..."
             disabled={!pathologistId || !reason.trim()}
-            onClick={() => void cmd.run({ intakeItemId: item.id, pathologistId, reason: reason.trim() })}
+            onClick={() =>
+              void cmd.run(
+                mode === "override"
+                  ? // The routing decision this dialog was opened on: a newer one (someone else's override) is refused as a conflict.
+                    { intakeItemId: item.id, pathologistId, reason: reason.trim(), expectedDecisionId: seenDecisionId }
+                  : { intakeItemId: item.id, pathologistId, reason: reason.trim() },
+              )
+            }
           >
             {mode === "override" ? "Override routing" : "Assign dermatopathologist"}
           </Button>

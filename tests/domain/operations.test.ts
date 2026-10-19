@@ -9,7 +9,7 @@ import { getOperations, ownerKeyFor } from "@/server/queries/operations";
 import { loadWorklistRows } from "@/server/queries/worklist";
 import { EXCEPTION_CATEGORIES, groupRoutine, matchesOwner, summarizeBlocked } from "@/components/operations/summary";
 
-const PATH_ORDER = ["intake", "awaiting_gross", "gross_in_progress", "processing", "embedding", "sectioning", "staining", "qc", "ready_for_tray", "delivered"];
+const PATH_ORDER = ["intake", "awaiting_gross", "gross_in_progress", "awaiting_processing", "processing", "embedding", "sectioning", "staining", "qc", "ready_for_tray", "delivered"];
 
 describe("operations view: derived read model", () => {
   it("the bench path runs intake to delivered and counts exactly the records each stage opens", () => {

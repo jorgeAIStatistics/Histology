@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { closeSharedDb, databasePath, getDb } from "@/server/db/db";
 import { readClock, setClockRunning } from "@/server/core/clock";
+import { isDemoMode } from "@/server/runtime-mode";
 import { rejectCrossOrigin } from "@/server/session";
 
 /**
@@ -19,6 +20,8 @@ export const runtime = "nodejs";
 export async function POST(req: Request) {
   const blocked = rejectCrossOrigin(req);
   if (blocked) return blocked;
+  // Presenter-only: does not exist outside synthetic demo mode.
+  if (!isDemoMode()) return Response.json({ ok: false, error: { code: "NOT_FOUND", message: "Not found." } }, { status: 404 });
 
   let body: { confirm?: unknown } = {};
   try {

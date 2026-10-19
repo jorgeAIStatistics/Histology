@@ -1105,6 +1105,15 @@ export function recordAnswer(
 
 // ------------------------------------------------------------------ review / resolve / cancel
 
+/** The office answer a review or resolution is based on (the latest recorded answer message). */
+function latestAnswerMessage(db: DB, clrId: string): { id: string; created_at: string; channel: string } | null {
+  return (
+    (db
+      .prepare("SELECT id, created_at, channel FROM clarification_message WHERE clarification_id = ? AND kind = 'answer' ORDER BY created_at DESC, rowid DESC LIMIT 1")
+      .get(clrId) as { id: string; created_at: string; channel: string } | undefined) ?? null
+  );
+}
+
 export function reviewClarification(
   ctx: Ctx,
   input: { clarificationId: string; expectedVersion: number; note?: string | null; outcome?: "accepted" | "insufficient" },
@@ -1114,17 +1123,28 @@ export function reviewClarification(
   assertState(clr, ["answered"], "review", clr.state === "reviewed" ? "It has already been reviewed; resolve it next." : "There is no office answer to review yet.");
   const outcome = input.outcome ?? "accepted";
   const note = (input.note ?? "").trim();
+  const answer = latestAnswerMessage(ctx.db, clr.id);
+  const answerRef = { answerMessageId: answer?.id ?? null, answeredAt: clr.answered_at, answerChannel: clr.answer_channel };
+  const beforeState = { state: clr.state, version: clr.version };
   if (outcome === "insufficient") {
     if (!note) throw new DomainError("VALIDATION", "Say what is missing from the answer.");
     const follow = computeNextFollowUp(ctx.db, clr.office_id, ctx.now, clr.priority);
     clr = update(ctx, clr, input.expectedVersion, { state: "acknowledged", review_note: note, reviewer_id: ctx.actor.id, next_follow_up_at: follow.at });
-    clrAudit(ctx, clr, "clarification.answer_insufficient", `${ctx.actor.name} marked the office answer for ${clr.display_id} as insufficient. Waiting for a further answer.`, { reason: note });
+    clrAudit(ctx, clr, "clarification.answer_insufficient", `${ctx.actor.name} marked the office answer for ${clr.display_id} as insufficient. Waiting for a further answer.`, {
+      reason: note,
+      before: beforeState,
+      after: { state: "acknowledged", version: clr.version, outcome, ...answerRef, nextFollowUpAt: follow.at },
+    });
     closeClarificationTasks(ctx, clr.id, [TASK_KINDS.review]);
     ownerTask(ctx, clr, TASK_KINDS.followup, `Ask the office again for ${clr.display_id}: answer was insufficient`, clr.lab_owner_id, null, ctx.now);
     return { clarificationId: clr.id, displayId: clr.display_id, state: clr.state, version: clr.version };
   }
   clr = update(ctx, clr, input.expectedVersion, { state: "reviewed", reviewed_at: ctx.now, reviewer_id: ctx.actor.id, review_note: note || null });
-  clrAudit(ctx, clr, "clarification.reviewed", `${ctx.actor.name} reviewed the office answer for ${clr.display_id}. Not resolved yet.`, { reason: note || null });
+  clrAudit(ctx, clr, "clarification.reviewed", `${ctx.actor.name} reviewed the office answer for ${clr.display_id}. Not resolved yet.`, {
+    reason: note || null,
+    before: beforeState,
+    after: { state: "reviewed", version: clr.version, outcome, ...answerRef },
+  });
   closeClarificationTasks(ctx, clr.id, [TASK_KINDS.followup, TASK_KINDS.escalation]);
   ownerTask(ctx, clr, TASK_KINDS.review, `Resolve ${clr.display_id}: answer reviewed by ${ctx.actor.name}`, clr.escalation_owner_id ?? ctx.actor.id, "accessioning_lead", ctx.now);
   return { clarificationId: clr.id, displayId: clr.display_id, state: clr.state, version: clr.version };
@@ -1175,6 +1195,8 @@ export function resolveClarification(
   if (releaseIds.length && !(input.releaseReason ?? "").trim()) {
     throw new DomainError("VALIDATION", "Give a reason for releasing the hold. The release is recorded separately from the resolution.");
   }
+  const answer = latestAnswerMessage(db, clr.id);
+  const beforeState = { state: clr.state, version: clr.version, reviewerId: clr.reviewer_id };
   clr = update(ctx, clr, input.expectedVersion, {
     state: "resolved",
     resolved_at: ctx.now,
@@ -1183,7 +1205,19 @@ export function resolveClarification(
     resolution_note: note,
     next_follow_up_at: null,
   });
-  clrAudit(ctx, clr, "clarification.resolved", `${ctx.actor.name} resolved ${clr.display_id}: ${RESOLUTION_CODES[input.resolutionCode]}.`, { reason: note, after: { resolutionCode: input.resolutionCode } });
+  clrAudit(ctx, clr, "clarification.resolved", `${ctx.actor.name} resolved ${clr.display_id}: ${RESOLUTION_CODES[input.resolutionCode]}.`, {
+    reason: note,
+    before: beforeState,
+    after: {
+      state: "resolved",
+      version: clr.version,
+      resolutionCode: input.resolutionCode,
+      category: clr.category,
+      answerMessageId: answer?.id ?? null,
+      answeredAt: clr.answered_at,
+      holdReleasesRequested: releaseIds,
+    },
+  });
 
   const released: { id: string; displayId: string; scopeLabel: string }[] = [];
   for (const hid of releaseIds) {
@@ -1207,7 +1241,7 @@ export function resolveClarification(
   };
 }
 
-export function cancelClarification(ctx: Ctx, input: { clarificationId: string; reason: string; expectedVersion?: number }) {
+export function cancelClarification(ctx: Ctx, input: { clarificationId: string; reason: string; expectedVersion: number }) {
   let clr = getClarification(ctx.db, input.clarificationId);
   assertVersion(clr, input.expectedVersion);
   assertState(clr, OPEN_CLARIFICATION_STATES, "cancel");

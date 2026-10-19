@@ -86,6 +86,26 @@ export const SOURCE_UPDATE_STATE = {
 } as const;
 export type SourceUpdateState = keyof typeof SOURCE_UPDATE_STATE;
 
+/**
+ * The ONE definition of the source-entry backlog: an approved (current) gross record on an active part whose
+ * description has not been entered in the source system yet. A failed entry is still awaiting entry. Screens may
+ * show a subset (the worklist's queue, Sam's entry queue) but each says which states it shows.
+ */
+export const AWAITING_SOURCE_ENTRY: readonly SourceUpdateState[] = ["not_started", "pending_entry", "failed"];
+/** Entered by staff (attested) but not yet acknowledged by the (simulated) source. */
+export const AWAITING_SOURCE_ACK: readonly SourceUpdateState[] = ["entered_attested"];
+
+export function awaitsSourceEntry(r: { grossState: string; sourceUpdateState: string; partStatus?: string | null }): boolean {
+  return (
+    r.grossState === "approved_for_downstream" &&
+    (r.partStatus ?? "active") !== "canceled" &&
+    (AWAITING_SOURCE_ENTRY as readonly string[]).includes(r.sourceUpdateState)
+  );
+}
+
+/** SQL twin of awaitsSourceEntry() for a gross_record alias `gr` joined to specimen_part `sp`. */
+export const AWAITING_SOURCE_ENTRY_SQL = `gr.state = 'approved_for_downstream' AND sp.status <> 'canceled' AND gr.source_update_state IN (${AWAITING_SOURCE_ENTRY.map((s) => `'${s}'`).join(",")})`;
+
 export const BLOCK_STATE = {
   cassette_loaded: "Cassette loaded (grossed)",
   processing: "Processing",
@@ -103,7 +123,8 @@ export const SLIDE_STATE = {
   stained: "Stained",
   coverslipped: "Coverslipped",
   qc_reviewed: "QC reviewed",
-  delivered: "Delivered to pathologist",
+  // Tray delivery is recorded digitally; no receipt by the pathologist is recorded (stored state stays "delivered").
+  delivered: "Sent on tray (receipt not recorded)",
 } as const;
 export type SlideState = keyof typeof SLIDE_STATE;
 export const SLIDE_STATE_ORDER: SlideState[] = ["planned", "sectioned", "stained", "coverslipped", "qc_reviewed", "delivered"];
@@ -130,6 +151,7 @@ export const AUTHORIZATION_SOURCE = {
   source_order: "Source order",
   standing_protocol: "Standing protocol (synthetic)",
   pathologist_request: "Pathologist request",
+  staff_entered_request: "Entered by staff on request (reference recorded)",
 } as const;
 
 export const PRINT_STATE = {
@@ -198,18 +220,21 @@ export const PROCEDURE = {
   not_stated: "Not stated",
 } as const;
 
-/** Stage shown on the worklist (derived; see server/domain/readiness.ts). */
+/** Stage shown on the worklist (derived; see server/domain/readiness.ts), in bench-path order. */
 export const STAGE = {
   intake: "Intake",
   awaiting_gross: "Awaiting grossing",
   gross_in_progress: "Grossing documentation",
+  /** Cassettes loaded, gross record approved: eligible for the next processing run, not yet on the processor. */
+  awaiting_processing: "Ready for processing",
   processing: "Processing",
   embedding: "Embedding",
   sectioning: "Sectioning",
   staining: "Staining",
   qc: "QC",
   ready_for_tray: "Ready for tray",
-  delivered: "Delivered",
+  /** Every active slide recorded as delivered on a tray. No pathologist receipt is recorded. */
+  delivered: "Sent on tray",
   canceled: "Canceled",
 } as const;
 export type Stage = keyof typeof STAGE;

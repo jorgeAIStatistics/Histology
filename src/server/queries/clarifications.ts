@@ -1,4 +1,5 @@
 import type { DB } from "@/server/db/db";
+import { holdNextSteps } from "./hold-next";
 import type { Role, Permission } from "@/lib/roles";
 import { roleCan, rolesFor, ROLE_LABEL } from "@/lib/roles";
 import { CLARIFICATION_CATEGORY, CLARIFICATION_STATE, OPEN_CLARIFICATION_STATES, type ClarificationState } from "@/lib/domain";
@@ -85,6 +86,12 @@ export interface ClarificationListRow {
    * to release it with a reason, so the row stays on Needs review (and the lead's My open) until then.
    */
   holdToRelease: boolean;
+  /**
+   * Closed, its hold still active, and the resolution means the order itself must change
+   * (confirmed_observed / source_amended) with no newer order version imported yet: the hold
+   * waits for the amended order, not for a release. Same rule as Operations (queries/hold-next.ts).
+   */
+  awaitingAmendedOrder: boolean;
 }
 
 /**
@@ -482,6 +489,7 @@ function toListRow(r: BaseRow, holds: Map<string, HoldRow[]>, now: string, short
     escalationOwnerName: r.escalation_owner_name ?? null,
     escalationOwnerId: r.escalation_owner_id ?? null,
     holdToRelease: !isOpen && (holds.get(r.id) ?? []).length > 0,
+    awaitingAmendedOrder: false,
   };
 }
 
@@ -555,10 +563,20 @@ export interface ClarificationQueue {
   sortNote: string;
 }
 
+/** Marks closed rows whose hold waits for the amended order (the shared hold next-step rule). */
+function withAmendmentWaits(db: DB, rows: ClarificationListRow[]): ClarificationListRow[] {
+  const holdIds = rows.filter((r) => r.holdToRelease).flatMap((r) => r.activeHolds.map((h) => h.id));
+  if (!holdIds.length) return rows;
+  const steps = holdNextSteps(db, holdIds);
+  return rows.map((r) =>
+    r.holdToRelease && r.activeHolds.some((h) => steps.get(h.id)?.waiting === "source_amendment") ? { ...r, awaitingAmendedOrder: true } : r,
+  );
+}
+
 export function listClarifications(db: DB, opts: { filter?: ClarificationFilter | null; actorId: string; now: string }): ClarificationQueue {
   const base = db.prepare(BASE_SQL).all() as BaseRow[];
   const holds = activeHoldsByClarification(db);
-  const all = base.map((r) => toListRow(r, holds, opts.now, (h) => holdScope(db, h).short));
+  const all = withAmendmentWaits(db, base.map((r) => toListRow(r, holds, opts.now, (h) => holdScope(db, h).short)));
   const myTasks = new Set(
     (db
       .prepare("SELECT entity_id FROM task WHERE entity_type IN ('clarification','hold') AND status IN ('open','in_progress') AND owner_id = ?")
@@ -915,7 +933,7 @@ export function getClarificationDetail(db: DB, idOrDisplay: string, opts: { now:
   const staff = staffNames(db);
   const holdsAll = db.prepare("SELECT * FROM hold WHERE clarification_id = ? ORDER BY placed_at, display_id").all(r.id) as HoldRow[];
   const activeMap = new Map<string, HoldRow[]>([[r.id, holdsAll.filter((h) => h.status === "active")]]);
-  const row = toListRow(r, activeMap, now, (h) => holdScope(db, h).short);
+  const row = withAmendmentWaits(db, [toListRow(r, activeMap, now, (h) => holdScope(db, h).short)])[0];
   const info = subjectContext(db, r);
 
   // Patient (synthetic) and tenant, for identity while editing.

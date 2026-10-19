@@ -7,7 +7,10 @@ export type DomainErrorCode =
   | "VALIDATION"
   | "SOURCE_OFFLINE" // the (simulated) source system is unavailable
   | "PRINTER_UNAVAILABLE"
-  | "ASSISTANT_UNAVAILABLE";
+  | "ASSISTANT_UNAVAILABLE"
+  | "IDEMPOTENCY_CONFLICT" // a repeated key from another requester, scope, command or payload
+  | "IDEMPOTENCY_EXPIRED" // a repeated key past its retention window (never re-run)
+  | "AUTH_REQUIRED"; // not in synthetic demo mode and no identity provider is configured
 
 export class DomainError extends Error {
   readonly code: DomainErrorCode;
@@ -29,6 +32,9 @@ export const httpStatusFor: Record<DomainErrorCode, number> = {
   SOURCE_OFFLINE: 503,
   PRINTER_UNAVAILABLE: 503,
   ASSISTANT_UNAVAILABLE: 503,
+  IDEMPOTENCY_CONFLICT: 409,
+  IDEMPOTENCY_EXPIRED: 409,
+  AUTH_REQUIRED: 401,
 };
 
 export function invariant(condition: unknown, message: string, details?: unknown): asserts condition {

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { getDb } from "@/server/db/db";
-import { DEFINITIONS, P90_THRESHOLD_NOTE, fmtMinutes, getInsights, type DurationSummary, type InsightsData } from "@/server/queries/insights";
+import { DEFINITIONS, P90_THRESHOLD_NOTE, TODAY_PROVENANCE, fmtMinutes, getInsights, type DurationSummary, type InsightsData } from "@/server/queries/insights";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -22,7 +22,8 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Insights" };
 
 const PRIOR_TAG = "Illustrative: synthetic prior-day data";
-const TODAY_TAG = "Today: synthetic demo data";
+// One provenance wording for every "today" figure (queries/insights.ts): seeded synthetic records plus this session.
+const TODAY_TAG = `Today: ${TODAY_PROVENANCE.toLowerCase()} (synthetic)`;
 
 /** In-page index: the page is long, and a presenter jumps to one measure at a time. */
 const MEASURES = [
@@ -71,8 +72,7 @@ export default async function InsightsPage({ searchParams }: { searchParams: SP 
         <p className="-mt-1 max-w-[95ch] text-md text-ink-secondary">How a pilot would measure the bench, with every definition visible.</p>
         <div role="note" aria-label="How to read these numbers" className="flex max-w-[110ch] flex-col gap-1 text-sm text-ink-secondary">
           <p>
-            Charts tagged “{PRIOR_TAG}” use generated events for {nDays} prior working days ({range}). Figures tagged “{TODAY_TAG}” come from this demo session’s
-            synthetic records at demo clock {asOfLabel}. The two are never mixed. No savings, scores or rankings are shown; the scenario calculator at the bottom starts blank.
+            Charts tagged “{PRIOR_TAG}” use generated events for {nDays} prior working days ({range}). Figures tagged “{TODAY_TAG}” come from the seeded synthetic demo day plus any records created in this session, at demo clock {asOfLabel}. The two are never mixed. No savings, scores or rankings are shown; the scenario calculator at the bottom starts blank.
           </p>
           <p>
             Median and 90th percentile use the nearest-rank method; still-open items and missing event data are always shown separately. {P90_THRESHOLD_NOTE}

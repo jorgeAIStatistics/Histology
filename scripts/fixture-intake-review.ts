@@ -6,6 +6,9 @@
 //   related-order candidate REL-0112 still waiting for the lead's review.
 //
 //   npx tsx scripts/fixture-intake-review.ts [db-file]   (default data/fixture-intake.db)
+// Builds a synthetic fixture only: run its commands in synthetic demo mode (src/server/runtime-mode.ts).
+process.env.HLOS_MODE = "demo";
+
 import fs from "node:fs";
 import { openDatabase } from "../src/server/db/db";
 import { seedDemo } from "../src/server/seed/seed";

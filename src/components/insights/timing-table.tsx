@@ -71,6 +71,8 @@ function TimingTableRow({ row }: { row: TimingRow }) {
       <th scope="row" className="border-b border-line px-3 py-2.5 text-left align-top font-normal group-last/row:border-b-0">
         <span className="block text-sm font-semibold text-ink">{row.label}</span>
         <IllustrativeTag className="mt-1 max-w-full whitespace-normal">{row.tag}</IllustrativeTag>
+        {/* Provenance of the sample (today: seeded synthetic + this session; simulated answers counted apart from staff-recorded ones). */}
+        {s.provenance ? <span className="mt-1 block text-xs text-ink-secondary">{s.provenance}</span> : null}
         {row.records ? (
           <Link href={row.records.href} className="mt-1 flex min-h-[var(--hlo-target-min)] w-fit items-center text-sm text-brand underline-offset-2 hover:underline">
             {row.records.label}

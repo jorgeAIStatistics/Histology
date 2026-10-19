@@ -150,7 +150,7 @@ export function BlockedNow({ summary, items, filter, now }: { summary: BlockedSu
         />
       ) : total === 0 ? (
         <p className="border-t border-line px-5 py-4 text-sm text-ink-secondary max-xl:px-4">
-          Holds, overdue clarifications, unknown print outcomes, tray and routing exceptions, open block retrievals and reviews appear here with their owner,
+          Holds, overdue clarifications, unknown print outcomes, tray and routing exceptions, open block retrievals, reviews and integration problems appear here with their owner,
           waiting time and evidence as soon as the records show them.
         </p>
       ) : null}

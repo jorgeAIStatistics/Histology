@@ -67,6 +67,10 @@ function clarificationFixture(db: DB, refs: { intakeItemId: string; orderPartId?
   ).run(idv, `CLR-9${String(n).padStart(3, "0")}`, refs.category, refs.intakeItemId, refs.orderPartId ?? null, refs.containerId ?? null, labLocalToIso("2026-10-14", "11:05"), `${refs.category}:${idv}`);
   return idv;
 }
+/** The current routing decision id of an intake item: what the routing dialog sends as expectedDecisionId. */
+function decisionIdOf(db: DB, intakeItemId: string): string {
+  return one<{ id: string }>(db, "SELECT id FROM routing_decision WHERE intake_item_id = ? AND status <> 'superseded' ORDER BY created_at DESC LIMIT 1", intakeItemId).id;
+}
 function heroReady(db: DB) {
   arrive(db);
   const a = receive(db, "phys_quinlanA");
@@ -164,10 +168,10 @@ describe("S1 intake: routing (acceptance check 1)", () => {
     const db = testDb();
     arrive(db);
     const r = receive(db, "phys_castillo");
-    const maya = run(db, STAFF.maya, "routing.override", { intakeItemId: r.intakeItemId, pathologistId: STAFF.okafor, reason: "workload" });
+    const maya = run(db, STAFF.maya, "routing.override", { intakeItemId: r.intakeItemId, pathologistId: STAFF.okafor, reason: "workload", expectedDecisionId: decisionIdOf(db, r.intakeItemId) });
     expect(maya.ok).toBe(false);
     if (!maya.ok) expect(maya.error.code).toBe("FORBIDDEN");
-    must(db, STAFF.kim, "routing.override", { intakeItemId: r.intakeItemId, pathologistId: STAFF.okafor, reason: "Dr. Marsh at capacity today (synthetic)" });
+    must(db, STAFF.kim, "routing.override", { intakeItemId: r.intakeItemId, pathologistId: STAFF.okafor, reason: "Dr. Marsh at capacity today (synthetic)", expectedDecisionId: decisionIdOf(db, r.intakeItemId) });
     const cur = one<{ status: string; suggested_pathologist_id: string; final_pathologist_id: string; override_reason: string }>(
       db, "SELECT * FROM routing_decision WHERE intake_item_id = ? AND status <> 'superseded'", r.intakeItemId,
     );
@@ -500,10 +504,10 @@ describe("S1 post-accession correction (acceptance check 5)", () => {
     expect(dupXr).toMatchObject({ duplicate: true, correctionId: xr.correctionId });
 
     // Only a lead/supervisor records the outcome; referring creates a task for the authorized source process.
-    const denied = run(db, STAFF.maya, "correction.close", { correctionId: xr.correctionId, outcome: "closed_no_change", note: "x" });
+    const denied = run(db, STAFF.maya, "correction.close", { correctionId: xr.correctionId, outcome: "closed_no_change", note: "x", expectedVersion: one<{ version: number }>(db, "SELECT version FROM correction_review WHERE id = ?", xr.correctionId).version });
     expect(denied.ok).toBe(false);
     if (!denied.ok) expect(denied.error.code).toBe("FORBIDDEN");
-    must(db, STAFF.kim, "correction.close", { correctionId: xr.correctionId, outcome: "referred_to_source_process", note: "Asked office to amend ORD-77121 in EMA" });
+    must(db, STAFF.kim, "correction.close", { correctionId: xr.correctionId, outcome: "referred_to_source_process", note: "Asked office to amend ORD-77121 in EMA", expectedVersion: one<{ version: number }>(db, "SELECT version FROM correction_review WHERE id = ?", xr.correctionId).version });
     expect(one<{ status: string }>(db, "SELECT status FROM correction_review WHERE id = ?", xr.correctionId).status).toBe("referred_to_source_process");
     expect(one<{ title: string }>(db, "SELECT title FROM task WHERE kind = 'correction_review' AND entity_id = ? AND status = 'open'", xr.correctionId).title).toMatch(/authorized source-system process/);
 
@@ -569,7 +573,7 @@ describe("S1 concurrency and role checks (acceptance check 12)", () => {
     expect(!grosser.ok && grosser.error.code).toBe("FORBIDDEN");
     const histotech = run(db, STAFF.priya, "accession.request", { intakeItemIds: [r.intakeItemId] });
     expect(!histotech.ok && histotech.error.code).toBe("FORBIDDEN");
-    const md = run(db, STAFF.md, "routing.override", { intakeItemId: r.intakeItemId, pathologistId: STAFF.okafor, reason: "x" });
+    const md = run(db, STAFF.md, "routing.override", { intakeItemId: r.intakeItemId, pathologistId: STAFF.okafor, reason: "x", expectedDecisionId: decisionIdOf(db, r.intakeItemId) });
     expect(!md.ok && md.error.code).toBe("FORBIDDEN");
   });
 });
@@ -700,8 +704,8 @@ function codesFor(db: DB, ids: string[]) {
 function nowIso(db: DB) {
   return readClock(db).now;
 }
-function markResolved(db: DB, clarificationId: string, at = nowIso(db)) {
-  db.prepare("UPDATE clarification SET state = 'resolved', resolved_at = ?, resolved_by = ?, resolution_code = 'confirmed_observed' WHERE id = ?").run(at, STAFF.kim, clarificationId);
+function markResolved(db: DB, clarificationId: string, at = nowIso(db), code = "confirmed_observed") {
+  db.prepare("UPDATE clarification SET state = 'resolved', resolved_at = ?, resolved_by = ?, resolution_code = ? WHERE id = ?").run(at, STAFF.kim, code, clarificationId);
 }
 /** Queue a newer version of a seeded EMA-SIM order in the simulated source outbox and import it through S6's sync. */
 function amendOrder(db: DB, sourceOrderId: string, mutate: (payload: { specimens: { designation: string; site: string; laterality: string | null }[]; [k: string]: unknown }) => void) {
@@ -771,8 +775,9 @@ describe("S1 recorded discrepancies: identity, edits, coverage, amendments (revi
     expect(!lead.ok && lead.error.code).toBe("INVARIANT");
     expect(count(db, "accession")).toBe(accBefore);
 
-    // Once a lead resolved the identity clarification (review and resolution happen in the clarifications slice), the request proceeds.
-    markResolved(db, clr);
+    // Once a lead resolved the identity clarification as "office confirmed the order is correct" (review and resolution happen
+    // in the clarifications slice), the request proceeds. Any other resolution code does not cover identity (integrity.test.ts).
+    markResolved(db, clr, nowIso(db), "confirmed_order");
     expect(codesFor(db, [r.intakeItemId])).toEqual([]);
     const acc = must<AccRes>(db, STAFF.maya, "accession.request", { intakeItemIds: [r.intakeItemId] });
     expect(acc.outcome).toBe("issued");
@@ -1016,7 +1021,7 @@ describe("S1 grouping, related-order review and scan (review fixes)", () => {
     const cand = one<{ id: string; version: number }>(db, "SELECT id, version FROM related_order_candidate");
     must(db, STAFF.kim, "related.review", { candidateId: cand.id, expectedVersion: cand.version, decision: "single_accession_approved", reason: "Same encounter" });
     expect(codesFor(db, [a.intakeItemId, b.intakeItemId])).toEqual([]);
-    must(db, STAFF.kim, "routing.override", { intakeItemId: b.intakeItemId, pathologistId: STAFF.okafor, reason: "Workload (synthetic)" });
+    must(db, STAFF.kim, "routing.override", { intakeItemId: b.intakeItemId, pathologistId: STAFF.okafor, reason: "Workload (synthetic)", expectedDecisionId: decisionIdOf(db, b.intakeItemId) });
     expect(codesFor(db, [a.intakeItemId, b.intakeItemId])).toEqual(["routing_differs"]);
   });
 
@@ -1134,7 +1139,7 @@ describe("S1 hero path with the clarifications slice (cross-slice, skipped if cl
     });
     // The identity question is open and has no hold: accession is still blocked on identity; the procedure question covers its finding.
     expect(codesFor(db, [r.intakeItemId])).toEqual(["identity_unresolved"]);
-    must(db, STAFF.kim, "clarification.cancel", { clarificationId: method.clarificationId, reason: "Raised by mistake (test)" });
+    must(db, STAFF.kim, "clarification.cancel", { clarificationId: method.clarificationId, reason: "Raised by mistake (test)", expectedVersion: one<{ version: number }>(db, "SELECT version FROM clarification WHERE id = ?", method.clarificationId).version });
     expect(codesFor(db, [r.intakeItemId]).sort()).toEqual(["discrepancy_uncovered", "identity_unresolved"]);
     expect(run(db, STAFF.maya, "accession.request", { intakeItemIds: [r.intakeItemId] }).ok).toBe(false);
   });

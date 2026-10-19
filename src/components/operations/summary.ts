@@ -1,7 +1,7 @@
 import type { BlockedCategory, BlockedItem } from "@/server/queries/operations";
 
 /** Categories that stop or hold up work now. Source-system entry is the routine documentation queue, shown on its own. */
-export const EXCEPTION_CATEGORIES: BlockedCategory[] = ["holds", "clarifications", "print", "trays", "routing", "retrieval", "review"];
+export const EXCEPTION_CATEGORIES: BlockedCategory[] = ["holds", "clarifications", "print", "trays", "routing", "retrieval", "review", "integration"];
 
 /** Filter labels (plural, with counts) for the "Blocked now" categories. */
 export const FILTER_LABEL: Record<BlockedCategory, string> = {
@@ -12,6 +12,7 @@ export const FILTER_LABEL: Record<BlockedCategory, string> = {
   routing: "Routing",
   retrieval: "Block retrieval",
   review: "Reviews",
+  integration: "Integration",
   source_entry: "Source-system entry",
 };
 
@@ -24,6 +25,7 @@ export const CLEAR_LABEL: Record<BlockedCategory, string> = {
   routing: "routing exceptions",
   retrieval: "open block retrieval requests",
   review: "reviews waiting",
+  integration: "stuck accession requests, queued print jobs or failed source messages",
   source_entry: "approved records awaiting source-system entry",
 };
 

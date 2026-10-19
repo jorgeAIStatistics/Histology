@@ -17,6 +17,7 @@ import { confirmRouting, overrideRouting, resolveRoutingException } from "../dom
 import { reviewCandidate } from "../domain/related";
 import { requestAccession } from "../domain/accession";
 import { openCorrection, closeCorrection, CORRECTION_KINDS, CORRECTION_OUTCOMES } from "../domain/correction";
+import { reviewSourceConflict, SOURCE_CONFLICT_DECISIONS } from "../domain/sourceConflict";
 
 const id = z.string().trim().min(1).max(80);
 const version = z.number().int().nonnegative();
@@ -131,6 +132,7 @@ export const simulateColleagueEditCmd = defineCommand({
   name: "intake.simulateColleagueEdit",
   description: "Demo control: Luis Benitez (simulated colleague) edits this intake item's note, bumping its version.",
   permission: "intake.edit",
+  audience: "presenter",
   input: z.object({ intakeItemId: id }),
   run: (ctx, input) => {
     const it = loadIntakeItem(ctx.db, input.intakeItemId);
@@ -164,11 +166,12 @@ export const routingConfirmCmd = defineCommand({
 
 export const routingOverrideCmd = defineCommand({
   name: "routing.override",
-  description: "Lead/supervisor: assign a different dermatopathologist than the rule, with a reason. The rule suggestion is kept.",
+  description:
+    "Lead/supervisor: assign a different dermatopathologist than the rule, with a reason. The rule suggestion is kept. expectedDecisionId is the routing decision the user saw (a newer decision is a conflict); a routing_confirm hold blocks it.",
   permission: "routing.override",
-  input: z.object({ intakeItemId: id, pathologistId: id, reason }),
+  input: z.object({ intakeItemId: id, pathologistId: id, reason, expectedDecisionId: id }),
   run: (ctx, input) => {
-    const d = overrideRouting(ctx, input.intakeItemId, input.pathologistId, input.reason);
+    const d = overrideRouting(ctx, input.intakeItemId, input.pathologistId, input.reason, input.expectedDecisionId);
     return { decisionId: d.id, status: d.status, pathologistId: d.final_pathologist_id };
   },
 });
@@ -238,7 +241,7 @@ export const correctionCloseCmd = defineCommand({
     correctionId: id,
     outcome: z.enum(CORRECTION_OUTCOMES),
     note: z.string().trim().min(1, "A note is required").max(2000),
-    expectedVersion: version.optional(),
+    expectedVersion: version,
   }),
   run: (ctx, input) => {
     const c = closeCorrection(ctx, input);
@@ -246,7 +249,26 @@ export const correctionCloseCmd = defineCommand({
   },
 });
 
+// ---------------------------------------------------------------- source conflicts (patient / order-level details)
+
+/**
+ * The simulated source sent patient details that differ from the patient on
+ * file for that MRN, or a newer order version changed its patient, office or
+ * encounter. The importer kept what is on file and opened a review task, which
+ * blocks accession. Uses the lead-only "clarification.resolve" permission: the
+ * same authority that resolves a patient identity question.
+ */
+export const sourceConflictReviewCmd = defineCommand({
+  name: "sourceConflict.review",
+  description:
+    "Lead/supervisor: record that the patient and order details on file stand for a source conflict, with a reason. Closes the review task only: the patient reference and the order link are never changed and nothing is merged. Any other outcome (the details on file are wrong, or the order is for a different patient) is a patient identity question: raise an identity clarification instead.",
+  permission: "clarification.resolve",
+  input: z.object({ taskId: id, expectedVersion: version, decision: z.enum(SOURCE_CONFLICT_DECISIONS), reason }),
+  run: (ctx, input) => reviewSourceConflict(ctx, input),
+});
+
 export const __intakeCommands = [
   receiveDeliveryCmd, receivePhysicalItemCmd, receiveAllCmd, recordObservationCmd, verifyContainerCmd, updateItemCmd, acceptDiscrepancyCmd, simulateColleagueEditCmd,
   routingConfirmCmd, routingOverrideCmd, routingResolveExceptionCmd, relatedReviewCmd, accessionRequestCmd, correctionOpenCmd, correctionCloseCmd,
+  sourceConflictReviewCmd,
 ] as const;

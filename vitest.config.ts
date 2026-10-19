@@ -8,5 +8,7 @@ export default defineConfig({
     environment: "node",
     pool: "forks",
     testTimeout: 20000,
+    // Domain tests exercise the synthetic demo; tests of the locked mode set HLOS_MODE themselves.
+    env: { HLOS_MODE: "demo" },
   },
 });

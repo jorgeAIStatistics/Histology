@@ -37,7 +37,7 @@ export function exportWorklistCsv(
   const view = body.view;
   const filters = parsedFilters.data;
   const expectedSeq = typeof body.expectedSeq === "number" && Number.isInteger(body.expectedSeq) ? body.expectedSeq : undefined;
-  const idempotencyKey = typeof body.idempotencyKey === "string" && body.idempotencyKey ? body.idempotencyKey.slice(0, 200) : undefined;
+  const idempotencyKey = typeof body.idempotencyKey === "string" && body.idempotencyKey ? body.idempotencyKey : undefined;
 
   const res = executeCommand<SnapshotResult>(db, actorId, "worklist.snapshot", { view, filters, format: "csv", expectedSeq }, { idempotencyKey });
   if (!res.ok) return { ok: false, status: httpStatusFor[res.error.code] ?? 400, error: res.error };

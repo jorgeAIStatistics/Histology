@@ -89,7 +89,7 @@ describe("case page: next step, readiness and evidence on the step it stops", ()
         false,
       ),
     ).toBe("Eligible: Parts A and C for grossing. Not ready: Part B on hold (H-0089).");
-    expect(caseReadiness([], true)).toBe("All parts delivered.");
+    expect(caseReadiness([], true)).toBe("All parts sent on trays; receipt not recorded.");
   });
 
   it("says where extra work was requested in words", () => {
@@ -131,7 +131,7 @@ describe("case page: the seeded held case", () => {
     const db = testDb();
     const c = getCase(db, "D26-04804")!;
     expect(c.summary.isComplete).toBe(false);
-    expect(c.summary.text).toMatch(/^Not complete: 0 of 3 parts delivered, 1 part on hold\.$/);
+    expect(c.summary.text).toMatch(/^Not complete: 0 of 3 parts sent on trays, 1 part on hold\.$/);
     for (const p of c.parts) {
       const holds = c.holdsAll.filter((h) => h.status === "active" && p.holds.some((x) => x.id === h.id));
       const held = [...railSteps(p.physical.steps, holds, "physical"), ...railSteps(p.documentation.steps, holds, "documentation")].filter((s) => s.held.length);
@@ -149,8 +149,9 @@ describe("case page: the hero case after the guided demo's grossing step", () =>
     const a = c.parts.find((p) => p.designation === "A")!;
     const next = partNext(a, c.identity.accessionNumber)!;
     expect(next).toMatchObject({ action: "Enter approved gross description in source system", who: "Sam Ortiz", fromRecord: false });
-    // A documentation action is not headed by the physical stage ("Processing").
-    expect(a.stageLabel).toBe("Processing");
+    // A documentation action is not headed by the physical stage. A loaded cassette with an approved record is
+    // "Ready for processing", never "Processing" (B-4).
+    expect(a.stageLabel).toBe("Ready for processing");
     expect(partHeading(a.stageLabel, next)).toBe("Source-system entry");
     expect(next.note).toMatch(/manual entry in the source system/);
     // The instruction is the next step; it is not repeated as a readiness line.

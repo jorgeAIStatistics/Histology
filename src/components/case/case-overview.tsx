@@ -23,9 +23,24 @@ function otherPartsNote(c: CaseDetail, heldPart: string): string | null {
   return others.length === 1 ? `Part ${others[0]} can continue.` : `Parts ${others.slice(0, -1).join(", ")} and ${others[others.length - 1]} can continue.`;
 }
 
-/** The hold inside its part's row: hatched, scoped in words, with the clarification it waits on and who follows it up. */
+/** What a hold inside a part's row covers, in words: the part, one block or slide, or everything from one intake item. */
+function holdScopeWords(hold: ActiveHold): string {
+  switch (hold.scopeType) {
+    case "block":
+    case "slide":
+    case "work_order":
+      return `for ${hold.target ?? hold.scopeLabel} only`;
+    case "intake_item":
+      return `for everything received with ${hold.scopeLabel}`;
+    default:
+      return "for this part only";
+  }
+}
+
+/** The hold inside its part's row: hatched, scoped in words, with the clarification it waits on and who holds the next step. */
 function PartHold({ hold, clar, note, now }: { hold: ActiveHold; clar: CaseClarification | undefined; note: string | null; now: string }) {
   const overdue = !!clar?.open && !!clar.nextFollowUpAt && Date.parse(clar.nextFollowUpAt) < Date.parse(now);
+  const partOnly = holdScopeWords(hold) === "for this part only";
   return (
     <div className="hatch rounded-md border border-hold-border px-3 py-2.5 text-sm">
       <p className="flex items-start gap-2 font-semibold text-hold-fg">
@@ -35,7 +50,7 @@ function PartHold({ hold, clar, note, now }: { hold: ActiveHold; clar: CaseClari
         </span>
       </p>
       <p className="mt-0.5 pl-6 text-ink">
-        Stops {hold.blocks.join(", ").replace(/_/g, " ")} for this part only.{note ? ` ${note}` : ""}
+        Stops {hold.blocks.join(", ").replace(/_/g, " ")} {holdScopeWords(hold)}.{note && partOnly ? ` ${note}` : ""}
       </p>
       <dl className="mt-1 flex flex-wrap gap-x-5 gap-y-0.5 pl-6 text-ink-secondary">
         {clar ? (
@@ -51,7 +66,7 @@ function PartHold({ hold, clar, note, now }: { hold: ActiveHold; clar: CaseClari
         ) : null}
         <div className="flex gap-1.5">
           <dt>Waiting on</dt>
-          <dd className="font-semibold text-ink">{clar?.labOwner ?? "Unknown"}</dd>
+          <dd className="font-semibold text-ink">{hold.owner ?? "Unknown"}</dd>
         </div>
         {clar?.open && clar.nextFollowUpAt && !overdue ? (
           <div className="flex gap-1.5">
@@ -72,6 +87,12 @@ function PartHold({ hold, clar, note, now }: { hold: ActiveHold; clar: CaseClari
         <p className="mt-1.5 ml-6 inline-flex items-center gap-1.5 rounded-sm border border-warning-border bg-warning-bg px-2 py-0.5 font-semibold text-warning-fg">
           <TriangleAlert className="size-4 shrink-0 text-warning-solid" aria-hidden />
           Follow-up overdue since {fmtSmart(clar.nextFollowUpAt, now)} ET ({fmtAge(clar.nextFollowUpAt, now)})
+        </p>
+      ) : null}
+      {hold.nextStep ? (
+        <p className="mt-1 pl-6 text-ink-secondary">
+          <span className="text-ink-muted">Next: </span>
+          <IdText text={hold.nextStep} />
         </p>
       ) : null}
       <p className="mt-1 pl-6 text-xs text-ink-secondary">Released only by an authorized person with a reason; an office answer does not release it.</p>
@@ -134,6 +155,9 @@ function PartRow({ c, part, focused, readOnly }: { c: CaseDetail; part: CasePart
   const now = c.generatedAt;
   const d = part.designation;
   const holds = c.holdsAll.filter((h) => h.status === "active" && part.holds.some((x) => x.id === h.id));
+  // A whole-case hold still marks the steps it stops on this part's rails, but its strip is said once, above the parts,
+  // never as "this part only" in every row.
+  const stripHolds = holds.filter((h) => h.scopeType !== "accession");
   const heldIds = holds.map((h) => h.displayId);
   const physical = railSteps(part.physical.steps, holds, "physical");
   const documentation = railSteps(part.documentation.steps, holds, "documentation");
@@ -142,7 +166,7 @@ function PartRow({ c, part, focused, readOnly }: { c: CaseDetail; part: CasePart
   const lines = partLines(part, heldIds, next, c.identity.accessionNumber);
   const alsoOpen = part.openTasks.slice(1);
   const canceled = part.status === "canceled";
-  const delivered = part.stageLabel === "Delivered";
+  const delivered = part.stage === "delivered";
   return (
     <section
       id={`part-${d}`}
@@ -253,15 +277,15 @@ function PartRow({ c, part, focused, readOnly }: { c: CaseDetail; part: CasePart
         ) : null}
       </div>
 
-      {holds.length ? (
+      {stripHolds.length ? (
         <div className="flex min-w-0 flex-col gap-2 md:col-span-2 md:row-start-2 xl:col-span-2 xl:col-start-2">
-          {holds.map((h) => (
+          {stripHolds.map((h) => (
             <PartHold key={h.id} hold={h} clar={h.clarificationId ? c.clarifications.find((x) => x.id === h.clarificationId) : undefined} note={otherPartsNote(c, d)} now={now} />
           ))}
         </div>
       ) : null}
 
-      <div className={cn("flex min-w-0 flex-col gap-2.5 md:col-span-2 xl:col-span-1 xl:col-start-2 xl:row-start-1", holds.length ? "md:row-start-3" : "md:row-start-2")}>
+      <div className={cn("flex min-w-0 flex-col gap-2.5 md:col-span-2 xl:col-span-1 xl:col-start-2 xl:row-start-1", stripHolds.length ? "md:row-start-3" : "md:row-start-2")}>
         <StepRail title="Physical" steps={physical} columns="grid-cols-4 md:grid-cols-8" />
         <StepRail title="Documentation" steps={documentation} columns="grid-cols-2 sm:grid-cols-4" />
       </div>
@@ -272,8 +296,8 @@ function PartRow({ c, part, focused, readOnly }: { c: CaseDetail; part: CasePart
 export function CaseOverview({ c, focusPart, readOnly }: { c: CaseDetail; focusPart: string | null; readOnly: boolean }) {
   const now = c.generatedAt;
   const onParts = new Set(c.parts.flatMap((p) => p.holds.map((h) => h.id)));
-  // Holds that are not on one part (the whole case, an intake item) keep the shared banner above the parts.
-  const caseHolds = c.holdsAll.filter((h) => h.status === "active" && !onParts.has(h.id));
+  // Holds that are not on one part (the whole case, an intake item not tied to a part) keep the shared banner above the parts.
+  const caseHolds = c.holdsAll.filter((h) => h.status === "active" && (h.scopeType === "accession" || !onParts.has(h.id)));
   const released = c.holdsAll.filter((h) => h.status !== "active");
   return (
     <div className="flex flex-col gap-5">
@@ -284,16 +308,23 @@ export function CaseOverview({ c, focusPart, readOnly }: { c: CaseDetail; focusP
             return (
               <HoldBanner
                 key={h.id}
-                scope={h.scopeLabel}
+                scope={h.scopeType === "accession" ? `Whole case ${c.identity.accessionNumber}` : h.scopeLabel}
                 reason={h.reasonText}
                 now={now}
                 clarification={clar ? { displayId: clar.displayId, href: clar.href, state: clar.stateLabel } : undefined}
-                owner={clar?.labOwner ?? null}
+                owner={h.owner}
                 nextFollowUpAt={clar?.open ? clar.nextFollowUpAt : null}
                 evidence={
                   <span className="text-xs text-ink-secondary">
-                    <span className="id-mono">{h.displayId}</span> stops {h.blocks.join(", ").replace(/_/g, " ")}. Placed <Timestamp iso={h.placedAt} now={now} />. Released only by an authorized person with a
-                    reason.
+                    <span className="id-mono">{h.displayId}</span> stops {h.blocks.join(", ").replace(/_/g, " ")}
+                    {h.scopeType === "accession" ? " for every part of the case" : ""}. Placed <Timestamp iso={h.placedAt} now={now} />.
+                    {h.nextStep ? (
+                      <>
+                        {" "}
+                        Next: <IdText text={h.nextStep} />.
+                      </>
+                    ) : null}{" "}
+                    Released only by an authorized person with a reason.
                   </span>
                 }
               />
