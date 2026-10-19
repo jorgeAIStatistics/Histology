@@ -1,5 +1,5 @@
 import { getDb } from "@/server/db/db";
-import { getActor } from "@/server/session";
+import { requireView } from "@/server/auth/guard";
 import { intakeBench } from "@/server/queries/intake";
 import { IntakeWorkstation } from "@/components/intake/workstation";
 
@@ -12,8 +12,9 @@ export const metadata = { title: "Intake" };
  * hold scope, five steps, next step, waiting on, accession reason).
  */
 export default async function IntakePage({ searchParams }: { searchParams: Promise<{ item?: string }> }) {
+  // The one guard: signed in (or the demo role), with this screen's view permission, before any data is read.
+  const actor = await requireView("view.intake");
   const sp = await searchParams;
-  const actor = await getActor();
   const item = typeof sp.item === "string" && sp.item.trim() ? sp.item.trim().slice(0, 40) : null;
   const bench = intakeBench(getDb(), actor, { item });
   return <IntakeWorkstation bench={bench} />;

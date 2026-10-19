@@ -16,16 +16,19 @@ export function ShellProviders({
   actor,
   staff,
   live,
+  liveEnabled = true,
   children,
 }: {
   actor: ShellActor;
   staff: ShellStaff[];
   live: LivePayload;
+  /** False: no live polling (plain sign-in pages, no actor). */
+  liveEnabled?: boolean;
   children: ReactNode;
 }) {
   return (
     <ShellContextProvider actor={actor} staff={staff}>
-      <LiveRefresh initial={live}>
+      <LiveRefresh initial={live} enabled={liveEnabled}>
         <TooltipProvider>
           <ToastProvider>
             <ConflictProvider>

@@ -228,6 +228,11 @@ export function onHoldReleased(listener: HoldReleaseListener): void {
 
 export function releaseHold(ctx: Ctx, holdId: string, reason: string, expectedVersion?: number): HoldRow {
   requirePermission(ctx, "hold.release");
+  // Secured mode: releasing a hold always needs a recent sign-in, whichever command reached it (behind the
+  // commands' own `sensitive` flags). The whole command rolls back; nothing is recorded.
+  if (ctx.reauthFresh === false) {
+    throw new DomainError("REAUTH_REQUIRED", "Releasing a hold needs you to confirm it's you: sign in again, then repeat it. Nothing was recorded.");
+  }
   const h = ctx.db.prepare("SELECT * FROM hold WHERE id = ?").get(holdId) as HoldRow | undefined;
   if (!h) throw new DomainError("NOT_FOUND", "Hold not found");
   if (h.status === "released") return h;

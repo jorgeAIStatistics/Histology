@@ -17,10 +17,12 @@
     "start:locked": "next start -p 3100",
     "typecheck": "node scripts/gen-schema-module.mjs && tsc --noEmit",
     "db:reset": "node scripts/gen-schema-module.mjs && tsx scripts/reset-db.ts",
+    "admin": "tsx scripts/admin.ts",
     "pretest": "node scripts/gen-schema-module.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:e2e:secured": "playwright test --config playwright.secured.config.ts",
     "check": "npm run typecheck && npm run test"
   },
   "dependencies": {
@@ -30,6 +32,7 @@
     "clsx": "2.1.1",
     "lucide-react": "0.577.0",
     "next": "16.3.8",
+    "openid-client": "6.8.8",
     "radix-ui": "1.8.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -45,6 +48,7 @@
     "@types/node": "24.19.2",
     "@types/react": "19.2.7",
     "@types/react-dom": "19.2.3",
+    "oidc-provider": "9.12.2",
     "tailwindcss": "4.3.3",
     "tsx": "4.23.15",
     "typescript": "5.9.3",

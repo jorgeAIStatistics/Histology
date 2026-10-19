@@ -192,6 +192,7 @@ export const trayReleaseWithExceptions = defineCommand({
   description:
     "Supervisor only: release a tray with documented exceptions (never shown as verified complete). expectedVersion is the tray version the supervisor reviewed; a newer scan or decision is a conflict.",
   permission: "tray.releaseWithExceptions",
+  sensitive: true,
   input: z.object({ trayId: id, note: text(1000), expectedVersion: z.number().int().positive() }),
   run: withSchema((ctx, input) => releaseTrayWithExceptions(ctx, input.trayId, input.note, input.expectedVersion)),
 });

@@ -1,9 +1,14 @@
 import Link from "next/link";
+import { requireActor } from "@/server/auth/guard";
+import { requirePresenterSurface } from "@/app/demo/gate";
 
 export const metadata = { title: "Intake concepts" };
 
 /** Index of the three Intake design concepts (lightweight previews, synthetic fixture). */
-export default function ConceptsIndex() {
+export default async function ConceptsIndex() {
+  // The one guard, then the design-preview gate (synthetic demo only, also enforced by src/proxy.ts).
+  await requireActor();
+  requirePresenterSurface();
   const items = [
     { href: "/concepts/intake-a?item=INT-1014-032", label: "A · Precision workstation" },
     { href: "/concepts/intake-b?item=INT-1014-032", label: "B · Specimen atlas" },

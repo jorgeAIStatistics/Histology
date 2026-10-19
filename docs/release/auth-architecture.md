@@ -20,15 +20,16 @@
 - **Tests** use `oidc-provider` (a certified OpenID provider implementation), run locally as a development dependency, so the real code flow is exercised end to end without any external service.
 
 ## 3. Sign-in, sessions, sign-out
-1. **Sign-in.** `GET /api/auth/login?returnTo=` creates a one-time transaction (state, nonce, PKCE verifier; it expires after 10 minutes) and redirects to the provider. With `reauth=1` it adds `prompt=login&max_age=0`.
-2. **Callback.** `GET /api/auth/callback` consumes the transaction once, exchanges the code with PKCE and validates the ID token (issuer, audience, nonce, expiry, signature). It then looks up `(issuer, subject)` in `staff_identity` for this lab.
+1. **Sign-in.** `GET /api/auth/login?returnTo=` creates a one-time transaction (state, nonce, PKCE verifier; it expires after 10 minutes) and redirects to the provider. **Every** sign-in sends `prompt=login&max_age=0`, and the callback refuses an `auth_time` older than the transaction (`reauth_not_fresh`). A provider single sign-on session left behind by the previous person (after a lock, a sign-out whose provider logout was declined, or an expiry) therefore never signs anyone in on a shared workstation.
+2. **Callback.** `GET /api/auth/callback` consumes the transaction once, exchanges the code with PKCE and validates the ID token (issuer, audience, nonce, expiry, and its signature against the provider's JWKS). An `auth_time` more than one minute in the future is refused. It then looks up `(issuer, subject)` in `staff_identity` for this lab.
    - Not linked, staff inactive, or (when `HLOS_OIDC_LAB_CLAIM` is set) the lab missing from that claim: access is denied. No session is created and `auth.denied` is audited.
+   - Denials that anyone can cause without signing in (bad or replayed state, provider unavailable) are aggregated: at most one `auth.denied` per kind per minute, carrying the count of the repeats. A callback without this browser's sign-in binding cookie is only logged. Per-client rate limiting belongs to the reverse proxy (activation checklist).
 3. **Session.**
    - A 256-bit random id goes in an HttpOnly, SameSite=Lax cookie, with `Secure` and the `__Host-` prefix under HTTPS. Only the id's SHA-256 is stored.
    - Each session row holds: staff, lab, issuer, subject, `auth_time`, created, last activity, absolute expiry (default 12 h), lock time, revocation time.
    - **Role and status are read from the staff table on every request**, so a role change or deactivation applies to the next request.
 4. **Inactivity.**
-   - After `HLOS_SESSION_IDLE_MIN` (default 15) minutes with no user-driven request, the session is **locked**. Background polling (`/api/live`) never counts as activity.
+   - After `HLOS_SESSION_IDLE_MIN` (default 15) minutes with no user-driven request, the session is **locked**. User-driven requests are commands, the CSV export, full page loads and `POST /api/auth/activity` (sent by the client after real input). Background polling (`/api/live`), the `router.refresh()` it triggers, client-side navigations and prefetches never count as activity (a page counts only for `Sec-Fetch-Dest: document`, because Next.js hides its own RSC headers from the page).
    - The client also locks the screen on its own idle timer, and on the user's request ("Lock").
    - A locked session can read nothing and write nothing. The lock screen shows **no patient, case or operator details**.
    - Unlocking requires signing in again at the provider. If a different person signs in, the old session is revoked and a new one starts: a workstation hand-over.
@@ -37,11 +38,12 @@
 7. **Re-authentication.** Commands marked `sensitive` require `auth_time` within `HLOS_REAUTH_MAX_AGE_MIN` (default 5) minutes; otherwise they get 401 `REAUTH_REQUIRED`. The screen keeps the user's input and offers "Confirm it's you", which redirects to the provider and returns to the same page. Nothing is replayed automatically. The sensitive commands are:
    - identity and source-conflict decisions;
    - related-order decisions;
-   - hold release;
+   - hold release, including closing a correction review that releases its holds (a hold release also refuses a stale sign-in on its own, whichever command reached it);
+   - closing an identity-discrepancy correction review;
    - gross approval;
    - tray release with exceptions;
    - routing override.
-8. **Expiry mid-task.** A command gets 401 `SESSION_EXPIRED` or `SESSION_LOCKED`, the screen says nothing was recorded, and the typed input stays on screen.
+8. **Expiry mid-task.** A command gets 401 `SESSION_EXPIRED` or `SESSION_LOCKED`, the screen says nothing was recorded, and the typed input stays on screen (expired) or the lock screen replaces it (locked). A session the server no longer knows (`SIGN_IN_REQUIRED`: revoked by an administrator, or signed out elsewhere) removes the page content at once.
 9. **CSRF.** Requires:
    - a SameSite=Lax cookie;
    - a same-origin `Origin` check (or `Sec-Fetch-Site: same-origin`) on every state-changing route;
@@ -55,6 +57,7 @@
 - **New roles:**
   - `lab_admin`: staff and identity links, role assignment (CLI, audited), audit verification. **No clinical permission and no bench screen.**
   - `auditor`: audit verification and the audit report only.
+  - Neither receives bench data through the shell or `/api/live` (no rail counts, clock or source health; `/api/live` answers 403).
 - **New permission** `identity.resolve`: identity and source-conflict decisions. Accessioning lead and supervisor only. An administrator never has it.
 - **No automatic links.** A job title in the provider's directory never grants a permission. Roles are assigned in this application by a laboratory administrator.
 - **Lab scope:**

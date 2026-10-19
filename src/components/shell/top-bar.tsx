@@ -1,10 +1,12 @@
 import Link from "next/link";
 import type { NavCounts, ShellActor } from "@/lib/client/types";
+import type { RuntimeMode } from "@/server/runtime-mode";
 import { BrandMark } from "./brand-mark";
 import { DemoBanner } from "./demo-banner";
 import { DemoRoleIndicator, PresenterConsoleLink } from "./demo-role-indicator";
 import { JobNav } from "./job-nav";
 import { ScanField } from "./scan-field";
+import { SessionControls, SyntheticDataLabel } from "./session-controls";
 import { ShortcutsButton } from "./shortcuts-button";
 import { SourceFreshness } from "./source-freshness";
 
@@ -15,8 +17,23 @@ import { SourceFreshness } from "./source-freshness";
  * time (read only, not a control) and one link to the presenter console; the
  * role switch, the clock and every simulated event live there, never on a
  * bench screen. A locked build has no presenter entry at all.
+ *
+ * Secured mode (OIDC sign-in): no demo status, role or presenter entry; the
+ * signed-in person's name and role, "Lock" and "Sign out" in the same space,
+ * and "Synthetic" only when the synthetic seed is loaded.
  */
-export function TopBar({ actor, counts, demo }: { actor: ShellActor; counts: NavCounts; demo: boolean }) {
+export function TopBar({
+  actor,
+  counts,
+  mode,
+  session,
+}: {
+  actor: ShellActor;
+  counts: NavCounts;
+  mode: RuntimeMode;
+  /** Secured mode, signed in: whether the synthetic seed is loaded. Null otherwise. */
+  session?: { synthetic: boolean } | null;
+}) {
   return (
     <div
       data-on-dark
@@ -38,12 +55,23 @@ export function TopBar({ actor, counts, demo }: { actor: ShellActor; counts: Nav
         <ShortcutsButton />
       </div>
       <div className="contents max-lg:ml-auto max-lg:flex max-lg:items-center max-lg:gap-2">
-        {demo ? (
+        {mode === "demo" ? (
           <>
             <DemoBanner />
             <DemoRoleIndicator actor={actor} />
             <PresenterConsoleLink />
           </>
+        ) : mode === "secured" ? (
+          session ? (
+            <>
+              {session.synthetic ? <SyntheticDataLabel /> : null}
+              <SessionControls actor={actor} />
+            </>
+          ) : (
+            <p role="note" className="inline-flex h-7 items-center rounded-pill bg-warning-on-dark px-2.5 text-sm font-semibold text-shell">
+              Not signed in
+            </p>
+          )
         ) : (
           // Locked build (no HLOS_MODE=demo, no identity provider): read only, no role switch, no presenter entry.
           <p role="note" className="inline-flex h-7 items-center gap-1.5 rounded-pill bg-warning-on-dark px-2.5 text-sm font-semibold text-shell">

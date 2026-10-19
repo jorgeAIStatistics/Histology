@@ -65,6 +65,7 @@ export const grossApprove = defineCommand({
   name: "gross.approve",
   description: "Approve a reviewed gross record for downstream use: creates allocated blocks, the source-entry task and processing eligibility. Blocked by unconfirmed values or a gross-approval hold.",
   permission: "gross.approve",
+  sensitive: true,
   input: z.object({ grossRecordId: id, expectedVersion: version }),
   run: (ctx, input) => withConflictAuthor(ctx.db, () => approve(ctx, input.grossRecordId, input.expectedVersion)),
 });

@@ -319,12 +319,16 @@ describe("presenter controls and read-only GETs", () => {
     seeded.close();
     try {
       const { GET } = await import("@/app/api/live/route");
+      const live = () => new Request("http://localhost/api/live");
       pumpCalls.length = 0;
       process.env.HLOS_MODE = "locked";
-      expect((await GET()).status).toBe(200);
+      // Stage 6 Phase B: a locked build answers 401 with no data (it used to answer 200 with counters).
+      const locked = await GET(live());
+      expect(locked.status).toBe(401);
+      expect(JSON.stringify(await locked.json())).not.toMatch(/auditSeq|worklistSeq|sources/);
       expect(pumpCalls).toHaveLength(0);
       process.env.HLOS_MODE = "demo";
-      await GET();
+      await GET(live());
       expect(pumpCalls).toHaveLength(1);
     } finally {
       const { closeSharedDb } = await import("@/server/db/db");

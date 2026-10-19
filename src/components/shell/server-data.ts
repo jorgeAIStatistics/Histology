@@ -4,8 +4,9 @@
  */
 import { getDb, type DB } from "@/server/db/db";
 import { readClock, type ClockState } from "@/server/core/clock";
-import { getActor } from "@/server/session";
-import type { Role } from "@/lib/roles";
+import { currentViewer } from "@/server/auth/guard";
+import type { RuntimeMode } from "@/server/runtime-mode";
+import { hasBenchView, type Role } from "@/lib/roles";
 import type { LivePayload, LiveSource, NavCounts, ShellActor, ShellStaff } from "@/lib/client/types";
 
 function safeNumber(db: DB, sql: string): number | null {
@@ -72,6 +73,8 @@ const ROLE_ORDER: Role[] = [
   "pathologist",
   "director",
   "medical_director",
+  "lab_admin",
+  "auditor",
 ];
 
 export function loadStaff(db: DB): ShellStaff[] {
@@ -86,18 +89,52 @@ export function loadStaff(db: DB): ShellStaff[] {
 
 export interface ShellData {
   actor: ShellActor;
+  /** demo: every active staff member (the presenter's role switch). secured: ONLY the signed-in actor. Otherwise empty. */
   staff: ShellStaff[];
   counts: NavCounts;
   live: LivePayload;
+  /** The runtime mode the shell was rendered in. */
+  mode: RuntimeMode;
+  /** False when no actor could be resolved (locked build, no or locked session): every other field is an empty placeholder. */
+  signedIn: boolean;
 }
 
+/**
+ * Placeholder for a shell without an actor (locked build, sign-in pages, a
+ * locked or missing session): no staff, no counts, no clock, no sources. The
+ * placeholder role ("auditor") holds no clinical permission, so any control
+ * that consults it is disabled.
+ */
+const NO_ACTOR: ShellActor = { id: "", name: "Not signed in", role: "auditor" };
+const EMPTY_LIVE: LivePayload = {
+  auditSeq: 0,
+  worklistSeq: 0,
+  clock: { now: new Date(0).toISOString(), running: false, anchorDemo: "", anchorWall: "" },
+  sources: [],
+};
+const NO_COUNTS: NavCounts = { intake: null, clarifications: null, materials: null, operations: null };
+
+/**
+ * Shell data through the one guard (src/server/auth/guard.ts). Never counts
+ * as activity (the page's own guard does). Reads nothing from the lab
+ * database unless an actor is resolved; in secured mode it sends only the
+ * signed-in actor to the client, never the staff directory.
+ */
 export async function loadShellData(): Promise<ShellData> {
+  const viewer = await currentViewer({ touch: false });
+  if (!viewer.ok) {
+    return { actor: NO_ACTOR, staff: [], counts: NO_COUNTS, live: EMPTY_LIVE, mode: viewer.mode, signedIn: false };
+  }
   const db = getDb();
-  const actor = await getActor();
+  const actor: ShellActor = { id: viewer.actor.id, name: viewer.actor.name, role: viewer.actor.role };
+  // A role with no bench screen (laboratory administrator, auditor) gets no lab counts, clock or source health.
+  const bench = hasBenchView(actor.role);
   return {
-    actor: { id: actor.id, name: actor.name, role: actor.role },
-    staff: loadStaff(db),
-    counts: loadNavCounts(db),
-    live: loadLiveSnapshot(db),
+    actor,
+    staff: viewer.mode === "demo" ? loadStaff(db) : [actor],
+    counts: bench ? loadNavCounts(db) : NO_COUNTS,
+    live: bench ? loadLiveSnapshot(db) : EMPTY_LIVE,
+    mode: viewer.mode,
+    signedIn: true,
   };
 }

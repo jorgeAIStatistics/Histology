@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getDb } from "@/server/db/db";
 import { readClock } from "@/server/core/clock";
-import { getActor } from "@/server/session";
+import { requireView } from "@/server/auth/guard";
 import { CLARIFICATION_FILTERS, deskAttention, getClarificationDetail, listClarifications, parseFilter } from "@/server/queries/clarifications";
 import { NOTIFY_SOURCE_ID } from "@/server/sim/notifications";
 import { PageBody, PageHeader } from "@/components/ui/page-header";
@@ -21,10 +21,11 @@ const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v
  * Office messages are simulated; no real office is contacted.
  */
 export default async function Page({ searchParams }: { searchParams: Promise<SP> }) {
+  // The one guard: signed in (or the demo role), with this screen's view permission, before any data is read.
+  const actor = await requireView("view.clarifications");
   const sp = await searchParams;
   const tab = first(sp.tab);
   const selected = first(sp.selected)?.trim() || null;
-  const actor = await getActor();
   const readOnly = actor.role === "director" || actor.role === "medical_director";
   const readOnlyNote = readOnly
     ? `Read only: ${ROLE_LABEL[actor.role]} can view but not change records. The people below can act. The simulated office answer is a presenter control available to any role.`

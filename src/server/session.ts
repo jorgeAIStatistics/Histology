@@ -1,19 +1,24 @@
 import { cookies } from "next/headers";
-import { getDb } from "@/server/db/db";
+import type { DB } from "@/server/db/db";
 import { loadActor, type Actor } from "@/server/core/context";
 
 /**
- * Demo role switch. The "Acting as" selector stores a staff id in a cookie so
- * the presenter can show each role's view. This is NOT authentication: there
- * is no sign-in, no password and no session security. Every command still
- * checks the role on the server (src/server/core/context.ts requirePermission).
+ * Demo role switch (synthetic demo mode ONLY). The "Acting as" selector stores
+ * a staff id in a cookie so the presenter can show each role's view. This is
+ * NOT authentication: there is no sign-in, no password and no session
+ * security. Every command still checks the role on the server
+ * (src/server/core/context.ts requirePermission).
+ *
+ * Nothing here decides who the current actor is: that is
+ * src/server/auth/guard.ts (requireActor / requireView / requireApiActor),
+ * which reads this cookie in demo mode and ignores it in every other mode.
  */
 export const ACTOR_COOKIE = "hlos_actor";
 export const DEFAULT_ACTOR_ID = "stf_maya";
 
 const ACTOR_ID = /^[a-z0-9_]{1,64}$/i;
 
-/** Staff id from the demo role cookie, or the default demo actor (Maya Torres, Accessioner). */
+/** Staff id from the demo role cookie, or the default demo actor (Maya Torres, Accessioner). Pages (next/headers). */
 export async function getActorId(): Promise<string> {
   const store = await cookies();
   const value = store.get(ACTOR_COOKIE)?.value?.trim();
@@ -31,7 +36,12 @@ export function actorIdFromRequest(req: Request): string {
   for (const part of header.split(";")) {
     const [k, ...v] = part.trim().split("=");
     if (k === ACTOR_COOKIE) {
-      const value = decodeURIComponent(v.join("=")).trim();
+      let value: string;
+      try {
+        value = decodeURIComponent(v.join("=")).trim();
+      } catch {
+        return DEFAULT_ACTOR_ID;
+      }
       return ACTOR_ID.test(value) ? value : DEFAULT_ACTOR_ID;
     }
   }
@@ -44,12 +54,10 @@ export function correlationIdFor(req: Request): string {
   return given && /^[A-Za-z0-9._:-]{8,100}$/.test(given) ? given : `req-${crypto.randomUUID()}`;
 }
 
-/** The current demo actor. Falls back to the default actor if the cookie names an unknown or inactive staff member. */
-export async function getActor(): Promise<Actor> {
-  const db = getDb();
-  const id = await getActorId();
+/** The demo actor for a demo cookie staff id. Falls back to the default actor if it names an unknown or inactive staff member. */
+export function demoActor(db: DB, staffId: string): Actor {
   try {
-    return loadActor(db, id);
+    return loadActor(db, staffId);
   } catch {
     return loadActor(db, DEFAULT_ACTOR_ID);
   }
@@ -58,6 +66,7 @@ export async function getActor(): Promise<Actor> {
 /**
  * Light guard for state-changing demo endpoints: reject browser requests whose
  * Origin header names a different host. Returns a 403 Response, or null to proceed.
+ * (Secured mode uses the stricter requireSameOrigin in src/server/auth/guard.ts.)
  */
 export function rejectCrossOrigin(req: Request): Response | null {
   const origin = req.headers.get("origin");

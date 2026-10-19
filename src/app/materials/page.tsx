@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { getDb } from "@/server/db/db";
 import { readClock } from "@/server/core/clock";
-import { getActor } from "@/server/session";
+import { requireView } from "@/server/auth/guard";
 import { Tabs } from "@/components/ui/tabs";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { ReadOnlyTag } from "@/components/domain/honesty";
@@ -29,12 +29,13 @@ const READ_ONLY_ROLES = new Set(["director", "medical_director"]);
  * positions, the walk to the storage slot.
  */
 export default async function MaterialsPage({ searchParams }: { searchParams: SearchParams }) {
+  // The one guard: signed in (or the demo role), with this screen's view permission, before any data is read.
+  const actor = await requireView("view.materials");
   const sp = await searchParams;
   const tab: Tab = sp.tab === "trays" || sp.tab === "retrieval" ? sp.tab : "print";
   const selected = sp.selected?.trim() || null;
   const db = getDb();
   const now = readClock(db).now;
-  const actor = await getActor();
 
   let loadError: string | null = null;
   let content: ReactNode = null;

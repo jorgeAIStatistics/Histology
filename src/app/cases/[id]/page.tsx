@@ -1,6 +1,6 @@
 import { FreshnessWatcher } from "@/components/worklist/freshness-watcher";
 import { getDb } from "@/server/db/db";
-import { getActor } from "@/server/session";
+import { requireView } from "@/server/auth/guard";
 import { getCase, safeDecode } from "@/server/queries/case";
 import { ButtonLink, EmptyState, PageBody, PageHeader } from "@/components/ui";
 import { IdentityBar, IdText, ReadOnlyTag, StaleBanner } from "@/components/domain";
@@ -38,6 +38,8 @@ export default async function CasePage({
   params: Promise<{ id: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  // The one guard: signed in (or the demo role), with this screen's view permission, before any data is read.
+  const actor = await requireView("view.cases");
   const { id } = await params;
   const sp = await searchParams;
   const one = (k: string) => (Array.isArray(sp[k]) ? (sp[k] as string[])[0] : (sp[k] as string | undefined));
@@ -48,7 +50,6 @@ export default async function CasePage({
   const key = safeDecode(id).trim().slice(0, 64);
 
   const db = getDb();
-  const actor = await getActor();
   const c = getCase(db, key);
 
   if (!c) {

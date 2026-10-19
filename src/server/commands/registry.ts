@@ -5,7 +5,9 @@ import { DomainError, type DomainErrorCode } from "../core/errors";
 import { type Ctx, type Origin, loadActor, makeCtx, requirePermission, SYSTEM_ACTOR } from "../core/context";
 import { audit } from "../core/audit";
 import { assertValidKey, checkRepeat, ensureReceiptSchema, findReceipt, insertReceipt, labScope, requestFingerprint } from "../core/idempotency";
-import { isDemoMode, LOCKED_MESSAGE } from "../runtime-mode";
+import { LOCKED_MESSAGE, runtimeMode } from "../runtime-mode";
+import type { CommandAuth } from "../auth/guard";
+import { isReauthFresh, sessionPolicyFromEnv } from "../auth/sessions";
 
 export interface CommandDef<S extends z.ZodType, R> {
   name: string;
@@ -18,6 +20,15 @@ export interface CommandDef<S extends z.ZodType, R> {
    * the presenter console, never shown as a bench action. Default "lab".
    */
   audience?: "lab" | "presenter";
+  /**
+   * Secured mode only: a sensitive command needs a recent authentication
+   * (the session's auth_time within HLOS_REAUTH_MAX_AGE_MIN), otherwise it is
+   * refused with 401 REAUTH_REQUIRED and nothing runs or is recorded. A
+   * function decides per request from the validated input (read-only; it
+   * runs inside the command's transaction, after the permission check).
+   * Ignored in the synthetic demo (no sign-in exists there).
+   */
+  sensitive?: boolean | ((db: DB, input: z.infer<S>) => boolean);
   input: S;
   run: (ctx: Ctx, input: z.infer<S>) => R;
 }
@@ -30,8 +41,21 @@ export function defineCommand<S extends z.ZodType, R>(def: CommandDef<S, R>): Co
   return def;
 }
 
-export function listCommands(): { name: string; description: string; permission: Permission | null; audience: "lab" | "presenter" }[] {
-  return [...registry.values()].map((d) => ({ name: d.name, description: d.description, permission: d.permission, audience: d.audience ?? "lab" }));
+export function listCommands(): {
+  name: string;
+  description: string;
+  permission: Permission | null;
+  audience: "lab" | "presenter";
+  /** true: always sensitive; "conditional": sensitive for some inputs; false: never. */
+  sensitive: boolean | "conditional";
+}[] {
+  return [...registry.values()].map((d) => ({
+    name: d.name,
+    description: d.description,
+    permission: d.permission,
+    audience: d.audience ?? "lab",
+    sensitive: typeof d.sensitive === "function" ? "conditional" : Boolean(d.sensitive),
+  }));
 }
 
 export function commandAudience(name: string): "lab" | "presenter" | null {
@@ -47,17 +71,33 @@ export interface ExecuteOptions {
   idempotencyKey?: string;
   origin?: Origin;
   correlationId?: string;
+  /**
+   * Secured mode, user requests (origin "user"): the session behind the
+   * request, from requireApiActor(...).auth. Required: without it the request
+   * is refused (SIGN_IN_REQUIRED), and `actorId` must be its staff member
+   * (otherwise ACTOR_MISMATCH). Ignored in demo mode.
+   */
+  auth?: CommandAuth | null;
+  /** Wall clock in ms for the re-authentication freshness check (tests). */
+  nowMs?: number;
 }
 
 /**
  * Single entry point for every state change. In order:
- * 1. mode gate (user requests are refused outside synthetic demo mode),
+ * 1. mode gate for user requests: locked -> AUTH_REQUIRED; secured -> the
+ *    request must carry the session (opts.auth) and act as its staff member
+ *    (ACTOR_MISMATCH otherwise); demo -> the demo role, as before,
  * 2. actor resolution (an HTTP request can never act as the internal system actor),
- * 3. input validation,
- * 4. in ONE immediate (write-locked) transaction: idempotency lookup, permission
- *    check, handler, receipt. A repeated key returns the stored result only for
- *    the same actor, lab scope, command and canonical input, after the
- *    permission check; anything else is refused without disclosing the result.
+ * 3. secured mode only: presenter controls and permission-less commands are
+ *    refused, and a role without the command's permission is refused before
+ *    its input is read (audited as command.denied),
+ * 4. input validation,
+ * 5. in ONE immediate (write-locked) transaction: idempotency lookup, permission
+ *    check, re-authentication freshness for sensitive commands (secured mode),
+ *    handler, receipt. A repeated key returns the stored result only for the
+ *    same actor, lab scope, command and canonical input, after the permission
+ *    (and freshness) check; anything else is refused without disclosing the
+ *    result.
  * A failed handler rolls back everything, including the receipt, so a retry
  * with the same key runs once when it can succeed.
  */
@@ -71,9 +111,22 @@ export function executeCommand<R = unknown>(
   const def = registry.get(name);
   if (!def) return { ok: false, error: { code: "NOT_FOUND", message: `Unknown command "${name}"` } };
   const origin = opts.origin ?? "user";
+  const mode = runtimeMode();
+  const securedUser = origin === "user" && mode === "secured";
 
-  if (origin === "user" && !isDemoMode()) {
+  if (origin === "user" && mode === "locked") {
     return { ok: false, error: { code: "AUTH_REQUIRED", message: LOCKED_MESSAGE } };
+  }
+  if (securedUser) {
+    if (!opts.auth) {
+      return { ok: false, error: { code: "SIGN_IN_REQUIRED", message: "Sign in to make changes. Nothing was recorded." } };
+    }
+    if (opts.auth.staffId !== actorId) {
+      return {
+        ok: false,
+        error: { code: "ACTOR_MISMATCH", message: "The acting staff member is not the person signed in. Nothing was recorded." },
+      };
+    }
   }
 
   let ctx: Ctx;
@@ -84,10 +137,28 @@ export function executeCommand<R = unknown>(
     const actor = actorId === "system" ? SYSTEM_ACTOR : loadActor(db, actorId);
     // A presenter control (simulated world event, clock, outage, guided step) is recorded with origin
     // "demo" whoever presses it, so the audit trail never reads it as a laboratory action by that role.
-    const effectiveOrigin = origin === "user" && (def.audience ?? "lab") === "presenter" ? "demo" : origin;
+    const effectiveOrigin = origin === "user" && mode === "demo" && (def.audience ?? "lab") === "presenter" ? "demo" : origin;
     ctx = makeCtx(db, actor, effectiveOrigin, opts.correlationId);
   } catch (e) {
     return toFailure(e);
+  }
+  if (securedUser) {
+    // Domain operations that need a recent sign-in whatever the command (hold release) read this.
+    const policy = sessionPolicyFromEnv();
+    ctx.reauthFresh = Boolean(policy && opts.auth && isReauthFresh(opts.auth.authTime, policy, opts.nowMs ?? Date.now()));
+  }
+
+  if (securedUser) {
+    // Presenter controls (and any command without a permission) exist only in the synthetic demo.
+    if ((def.audience ?? "lab") === "presenter" || def.permission === null) {
+      return deniedFailure(ctx, name, new DomainError("FORBIDDEN", "Not allowed: this is a synthetic demo control and does not exist in this build."));
+    }
+    // A role without the permission is refused before the input is read (no validation details leak).
+    try {
+      requirePermission(ctx, def.permission);
+    } catch (e) {
+      return deniedFailure(ctx, name, e);
+    }
   }
 
   const parsed = def.input.safeParse(rawInput ?? {});
@@ -112,6 +183,21 @@ export function executeCommand<R = unknown>(
     scope = labScope(db);
   }
 
+  // Secured mode: a sensitive command (or a sensitive input) needs a recent sign-in. Nothing runs otherwise.
+  const requireFreshAuth = () => {
+    if (!securedUser) return;
+    const sensitive = typeof def.sensitive === "function" ? def.sensitive(db, parsed.data) : Boolean(def.sensitive);
+    if (!sensitive) return;
+    const policy = sessionPolicyFromEnv();
+    if (!policy || !opts.auth || !isReauthFresh(opts.auth.authTime, policy, opts.nowMs ?? Date.now())) {
+      throw new DomainError(
+        "REAUTH_REQUIRED",
+        "This decision needs you to confirm it's you: sign in again, then repeat it. Nothing was recorded.",
+        { reauthMaxAgeMinutes: policy?.reauthMaxAgeMinutes ?? null },
+      );
+    }
+  };
+
   try {
     const outcome = db
       .transaction((): { result: unknown; replayed: boolean } => {
@@ -121,10 +207,12 @@ export function executeCommand<R = unknown>(
             checkRepeat(prior, { command: name, actorId: ctx.actor.id, scope, fingerprint, nowMs: Date.now() });
             // The repeat is the same request from its owner: it still needs today's permission.
             if (def.permission) requirePermission(ctx, def.permission);
+            requireFreshAuth();
             return { result: JSON.parse(prior.result_json), replayed: true };
           }
         }
         if (def.permission) requirePermission(ctx, def.permission);
+        requireFreshAuth();
         const r = def.run(ctx, parsed.data);
         if (key) {
           insertReceipt(db, { key, command: name, actorId: ctx.actor.id, scope, fingerprint, result: r, correlationId: ctx.correlationId, at: ctx.now, nowMs: Date.now() });
@@ -136,24 +224,37 @@ export function executeCommand<R = unknown>(
   } catch (e) {
     const failure = toFailure(e);
     if (!failure.ok && origin === "user" && (failure.error.code === "FORBIDDEN" || failure.error.code === "IDEMPOTENCY_CONFLICT")) {
-      // Denied attempts and refused key reuse are kept in the local audit trail (no request content is stored).
-      try {
-        const denied = failure.error.code === "FORBIDDEN";
-        audit(ctx, {
-          action: denied ? "command.denied" : "command.idempotency_rejected",
-          entityType: "command",
-          entityId: name,
-          summary: denied
-            ? `Denied: ${ctx.actor.name} (${ctx.actor.role}) attempted ${name}`
-            : `Refused a reused idempotency key: ${ctx.actor.name} (${ctx.actor.role}) on ${name}`,
-          reason: failure.error.message,
-          after: denied ? undefined : { reason: (failure.error.details as { reason?: string } | undefined)?.reason ?? null },
-        });
-      } catch {
-        /* ignore */
-      }
+      auditRefusal(ctx, name, failure.error);
     }
     return failure;
+  }
+}
+
+/** A FORBIDDEN refusal before the transaction: audited like the in-transaction one, then returned. */
+function deniedFailure(ctx: Ctx, name: string, e: unknown): CommandResult<never> {
+  const failure = toFailure(e);
+  if (!failure.ok && ctx.origin !== "system" && (failure.error.code === "FORBIDDEN" || failure.error.code === "IDEMPOTENCY_CONFLICT")) {
+    auditRefusal(ctx, name, failure.error);
+  }
+  return failure;
+}
+
+/** Denied attempts and refused key reuse are kept in the local audit trail (no request content is stored). */
+function auditRefusal(ctx: Ctx, name: string, error: { code: DomainErrorCode; message: string; details?: unknown }): void {
+  try {
+    const denied = error.code === "FORBIDDEN";
+    audit(ctx, {
+      action: denied ? "command.denied" : "command.idempotency_rejected",
+      entityType: "command",
+      entityId: name,
+      summary: denied
+        ? `Denied: ${ctx.actor.name} (${ctx.actor.role}) attempted ${name}`
+        : `Refused a reused idempotency key: ${ctx.actor.name} (${ctx.actor.role}) on ${name}`,
+      reason: error.message,
+      after: denied ? undefined : { reason: (error.details as { reason?: string } | undefined)?.reason ?? null },
+    });
+  } catch {
+    /* ignore */
   }
 }
 

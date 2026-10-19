@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { getDb } from "@/server/db/db";
 import { readClock } from "@/server/core/clock";
-import { getActor } from "@/server/session";
+import { requireView } from "@/server/auth/guard";
 import { roleCan } from "@/lib/roles";
 import { isDemoMode } from "@/server/runtime-mode";
 import { loadContactsSettings, loadIntegrationSettings, loadRoutingSettings } from "@/server/queries/settings";
@@ -33,13 +33,14 @@ const TAB_LABEL: Record<Tab, string> = {
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  // The one guard: signed in (or the demo role), with this screen's view permission, before any data is read.
+  const actor = await requireView("view.settings");
   const sp = await searchParams;
   const raw = first(sp.tab);
   // Demo scenarios moved to the presenter console (synthetic demo only); a locked build has no such tab at all.
   const demo = isDemoMode();
   const tabs = TABS.filter((t) => t !== "demo" || demo);
   const tab: Tab = (tabs as readonly string[]).includes(raw ?? "") ? (raw as Tab) : "routing";
-  const actor = await getActor();
   const readOnly = actor.role === "director";
 
   let body: ReactNode;

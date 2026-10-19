@@ -15,6 +15,25 @@ if (distDir !== ".next") {
   if (!fs.existsSync(file)) fs.writeFileSync(file, JSON.stringify({ extends: "./tsconfig.json" }, null, 2) + "\n");
 }
 
+// Security headers on every response. HSTS only when the public URL is https: it would be
+// meaningless (and is ignored by browsers) on plain http, and it must never pin a local demo.
+// next.config.ts is evaluated when the build is made, so HLOS_PUBLIC_URL at BUILD time decides HSTS.
+// The CSP only forbids framing; it does not restrict scripts, so `next dev` and HMR are unaffected.
+const httpsPublicUrl = (() => {
+  try {
+    return new URL(process.env.HLOS_PUBLIC_URL ?? "").protocol === "https:";
+  } catch {
+    return false;
+  }
+})();
+const securityHeaders = [
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "Referrer-Policy", value: "same-origin" },
+  { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+  { key: "X-Frame-Options", value: "DENY" },
+  ...(httpsPublicUrl ? [{ key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" }] : []),
+];
+
 const nextConfig: NextConfig = {
   // better-sqlite3 is a native module; keep it out of the server bundle.
   serverExternalPackages: ["better-sqlite3"],
@@ -26,6 +45,9 @@ const nextConfig: NextConfig = {
   devIndicators: false,
   // Do not let `next dev` write AGENTS.md / CLAUDE.md into the project.
   agentRules: false,
+  async headers() {
+    return [{ source: "/:path*", headers: securityHeaders }];
+  },
 };
 
 export default nextConfig;

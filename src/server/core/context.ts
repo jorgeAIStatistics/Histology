@@ -20,6 +20,13 @@ export interface Ctx {
   correlationId: string;
   /** Demo-clock time, fixed for the duration of one command. */
   now: string;
+  /**
+   * Secured-mode user commands only (set by executeCommand): whether the
+   * session's last sign-in is within the re-authentication window. Operations
+   * that must never run on a stale sign-in (hold release) refuse when it is
+   * false, whichever command reached them. Undefined elsewhere (demo, system).
+   */
+  reauthFresh?: boolean;
 }
 
 export function makeCtx(db: DB, actor: Actor, origin: Origin = "user", correlationId?: string): Ctx {

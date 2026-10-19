@@ -1,5 +1,5 @@
 import { getDb } from "@/server/db/db";
-import { getActor } from "@/server/session";
+import { requireView } from "@/server/auth/guard";
 import { getOperations, type BlockedCategory } from "@/server/queries/operations";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { PageBody } from "@/components/ui/page-header";
@@ -19,8 +19,9 @@ export const metadata = { title: "Operations" };
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
 export default async function OperationsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  // The one guard: signed in (or the demo role), with this screen's view permission, before any data is read.
+  const actor = await requireView("view.operations");
   const sp = await searchParams;
-  const actor = await getActor();
   const readOnly = actor.role === "director" || actor.role === "medical_director";
   const rawCategory = first(sp.category);
   const category = EXCEPTION_CATEGORIES.includes(rawCategory as BlockedCategory) ? (rawCategory as BlockedCategory) : null;

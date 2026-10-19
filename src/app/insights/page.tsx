@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { getDb } from "@/server/db/db";
+import { requireView } from "@/server/auth/guard";
 import { DEFINITIONS, P90_THRESHOLD_NOTE, TODAY_PROVENANCE, fmtMinutes, getInsights, type DurationSummary, type InsightsData } from "@/server/queries/insights";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { Card } from "@/components/ui/card";
@@ -40,6 +41,8 @@ const MEASURES = [
 type SP = Promise<{ from?: string; to?: string; office?: string; doctor?: string }>;
 
 export default async function InsightsPage({ searchParams }: { searchParams: SP }) {
+  // The one guard: signed in (or the demo role), with this screen's view permission, before any data is read.
+  await requireView("view.insights");
   const sp = await searchParams;
   let data: InsightsData;
   try {

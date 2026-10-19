@@ -2,6 +2,7 @@ import "@/server/commands"; // registers every command
 import { executeCommand } from "@/server/commands/registry";
 import { httpStatusFor, type DomainErrorCode } from "@/server/core/errors";
 import type { DB } from "@/server/db/db";
+import type { CommandAuth } from "@/server/auth/guard";
 import { buildWorklistCsv, getWorklist } from "@/server/queries/worklist";
 import { describeFilters, isWorklistView, worklistFiltersSchema } from "@/components/worklist/views";
 
@@ -30,6 +31,7 @@ export function exportWorklistCsv(
   db: DB,
   actorId: string,
   body: { view?: unknown; filters?: unknown; expectedSeq?: unknown; idempotencyKey?: unknown },
+  opts: { auth?: CommandAuth | null } = {},
 ): ExportResult {
   if (!isWorklistView(body.view)) return { ok: false, status: 400, error: { code: "VALIDATION", message: "Unknown worklist view." } };
   const parsedFilters = worklistFiltersSchema.safeParse(body.filters ?? {});
@@ -39,7 +41,7 @@ export function exportWorklistCsv(
   const expectedSeq = typeof body.expectedSeq === "number" && Number.isInteger(body.expectedSeq) ? body.expectedSeq : undefined;
   const idempotencyKey = typeof body.idempotencyKey === "string" && body.idempotencyKey ? body.idempotencyKey : undefined;
 
-  const res = executeCommand<SnapshotResult>(db, actorId, "worklist.snapshot", { view, filters, format: "csv", expectedSeq }, { idempotencyKey });
+  const res = executeCommand<SnapshotResult>(db, actorId, "worklist.snapshot", { view, filters, format: "csv", expectedSeq }, { idempotencyKey, auth: opts.auth });
   if (!res.ok) return { ok: false, status: httpStatusFor[res.error.code] ?? 400, error: res.error };
 
   // Same synchronous request: the rows below are the version the snapshot recorded. A replayed key

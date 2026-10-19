@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getDb } from "@/server/db/db";
 import { getSetting } from "@/server/core/settings";
-import { getActor } from "@/server/session";
+import { requireActor } from "@/server/auth/guard";
 import { getOperations } from "@/server/queries/operations";
 import { worldEventTargets, type WorldEventTargets } from "@/server/queries/presenter";
 import { loadDemoSettings, type DemoSettings } from "@/server/queries/settings";
@@ -52,7 +52,7 @@ type SP = Promise<{ tab?: string; step?: string }>;
 
 async function RoleClockPanel() {
   requirePresenterSurface();
-  const actor = await getActor();
+  const actor = await requireActor();
   return <RoleClockTab actor={{ id: actor.id, name: actor.name, role: actor.role }} staff={loadStaff(getDb())} />;
 }
 
@@ -100,6 +100,8 @@ function OutagesPanel() {
 // ------------------------------------------------------------------ page
 
 export default async function PresenterConsolePage({ searchParams }: { searchParams: SP }) {
+  // The one guard first (a locked build redirects to /locked), then the presenter gate (404 outside the demo).
+  const actor = await requireActor();
   requirePresenterSurface();
   const sp = await searchParams;
   const tab: TabKey = (TABS.find((t) => t.key === sp.tab)?.key ?? "guide") as TabKey;
@@ -124,7 +126,6 @@ export default async function PresenterConsolePage({ searchParams }: { searchPar
   }
   const selected = validStep ? requested : 1;
 
-  const actor = await getActor();
   const canRehearse = canRunRehearsal(actor.role);
   const rehearsalNote = canRehearse
     ? null

@@ -6,6 +6,7 @@ import type { DomainErrorCode } from "@/server/core/errors";
 import { useToast } from "@/components/ui/toast";
 import { useConflict, type ConflictRequest } from "./conflict";
 import { useLiveActions } from "./live";
+import { handleCommandAuthFailure, isShownBySession, withActorHeader } from "./session";
 
 /**
  * Client side of the command layer. Every state change goes through
@@ -15,6 +16,14 @@ import { useLiveActions } from "./live";
  * action starts and reuses it when the same input is retried (after a network
  * error the server may already have done the work; the retry replays the
  * stored result instead of creating a duplicate). A successful run clears it.
+ *
+ * Secured mode (src/lib/client/session.ts): every command carries
+ * X-HLOS-Actor, the staff member this page was rendered for, so a screen left
+ * open after someone else signed in on this browser is refused (409
+ * ACTOR_MISMATCH, nothing recorded). Session failures (expired, locked,
+ * re-authentication needed, another user) come back in the screen's words and
+ * move the session screens (lock screen, session notice); nothing is ever
+ * replayed automatically. The synthetic demo sends exactly what it sent before.
  */
 
 /** NETWORK: the request never reached the server. UNCONFIRMED: the server answered without a result (for example an HTTP 500), so the outcome is unknown. */
@@ -58,7 +67,7 @@ export async function runCommand<R = unknown>(
   try {
     res = await fetch(`/api/commands/${encodeURIComponent(name)}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: withActorHeader({ "Content-Type": "application/json", Accept: "application/json" }),
       body: JSON.stringify({ input: input ?? {}, idempotencyKey: opts.idempotencyKey ?? newIdempotencyKey() }),
       cache: "no-store",
       signal: opts.signal,
@@ -88,10 +97,9 @@ export async function runCommand<R = unknown>(
   }
   const body = json as { ok?: boolean; result?: R; replayed?: boolean; error?: CommandFailure };
   if (body.ok) return { ok: true, result: body.result as R, replayed: Boolean(body.replayed) };
-  return {
-    ok: false,
-    error: body.error ?? { code: res.status >= 500 ? "UNCONFIRMED" : (STATUS_CODE[res.status] ?? "UNCONFIRMED"), message: `Request failed (HTTP ${res.status}).` },
-  };
+  const error = body.error ?? { code: res.status >= 500 ? "UNCONFIRMED" : (STATUS_CODE[res.status] ?? "UNCONFIRMED"), message: `Request failed (HTTP ${res.status}).` };
+  // Secured mode: a session failure updates the session screens and is worded for the screen (demo: unchanged).
+  return { ok: false, error: await handleCommandAuthFailure(error) };
 }
 
 /** Short title for each failure kind (used in toasts and inline errors). */
@@ -108,6 +116,11 @@ export const ERROR_TITLE: Record<CommandErrorCode, string> = {
   IDEMPOTENCY_CONFLICT: "This request was already used",
   IDEMPOTENCY_EXPIRED: "This request has expired",
   AUTH_REQUIRED: "Sign-in is not configured",
+  SIGN_IN_REQUIRED: "Sign in to continue",
+  SESSION_EXPIRED: "Your session has ended",
+  SESSION_LOCKED: "Screen locked",
+  REAUTH_REQUIRED: "Confirm it's you",
+  ACTOR_MISMATCH: "Signed in as someone else",
   NETWORK: "Could not reach the local server",
   UNCONFIRMED: "The server did not confirm this action",
 };
@@ -215,7 +228,8 @@ export function useCommand<R = unknown, I = unknown>(name: string, options: UseC
               yours: input && typeof input === "object" ? (input as Record<string, unknown>) : null,
               ...(o.conflict || {}),
             });
-          } else if (o.errorToast !== false) {
+          } else if (o.errorToast !== false && !isShownBySession(out.error.code)) {
+            // (A locked, ended or handed-over session is already on screen: the lock screen or the session notice.)
             toast.show({ tone: "warning", title: ERROR_TITLE[out.error.code] ?? "Action failed", body: failureMessage(out.error) });
           }
           o.onError?.(out.error, input);

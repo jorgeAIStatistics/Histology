@@ -8,6 +8,7 @@ import { useReactTable, getCoreRowModel, getSortedRowModel, type ColumnDef, type
 import { STAGE } from "@/lib/domain";
 import { decodeLabel } from "@/lib/identifiers";
 import { useCommand, newIdempotencyKey, ERROR_TITLE, type CommandFailure } from "@/lib/client/command";
+import { handleCommandAuthFailure, withActorHeader } from "@/lib/client/session";
 import { useSingleKey } from "@/lib/client/keyboard";
 import { isReadOnlyRole } from "@/lib/client/shell-context";
 import { AlertBanner } from "@/components/ui/alert-banner";
@@ -247,13 +248,14 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
     try {
       const res = await fetch("/api/worklist/export", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        // Secured mode: the staff member this page was opened for (X-HLOS-Actor), as for every command.
+        headers: withActorHeader({ "Content-Type": "application/json" }),
         body: JSON.stringify({ view, filters, expectedSeq: data.seq, idempotencyKey: newIdempotencyKey("csv") }),
         cache: "no-store",
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: CommandFailure } | null;
-        setCsvError(body?.error ?? { code: "VALIDATION", message: `Download failed (HTTP ${res.status}).` });
+        setCsvError(body?.error ? await handleCommandAuthFailure(body.error) : { code: "VALIDATION", message: `Download failed (HTTP ${res.status}).` });
         return;
       }
       const blob = await res.blob();

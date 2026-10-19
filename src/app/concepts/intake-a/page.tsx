@@ -1,5 +1,6 @@
 import { getDb } from "@/server/db/db";
-import { getActor } from "@/server/session";
+import { requireView } from "@/server/auth/guard";
+import { requirePresenterSurface } from "@/app/demo/gate";
 import { intakeBench, type ItemDetail } from "@/server/queries/intake";
 import { conceptMono, conceptSans } from "./fonts";
 import { Workstation } from "./workstation";
@@ -14,9 +15,11 @@ export const metadata = { title: "Intake concept A" };
  * runs a command. ?item=<INT id> selects the item (default INT-1014-032).
  */
 export default async function IntakeConceptA({ searchParams }: { searchParams: Promise<{ item?: string }> }) {
+  // The one guard, then the design-preview gate (synthetic demo only, also enforced by src/proxy.ts).
+  const actor = await requireView("view.intake");
+  requirePresenterSurface();
   const sp = await searchParams;
   const item = typeof sp.item === "string" && sp.item.trim() ? sp.item.trim().slice(0, 40) : "INT-1014-032";
-  const actor = await getActor();
   const db = getDb();
   const bench = intakeBench(db, actor, { item });
 
