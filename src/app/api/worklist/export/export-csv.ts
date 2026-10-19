@@ -22,6 +22,23 @@ export interface SnapshotResult {
 }
 
 /**
+ * The downloaded file contains patient-linked identifiers (case numbers, provisional intake ids, and hold
+ * reasons, which can quote what a label says). It is a controlled copy: this line says so in the file
+ * itself, among the header lines, before the column names (docs/release/privacy-review.md, "CSV export").
+ */
+export const CSV_CONTROL_NOTICE =
+  "# CONTROLLED DOCUMENT: contains patient identifiers (case numbers, provisional intake IDs, hold reasons that may quote label details). Store and share only as your laboratory's policy allows; delete it when the downtime ends. Recorded as snapshot";
+
+/** Inserts the control notice as the last "#" header line (before the column names); the rest of the file is unchanged. */
+export function withControlNotice(csv: string, snapshotDisplayId: string): string {
+  const lines = csv.split("\r\n");
+  const firstData = lines.findIndex((l) => !l.startsWith("#"));
+  const at = firstData < 0 ? lines.length : firstData;
+  lines.splice(at, 0, `${CSV_CONTROL_NOTICE} ${snapshotDisplayId}.`);
+  return lines.join("\r\n");
+}
+
+/**
  * CSV downtime/transition fallback, independent of HTTP so it can be tested
  * against the in-memory demo database. Records the snapshot through the
  * command layer (worklist.snapshot: audited, idempotent per key, refuses a
@@ -58,10 +75,13 @@ export function exportWorklistCsv(
     };
   }
   const doctorName = (id: string) => data.doctors.find((d) => d.id === id)?.name;
-  const csv = buildWorklistCsv(
-    data,
-    { displayId: res.result.displayId, generatedAt: res.result.generatedAt, generatedBy: res.result.generatedBy, seq: res.result.seq, dataAsOf: res.result.dataAsOf, stale: res.result.stale },
-    describeFilters(filters, doctorName),
+  const csv = withControlNotice(
+    buildWorklistCsv(
+      data,
+      { displayId: res.result.displayId, generatedAt: res.result.generatedAt, generatedBy: res.result.generatedBy, seq: res.result.seq, dataAsOf: res.result.dataAsOf, stale: res.result.stale },
+      describeFilters(filters, doctorName),
+    ),
+    res.result.displayId,
   );
   const rowCount = data.groups.reduce((n, g) => n + g.rows.length, 0);
   return {

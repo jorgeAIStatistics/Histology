@@ -6,6 +6,7 @@ import { displayId, newId } from "../core/ids";
 import { audit } from "../core/audit";
 import { recordWorklistChange } from "../core/feed";
 import { updateVersioned } from "../core/versioning";
+import { redactForRecord } from "./privacy";
 
 /**
  * Holds are scoped to the affected material. A hold on Part B blocks only the
@@ -178,6 +179,12 @@ export interface PlaceHoldInput {
   clarificationId?: string | null;
   intakeItemId?: string | null;
   accessionId?: string | null;
+  /**
+   * The reason as the audit summary states it, when reasonText quotes patient identifiers (a clarification
+   * hold generated from identity evidence). The hold record keeps reasonText. Either way the summary is
+   * passed through redactForRecord (src/server/domain/privacy.ts).
+   */
+  auditReasonText?: string | null;
 }
 
 /** Idempotent per (scope, reason, clarification): placing the same hold twice returns the existing one. */
@@ -206,7 +213,11 @@ export function placeHold(ctx: Ctx, input: PlaceHoldInput): HoldRow {
     entityId: id,
     accessionId: input.accessionId,
     intakeItemId: input.intakeItemId,
-    summary: `${display} placed on ${input.scopeLabel}: ${input.reasonText} (holds ${input.blocks.map((b) => HOLD_TRANSITION_LABEL[b] ?? b).join(", ")})`,
+    summary: redactForRecord(
+      ctx.db,
+      `${display} placed on ${input.scopeLabel}: ${input.auditReasonText ?? input.reasonText} (holds ${input.blocks.map((b) => HOLD_TRANSITION_LABEL[b] ?? b).join(", ")})`,
+      { intakeItemId: input.intakeItemId, accessionId: input.accessionId, clarificationId: input.clarificationId },
+    ),
   });
   if (input.accessionId) {
     const path = ctx.db.prepare("SELECT assigned_pathologist_id p FROM accession WHERE id = ?").get(input.accessionId) as { p: string } | undefined;

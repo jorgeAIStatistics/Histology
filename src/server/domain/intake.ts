@@ -21,6 +21,7 @@ import {
 } from "../sim/courier";
 import { computeAndStoreRouting } from "./routing";
 import { detectRelatedForIntake } from "./related";
+import { isIdentityField, withheld } from "./privacy";
 
 /**
  * Intake (pre-accession) domain: receiving a courier delivery, unpacking a
@@ -1072,10 +1073,17 @@ export function recordObservation(
     entityId: containerId,
     intakeItemId: it.id,
     summary: `${it.display_id} container ${c.seq}: observation edited by ${ctx.actor.name} (${[...changed, ...(conditionChanged ? ["condition_note"] : [])].join(", ")})${changed.length && wasVerified ? ". Earlier verification cleared — verify again against the physical container." : ""}`,
-    before: Object.fromEntries(changed.map((k) => [k, before[k] ?? null])),
-    after: Object.fromEntries(changed.map((k) => [k, next[k] ?? null])),
+    // Patient name, date of birth and MRN as read from the bottle are withheld (field name and a fingerprint
+    // scoped to this container and field; src/server/domain/privacy.ts). The container record keeps the values.
+    before: Object.fromEntries(changed.map((k) => [k, auditValue(containerId, k, before[k] ?? null)])),
+    after: Object.fromEntries(changed.map((k) => [k, auditValue(containerId, k, next[k] ?? null)])),
   });
   return updated;
+}
+
+/** An observation value as the audit trail records it: identity fields withheld, other fields as written. */
+function auditValue<T>(containerId: string, key: string, value: T): T | string | null {
+  return isIdentityField(key) ? withheld(`container:${containerId}:${key}`, value) : value;
 }
 
 function touchItem(ctx: Ctx, it: IntakeItemRow, status?: string): void {
@@ -1210,7 +1218,8 @@ export function verifyContainer(ctx: Ctx, containerId: string, expectedVersion: 
   touchItem(ctx, it, "in_review");
   closeTasks(ctx, "container_verification", "container", containerId);
   const parts: string[] = [];
-  if (discrepancies.length) parts.push(`recorded a discrepancy — ${discrepancies.map((d) => `${d.label}: order "${d.orderValue ?? "not stated"}", bottle "${d.observedValue ?? "not on label"}"`).join("; ")}. Both values kept`);
+  // Patient identity differences are named by field only in the audit summary (the discrepancy record keeps both values).
+  if (discrepancies.length) parts.push(`recorded a discrepancy — ${discrepancies.map((d) => (isIdentityField(d.field) ? `${d.label}: order and bottle differ` : `${d.label}: order "${d.orderValue ?? "not stated"}", bottle "${d.observedValue ?? "not on label"}"`)).join("; ")}. Both values kept`);
   if (stillOpen.length) parts.push(`recorded mismatch still open — ${stillOpen.map((s) => `${s.label}: ${s.reason}`).join("; ")}`);
   if (accepted.length) parts.push(`${accepted.map((a) => a.label.toLowerCase()).join(", ")} differ as already accepted by a lead`);
   audit(ctx, {
@@ -1288,7 +1297,7 @@ export function acceptDiscrepancy(ctx: Ctx, discrepancyId: string, expectedVersi
     intakeItemId: it.id,
     summary:
       d.kind === "field_mismatch"
-        ? `${it.display_id}${c ? ` container ${c.seq}` : ""}: ${ctx.actor.name} accepted the recorded ${label.toLowerCase()} mismatch (order "${v.order?.original ?? "not stated"}", bottle "${v.observed?.original ?? "not on label"}"). Values kept as found.${containerState === "verified" ? " Container counts as verified." : ""}`
+        ? `${it.display_id}${c ? ` container ${c.seq}` : ""}: ${ctx.actor.name} accepted the recorded ${label.toLowerCase()} mismatch (${isIdentityField(d.field) ? "values on the discrepancy record" : `order "${v.order?.original ?? "not stated"}", bottle "${v.observed?.original ?? "not on label"}"`}). Values kept as found.${containerState === "verified" ? " Container counts as verified." : ""}`
         : `${it.display_id}: ${ctx.actor.name} accepted more containers than expected (${(JSON.parse(d.values_json) as { detail?: string }).detail ?? "count differs"}).`,
     reason: reason.trim(),
     before: { status: "open" },

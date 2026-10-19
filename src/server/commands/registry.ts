@@ -4,7 +4,18 @@ import type { Permission } from "@/lib/roles";
 import { DomainError, type DomainErrorCode } from "../core/errors";
 import { type Ctx, type Origin, loadActor, makeCtx, requirePermission, SYSTEM_ACTOR } from "../core/context";
 import { audit } from "../core/audit";
-import { assertValidKey, checkRepeat, ensureReceiptSchema, findReceipt, insertReceipt, labScope, requestFingerprint } from "../core/idempotency";
+import { log } from "../core/log";
+import {
+  assertValidKey,
+  checkRepeat,
+  ensureReceiptSchema,
+  findReceipt,
+  insertReceipt,
+  labScope,
+  maybeRunReceiptMaintenance,
+  requestFingerprint,
+} from "../core/idempotency";
+import { sessionRefFor } from "../core/audit-seal";
 import { LOCKED_MESSAGE, runtimeMode } from "../runtime-mode";
 import type { CommandAuth } from "../auth/guard";
 import { isReauthFresh, sessionPolicyFromEnv } from "../auth/sessions";
@@ -100,6 +111,16 @@ export interface ExecuteOptions {
  *    result.
  * A failed handler rolls back everything, including the receipt, so a retry
  * with the same key runs once when it can succeed.
+ *
+ * Traceability: every audit event the command writes (including a refusal)
+ * records the command's permission and, in secured mode, a session reference
+ * (HMAC of the session id hash under the audit key; never the id or its hash).
+ * Each event is sealed in the same transaction (src/server/core/audit.ts).
+ *
+ * After the transaction COMMITS (and only when this call was not itself
+ * nested in an outer transaction), expired idempotency receipts are compacted
+ * opportunistically: at most once per 10 minutes per process, one bounded
+ * batch, in its own short transaction (src/server/core/idempotency.ts).
  */
 export function executeCommand<R = unknown>(
   db: DB,
@@ -140,12 +161,15 @@ export function executeCommand<R = unknown>(
     const effectiveOrigin = origin === "user" && mode === "demo" && (def.audience ?? "lab") === "presenter" ? "demo" : origin;
     ctx = makeCtx(db, actor, effectiveOrigin, opts.correlationId);
   } catch (e) {
-    return toFailure(e);
+    return toFailure(e, { command: name, correlationId: opts.correlationId });
   }
+  // Recorded on every audit event of this command, refusals included.
+  ctx.permission = def.permission;
   if (securedUser) {
     // Domain operations that need a recent sign-in whatever the command (hold release) read this.
     const policy = sessionPolicyFromEnv();
     ctx.reauthFresh = Boolean(policy && opts.auth && isReauthFresh(opts.auth.authTime, policy, opts.nowMs ?? Date.now()));
+    ctx.sessionRef = opts.auth ? sessionRefFor(opts.auth.sessionIdHash) : null;
   }
 
   if (securedUser) {
@@ -220,9 +244,11 @@ export function executeCommand<R = unknown>(
         return { result: r, replayed: false };
       })
       .immediate();
+    // Committed. Never inside the command's transaction, and never when this call was nested in an outer one.
+    if (!db.inTransaction) maybeRunReceiptMaintenance(db);
     return outcome.replayed ? { ok: true, result: outcome.result as R, replayed: true } : { ok: true, result: outcome.result as R };
   } catch (e) {
-    const failure = toFailure(e);
+    const failure = toFailure(e, { command: name, correlationId: ctx.correlationId });
     if (!failure.ok && origin === "user" && (failure.error.code === "FORBIDDEN" || failure.error.code === "IDEMPOTENCY_CONFLICT")) {
       auditRefusal(ctx, name, failure.error);
     }
@@ -258,7 +284,13 @@ function auditRefusal(ctx: Ctx, name: string, error: { code: DomainErrorCode; me
   }
 }
 
-function toFailure(e: unknown): CommandResult<never> {
+/**
+ * An unexpected error (not a DomainError) is logged as one structured line (src/server/core/log.ts: the
+ * error's name, code, a scrubbed message and the first stack frame; never the stack or the request) and the
+ * caller gets a generic message with the correlation id, never the raw error text: an error message can
+ * quote stored data (a JSON parse error quotes the text it read) or internal details.
+ */
+function toFailure(e: unknown, info: { command?: string; correlationId?: string } = {}): CommandResult<never> {
   if (e instanceof DomainError) return { ok: false, error: { code: e.code, message: e.message, details: e.details } };
   const message = e instanceof Error ? e.message : String(e);
   if (message.startsWith("INVARIANT:")) {
@@ -271,8 +303,14 @@ function toFailure(e: unknown): CommandResult<never> {
   if (/UNIQUE constraint failed: print_job/.test(message)) {
     return { ok: false, error: { code: "INVARIANT", message: "A print job for this label is already in flight or awaiting reconciliation" } };
   }
-  console.error("[command] unexpected error", e);
-  return { ok: false, error: { code: "VALIDATION", message } };
+  log("error", "command.unexpected_error", { correlationId: info.correlationId, command: info.command, error: e });
+  return {
+    ok: false,
+    error: {
+      code: "VALIDATION",
+      message: `The request could not be completed because of an unexpected error on the server. Nothing was changed.${info.correlationId ? ` Reference: ${info.correlationId}.` : ""}`,
+    },
+  };
 }
 
 /** Run a command directly as a given actor and throw on failure (tests, simulator, seed). */

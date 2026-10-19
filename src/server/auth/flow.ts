@@ -59,6 +59,7 @@ import {
   type SessionPolicy,
 } from "./sessions";
 import { consumeTransaction, createTransaction, safeReturnTo, TRANSACTION_TTL_MS, txBindingMatches, txBindingValue } from "./transactions";
+import { log } from "../core/log";
 
 /** Why a sign-in was refused. Shown to the person as a plain page; recorded as auth.denied. */
 export type DenyReason =
@@ -313,7 +314,7 @@ export async function handleCallback(req: Request, deps: { db?: DB; now?: number
   if (!txCookie) {
     // No sign-in was started in this browser: this cannot be a sign-in in progress (a stray, stale or forged
     // callback). Anyone can send it without signing in, so it is logged, never written to the audit trail.
-    console.warn("[auth] callback without a sign-in in progress in this browser (not audited)", correlationId);
+    log("warn", "auth.callback_without_transaction", { correlationId });
     return redirectTo(`${cfg.publicOrigin}${denialPagePath("bad_state")}`, [clearTx]);
   }
   const state = params.get("state");

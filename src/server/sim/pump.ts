@@ -5,6 +5,7 @@ import { audit } from "@/server/core/audit";
 import { setSetting, getSetting } from "@/server/core/settings";
 import { importSourceMessage, type ImportOutcome, type ReceiptVia } from "@/server/domain/sourceImport";
 import { retireExpiredRuleSets } from "@/server/domain/routingRules";
+import { log } from "@/server/core/log";
 
 /**
  * SIMULATED source delivery (S6). The simulated source systems keep what they
@@ -59,7 +60,7 @@ export function pumpSources(db: DB): { delivered: number } {
   try {
     return { delivered: pumpSourcesDetailed(db).delivered };
   } catch (e) {
-    console.error("[pump] failed", e);
+    log("error", "pump.failed", { error: e });
     return { delivered: 0 };
   }
 }
@@ -108,14 +109,14 @@ export function pumpSourcesDetailed(db: DB, opts: { sourceId?: string; via?: Rec
         db.prepare("UPDATE integration_source SET last_success_at = ?, last_attempt_at = ?, last_error = ? WHERE id = ?").run(now, now, lastError, s.id);
       }
     } catch (e) {
-      console.error(`[pump] source ${s.id} failed`, e);
+      log("error", "pump.source_failed", { sourceId: s.id, error: e });
     }
   }
 
   try {
     maintenance(db);
   } catch (e) {
-    console.error("[pump] maintenance failed", e);
+    log("error", "pump.maintenance_failed", { error: e });
   }
   return result;
 }
@@ -137,7 +138,7 @@ function deliverOne(db: DB, s: SourceRow, row: OutboxRow, via: ReceiptVia): { me
       return { messageId: row.message_id, outcome: res.outcome, detail: res.detail };
     })();
   } catch (e) {
-    console.error(`[pump] delivery of ${row.message_id} failed`, e);
+    log("error", "pump.delivery_failed", { correlationId: `pump-${row.id}`, sourceId: s.id, messageId: row.message_id, error: e });
     return null;
   }
 }

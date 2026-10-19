@@ -5,6 +5,7 @@ import { labDay } from "@/lib/time";
 import { AWAITING_SOURCE_ENTRY_SQL, OPEN_CLARIFICATION_STATES } from "@/lib/domain";
 import { ROLE_LABEL, rolesFor, type Permission } from "@/lib/roles";
 import { OPEN_ROUTING_EXCEPTION_SQL } from "./predicates";
+import { log } from "@/server/core/log";
 
 /**
  * Provenance of every "today" figure: the seed writes the demo day's morning (intake items, clarifications,
@@ -731,7 +732,7 @@ export function workAgeSnapshot(db: DB, asOf: string): { rows: WorkAgeRow[]; tot
     try {
       items = db.prepare(t.sql).all() as { ref: string; created: string | null }[];
     } catch (e) {
-      console.error(`[insights] work age for ${t.type} could not be read`, e);
+      log("error", "insights.work_age_failed", { type: t.type, error: e });
       unreadableTypes += 1;
       return {
         type: t.type,

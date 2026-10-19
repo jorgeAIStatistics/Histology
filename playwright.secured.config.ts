@@ -38,8 +38,11 @@ const CLIENT_ID = "hlos-e2e-secured";
 // it starts the web servers and the workers; both inherit them, and a worker evaluating this file again keeps them.
 if (!process.env.E2E_SECURED_CLIENT_SECRET) process.env.E2E_SECURED_CLIENT_SECRET = crypto.randomBytes(32).toString("hex");
 if (!process.env.E2E_SECURED_SESSION_SECRET) process.env.E2E_SECURED_SESSION_SECRET = crypto.randomBytes(32).toString("hex");
+// A secured build is locked without an audit key (Stage 6 Phase C): random per run, test only.
+if (!process.env.E2E_SECURED_AUDIT_KEY) process.env.E2E_SECURED_AUDIT_KEY = crypto.randomBytes(32).toString("hex");
 const CLIENT_SECRET = process.env.E2E_SECURED_CLIENT_SECRET;
 const SESSION_SECRET = process.env.E2E_SECURED_SESSION_SECRET;
+const AUDIT_KEY = process.env.E2E_SECURED_AUDIT_KEY;
 
 /** Synthetic login -> staff member. "stranger" is deliberately not linked; "otherlab" is linked but its lab claim is another lab's. */
 const LINKS: [login: string, staffId: string][] = [
@@ -68,6 +71,7 @@ const appEnv = (publicUrl: string, issuer: string): Record<string, string> => ({
   HLOS_LAB_ID: LAB,
   HLOS_OIDC_LAB_CLAIM: "hlos_labs",
   HLOS_SESSION_SECRET: SESSION_SECRET,
+  HLOS_AUDIT_KEY: AUDIT_KEY,
   // Short enough to matter in a test; the client idle timer is driven with Playwright's clock.
   HLOS_SESSION_IDLE_MIN: "2",
   HLOS_REAUTH_MAX_AGE_MIN: "5",

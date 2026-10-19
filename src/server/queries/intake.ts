@@ -23,6 +23,7 @@ import { currentRouting, type RoutingDecisionRow } from "@/server/domain/routing
 import { candidatesForIntake, intakeItemsForOrder, separateEncounterOrders, DETECTION_RULE_DUPLICATE_RECORD, type ReasonItem } from "@/server/domain/related";
 import { accessionBlockers, latestRequestFor, type Blocker } from "@/server/domain/accession";
 import { openSourceConflictsForOrder } from "@/server/domain/sourceConflict";
+import { historyPayload } from "@/server/domain/privacy";
 import { accessionSourceStatus } from "@/server/sim/authoritative";
 import { countUnreceived, labelText } from "@/server/sim/courier";
 import { CORRECTION_KIND_LABEL, CORRECTION_STATUS_LABEL } from "@/server/domain/correction";
@@ -1178,7 +1179,8 @@ export function intakeItemDetail(db: DB, displayIdOrId: string): ItemDetail | nu
     })),
     audit: auditRows.map((a) => ({
       id: a.id, at: a.at, actorName: nameOf(staff, a.actor_id), actorRole: a.actor_role, origin: a.origin, action: a.action, summary: a.summary, reason: a.reason,
-      before: a.before_json, after: a.after_json,
+      // A patient reference audited as { id, fingerprint } is shown with the details from the patient record itself (C4).
+      before: historyPayload(db, a.before_json), after: historyPayload(db, a.after_json),
     })),
     lane: lf.lane,
     laneReasons: lf.reasons,

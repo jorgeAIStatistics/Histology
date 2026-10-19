@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import type { DB } from "../db/db";
 import { audit } from "../core/audit";
 import { makeCtx, SYSTEM_ACTOR, type Actor, type Origin } from "../core/context";
+import { log } from "../core/log";
 import type { Role } from "@/lib/roles";
 
 /** Short, non-reversible reference to a provider subject for investigations (never the subject itself). */
@@ -59,6 +60,6 @@ export function auditAuth(db: DB, input: AuthAuditInput): void {
       after: input.details,
     });
   } catch (e) {
-    console.error("[auth] audit failed", input.action, e instanceof Error ? e.message : e);
+    log("error", "auth.audit_failed", { correlationId: input.correlationId, action: input.action, error: e });
   }
 }

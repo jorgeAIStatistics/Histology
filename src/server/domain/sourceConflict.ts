@@ -3,6 +3,7 @@ import type { Ctx } from "../core/context";
 import { DomainError } from "../core/errors";
 import { audit } from "../core/audit";
 import { updateVersioned } from "../core/versioning";
+import { auditedPatientRef } from "./privacy";
 
 /**
  * Source conflicts on patient and order-level details (S6 import).
@@ -59,19 +60,19 @@ export function openSourceConflictsForOrder(db: DB, order: { id: string; patient
     .all(order.patient_ref_id, order.id) as SourceConflictTaskRow[];
 }
 
-interface PatientSnapshot {
-  id: string;
-  tenant_id: string;
-  source_mrn: string;
-  family_name: string;
-  given_name: string;
-  birth_date: string;
+/**
+ * The patient reference as the audit trail records it (C4: no name, birth date or MRN in audit payloads):
+ * its id and an HMAC fingerprint of its details (src/server/domain/privacy.ts). Equal fingerprints before
+ * and after prove the details on file did not change; the values stay in patient_ref.
+ */
+function patientSnapshot(db: DB, patientRefId: string) {
+  return auditedPatientRef(db, patientRefId);
 }
 
-function patientSnapshot(db: DB, patientRefId: string): PatientSnapshot | null {
-  return (
-    (db.prepare("SELECT id, tenant_id, source_mrn, family_name, given_name, birth_date FROM patient_ref WHERE id = ?").get(patientRefId) as PatientSnapshot | undefined) ?? null
-  );
+/** The details on file, compared in memory only (never written to the audit trail). */
+function patientDetails(db: DB, patientRefId: string): string | null {
+  const row = db.prepare("SELECT id, tenant_id, source_mrn, family_name, given_name, birth_date FROM patient_ref WHERE id = ?").get(patientRefId);
+  return row ? JSON.stringify(row) : null;
 }
 
 export interface ReviewSourceConflictResult {
@@ -128,6 +129,7 @@ export function reviewSourceConflict(
     patientRefId = orders[0]?.patient_ref_id ?? null;
   }
   const before = patientRefId ? patientSnapshot(db, patientRefId) : null;
+  const detailsBefore = patientRefId ? patientDetails(db, patientRefId) : null;
   const intakeItemIds = orders.length
     ? (db
         .prepare(`SELECT DISTINCT intake_item_id id FROM intake_order_link WHERE source_order_id IN (${orders.map(() => "?").join(",")}) ORDER BY intake_item_id`)
@@ -142,6 +144,7 @@ export function reviewSourceConflict(
 
   // The patient reference is never touched by this review; the audit shows it is unchanged.
   const after = patientRefId ? patientSnapshot(db, patientRefId) : null;
+  const detailsAfter = patientRefId ? patientDetails(db, patientRefId) : null;
   const orderList = orders.map((o) => o.source_order_id).join(", ") || "the order";
   // One row per intake item the conflict held, so every affected item's History shows who reviewed it and why
   // (a patient-level conflict can hold several items: each one's accession was blocked by it).
@@ -154,12 +157,13 @@ export function reviewSourceConflict(
     intakeItemId,
     summary: `${ctx.actor.name} reviewed the source conflict on ${orderList}: details on file confirmed. The patient reference and the order link were not changed; nothing was merged.`,
     reason,
-    before: { task: { status: task.status, version: task.version, entityType: task.entity_type, entityId: task.entity_id, title: task.title }, patientRef: before },
+    // The task title quotes the differing details; the audit keeps the task's id and kind (the title stays on the task record).
+    before: { task: { status: task.status, version: task.version, entityType: task.entity_type, entityId: task.entity_id, kind: task.kind }, patientRef: before },
     after: {
       task: { status: "done", version: updated.version },
       decision: input.decision,
       patientRef: after,
-      patientRefUnchanged: JSON.stringify(before) === JSON.stringify(after),
+      patientRefUnchanged: detailsBefore === detailsAfter && before?.fingerprint === after?.fingerprint,
       sourceOrders: orders.map((o) => ({ id: o.id, sourceOrderId: o.source_order_id })),
       intakeItemIds,
     },

@@ -580,6 +580,24 @@ test.describe("secured mode: sign-in, the server guard, lock, hand-over, re-auth
     await expect(page).toHaveURL(/\/signin\?returnTo=/);
   });
 
+  // Stage 6 Phase C4 (shared workstation): a second tab left open must not keep showing the patient after sign-out.
+  test("sign-out in one tab clears every other tab of this browser at once: no patient, case or operator details stay in their DOM", async ({ page, context }) => {
+    await signIn(page, LOGIN.kim, `/intake?item=${ITEM}`);
+    await expectItemShown(page);
+    const second = await context.newPage();
+    await second.goto("/clarifications?selected=CLR-0453");
+    await expect(second.getByRole("region", { name: /^Identity conflict question: INT-1014-022/ })).toContainText("Tobias Kettering");
+    // Only the sign-out broadcast may clear the second tab: its own background checks cannot reach the server.
+    await second.route(/\/api\/(live|auth\/session)(\?|$)/, (route) => route.abort());
+    await sessionGroup(page).getByRole("button", { name: "Sign out" }).click();
+    await page.getByRole("button", { name: "Yes, sign me out" }).click();
+    await expect(page).toHaveURL(/\/signed-out$/);
+    await expect(second.getByRole("heading", { level: 1, name: "Signed out" })).toBeVisible({ timeout: 3_000 });
+    await expect(second).toHaveTitle(/^Signed out/);
+    await expectNoLabData(second, ["Kim Nguyen", "CLR-0453", "Harbor Point", "Tobias"]);
+    await second.close();
+  });
+
   test("the identity provider unavailable: sign-in fails closed with a clear message and shows no data", async ({ page, request }) => {
     expect(DOWN_URL).toMatch(/^http:\/\/localhost:\d+$/);
     await page.goto(`${DOWN_URL}/intake?item=${ITEM}`);

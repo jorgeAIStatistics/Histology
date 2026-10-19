@@ -4,6 +4,7 @@ import { pumpSources } from "@/server/sim/pump";
 import { loadLiveSnapshot } from "@/components/shell/server-data";
 import { guardFailureResponse, requireApiActor } from "@/server/auth/guard";
 import { hasBenchView } from "@/lib/roles";
+import { log } from "@/server/core/log";
 
 /**
  * GET /api/live — polled every 2.5 s by <LiveRefresh>. Reports the change
@@ -33,7 +34,7 @@ export async function GET(req: Request) {
     try {
       delivered = pumpSources(db).delivered;
     } catch (e) {
-      console.error("[live] pumpSources failed", e);
+      log("error", "live.pump_failed", { error: e });
     }
   }
   const snapshot = loadLiveSnapshot(db, readClock(db));

@@ -12,6 +12,7 @@ import { fmtFull } from "@/lib/time";
 import { getWorklist, loadSourceFreshness } from "../queries/worklist";
 import { describeFilters, worklistFiltersSchema, worklistViewSchema, VIEW_LABEL } from "@/components/worklist/views";
 import { checkClaim, checkRelease, roleLabel, TASK_ROLES } from "@/components/worklist/task-rules";
+import { auditTaskTitle } from "../domain/privacy";
 
 // ---------------------------------------------------------------- worklist.ack
 
@@ -245,7 +246,8 @@ export const taskClaim = defineCommand({
       entityId: t.id,
       accessionId: t.accession_id,
       intakeItemId: t.intake_item_id,
-      summary: `${ctx.actor.name} ${pre.takeover ? "took over" : "claimed"} "${t.title}"${previous}`,
+      // The task keeps its title; the audit copy has the patient's identifiers replaced (a source-conflict title quotes them).
+      summary: `${ctx.actor.name} ${pre.takeover ? "took over" : "claimed"} "${auditTaskTitle(ctx.db, t)}"${previous}`,
       reason,
       before: { ownerId: t.owner_id, ownerRole: t.owner_role, status: t.status },
       after: { ownerId: ctx.actor.id, ownerRole: t.owner_role, status: "in_progress" },
@@ -282,7 +284,7 @@ export const taskRelease = defineCommand({
       entityId: t.id,
       accessionId: t.accession_id,
       intakeItemId: t.intake_item_id,
-      summary: `${ctx.actor.name} released "${t.title}" back to the ${t.owner_role ? `${roleLabel(t.owner_role).toLowerCase()} ` : ""}queue${check.othersTask ? ` (was owned by ${staffName(ctx, t.owner_id)})` : ""}`,
+      summary: `${ctx.actor.name} released "${auditTaskTitle(ctx.db, t)}" back to the ${t.owner_role ? `${roleLabel(t.owner_role).toLowerCase()} ` : ""}queue${check.othersTask ? ` (was owned by ${staffName(ctx, t.owner_id)})` : ""}`,
       reason,
       before: { ownerId: t.owner_id, ownerRole: t.owner_role, status: t.status },
       after: { ownerId: null, ownerRole: t.owner_role, status: "open" },

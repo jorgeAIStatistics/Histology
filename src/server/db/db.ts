@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { SCHEMA_SQL } from "./schema";
 import { ensureAuthSchema } from "./auth-schema";
+import { ensureAuditSchema } from "./audit-schema";
 import { isDemoMode } from "../runtime-mode";
 
 export type DB = Database.Database;
@@ -26,6 +27,8 @@ export function openDatabase(file: string): DB {
   if (!hasSchema) db.exec(SCHEMA_SQL);
   // Additive sign-in/session tables for databases created before Stage 6 Phase B.
   ensureAuthSchema(db);
+  // Additive audit seal table and traceability columns for databases created before Stage 6 Phase C.
+  ensureAuditSchema(db);
   return db;
 }
 

@@ -13,6 +13,8 @@ import { isGrossPending, loadSourceFreshness, loadWorklistRows, type FreshnessSu
 import { holdNextSteps } from "./hold-next";
 import { OPEN_ROUTING_EXCEPTION_SQL, SOURCE_ENTRY_UNASSIGNED } from "./predicates";
 import { correctionPart } from "@/server/domain/correction";
+import { compileRedactor, knownIdentifiers, labWideIdentifiers, patientRefIdsFor } from "@/server/domain/privacy";
+import { log } from "@/server/core/log";
 import { plural } from "@/components/worklist/format";
 
 export interface OpsTile {
@@ -187,7 +189,7 @@ function count(db: DB, sql: string, ...params: unknown[]): number | null {
   try {
     return (db.prepare(sql).get(...params) as { n: number }).n;
   } catch (e) {
-    console.error("[operations] count failed", e);
+    log("error", "operations.count_failed", { error: e });
     return null;
   }
 }
@@ -480,8 +482,40 @@ export function getOperations(db: DB): OperationsData {
     caseHref(t.accession_id) ??
     (t.intake_item_id ? `/intake?item=${encodeURIComponent(intakeDisplay.get(t.intake_item_id) ?? t.intake_item_id)}` : null) ??
     (t.entity_type === "clarification" ? `/clarifications?selected=${encodeURIComponent(clrDisplay.get(t.entity_id) ?? t.entity_id)}` : null);
-  const push = (b: Omit<BlockedItem, "age" | "ownerKey" | "closesWhen">) =>
-    blocked.push({ ...b, closesWhen: CLOSES_WHEN[b.category], age: b.since ? fmtAge(b.since, now) : "Unknown", ownerKey: ownerKeyFor(b.ownerId, b.owner) });
+  // Privacy (C4): Operations is about flow, not positive identification, so it shows no patient name, birth date
+  // or MRN. Free text that can quote them (hold reasons, task titles, scope and subject labels) is passed through
+  // the linked patient's identifiers (per row) and every patient's dates, MRNs and full names (lab-wide).
+  // Case, intake, hold and clarification references stay. src/server/domain/privacy.ts; docs/release/privacy-review.md.
+  const labWide = compileRedactor(labWideIdentifiers(db));
+  type PatientLinks = Parameters<typeof patientRefIdsFor>[1];
+  const redactorFor = (links?: PatientLinks) => {
+    if (!links) return labWide;
+    const intakeItemIds = [links.intakeItemId, links.clarificationId ? (db.prepare("SELECT intake_item_id i FROM clarification WHERE id = ?").get(links.clarificationId) as { i: string | null } | undefined)?.i : null].filter(
+      (x): x is string => typeof x === "string",
+    );
+    const row = compileRedactor(knownIdentifiers(db, patientRefIdsFor(db, links), { intakeItemIds }));
+    return (text: string) => labWide(row(text));
+  };
+  const taskLinks = (t: { entity_type: string; entity_id: string; accession_id: string | null; intake_item_id: string | null }): PatientLinks => ({
+    patientRefId: t.entity_type === "patient_ref" ? t.entity_id : null,
+    sourceOrderId: t.entity_type === "source_order" ? t.entity_id : null,
+    clarificationId: t.entity_type === "clarification" ? t.entity_id : null,
+    accessionId: t.accession_id,
+    intakeItemId: t.intake_item_id,
+  });
+  const push = (b: Omit<BlockedItem, "age" | "ownerKey" | "closesWhen">, links?: PatientLinks) => {
+    const r = redactorFor(links);
+    blocked.push({
+      ...b,
+      item: r(b.item),
+      subject: b.subject === undefined ? undefined : r(b.subject),
+      blocks: r(b.blocks),
+      nextStep: r(b.nextStep),
+      closesWhen: CLOSES_WHEN[b.category],
+      age: b.since ? fmtAge(b.since, now) : "Unknown",
+      ownerKey: ownerKeyFor(b.ownerId, b.owner),
+    });
+  };
   const where = materialLocator(db, now);
 
   // Holds: owner and next step from the shared helper (the same answer the case page and grossing bench give).
@@ -517,7 +551,7 @@ export function getOperations(db: DB): OperationsData {
         : next.correction && itemHref.startsWith("/cases/")
           ? `${itemHref}?tab=source#corrections`
           : `${itemHref}${itemHref.startsWith("/cases/") ? "?tab=history" : ""}`,
-    });
+    }, { intakeItemId: h.intake_item_id, accessionId: h.accession_id, clarificationId: h.clarification_id });
   }
 
   // Clarifications that need a person now: follow-up overdue, delivery not confirmed, or an answer waiting for a
@@ -557,7 +591,7 @@ export function getOperations(db: DB): OperationsData {
       overdue: isOverdue, identity,
       kind: identity ? "identity_conflict" : decision ? "pending_decision" : delivery ? "missing_evidence" : isOverdue ? "delay" : "source_disagreement",
       where: c.specimen_part_id ? where.part(c.specimen_part_id) : c.intake_item_id ? where.intake(c.intake_item_id) : NO_MATERIAL.question,
-    });
+    }, { clarificationId: c.id });
   }
   const overdueTile = tiles.find((t) => t.key === "clarifications_overdue")!;
   overdueTile.value = blocked.filter((b) => b.category === "clarifications" && b.overdue).length;
@@ -735,7 +769,7 @@ export function getOperations(db: DB): OperationsData {
       evidenceLabel: href.startsWith("/cases/") ? `${href.replace("/cases/", "")} tasks` : "Record", evidenceHref: href.startsWith("/cases/") ? `${href}?tab=tasks` : href,
       kind: identity ? "identity_conflict" : t.kind === "source_entry" ? "delay" : REVIEW_KIND[t.kind] ?? "pending_decision",
       where: t.kind === "source_entry" ? NO_MATERIAL.sourceEntry : where.entity(t.entity_type, t.entity_id, t.intake_item_id),
-    });
+    }, taskLinks(t));
   }
 
   // Approved parts still awaiting source-system entry that have NO open entry task: nobody owns them, which is
@@ -833,7 +867,7 @@ export function getOperations(db: DB): OperationsData {
     const oldest = list.reduce((o, t) => (Date.parse(t.created_at) < Date.parse(o.created_at) ? t : o));
     const kindText = [...kinds.entries()].map(([kind, n]) => `${n} ${kind.replace(/_/g, " ")}`).join(", ");
     lines.push({
-      text: `${who} holds the next step on ${plural(list.length, "task")}: ${kindText}. Oldest waiting ${fmtAge(oldest.created_at, now)} ("${oldest.title}").`,
+      text: `${who} holds the next step on ${plural(list.length, "task")}: ${kindText}. Oldest waiting ${fmtAge(oldest.created_at, now)} ("${redactorFor(taskLinks(oldest))(oldest.title)}").`,
       evidence: list.slice(0, 3).map((t) => {
         const href = taskRecordHref(t) ?? "/operations#blocked";
         const label =

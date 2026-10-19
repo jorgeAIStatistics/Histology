@@ -19,6 +19,7 @@ import { actionLabel } from "@/components/case/format";
 import { plural, tidyPlurals } from "@/components/worklist/format";
 import { caseIsComplete, loadCaseRow, loadSourceFreshness, type FreshnessSummary, type HoldEntry, type StainEntry, type WorklistRow } from "./worklist";
 import { holdNextSteps } from "./hold-next";
+import { historyPayload } from "@/server/domain/privacy";
 
 // ---------------------------------------------------------------- types
 
@@ -950,7 +951,8 @@ export function getCase(db: DB, idOrNumber: string): CaseDetail | null {
               : "System",
       actorRole: staffActor && role && ROLE_LABEL[role] ? ROLE_LABEL[role] : null,
       origin: e.origin, originLabel: originLabel(e.origin, e.action, e.id), action: e.action, entityType: e.entity_type, entityId: e.entity_id, summary: readableSummary(e.summary),
-      reason: e.reason, before: e.before_json, after: e.after_json, parts: [...ps].sort(),
+      // A patient reference audited as { id, fingerprint } is shown with the details from the patient record itself (C4).
+      reason: e.reason, before: historyPayload(db, e.before_json), after: historyPayload(db, e.after_json), parts: [...ps].sort(),
     };
   });
   const historyFilters = {

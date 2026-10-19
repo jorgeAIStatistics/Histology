@@ -3,6 +3,7 @@ import { makeCtx, SYSTEM_ACTOR } from "@/server/core/context";
 import { getDb } from "@/server/db/db";
 import { importSourceMessage } from "@/server/domain/sourceImport";
 import { rejectCrossOrigin } from "@/server/session";
+import { log } from "@/server/core/log";
 import {
   FIXTURE_TOKEN_HEADER,
   FixtureUnavailableError,
@@ -68,7 +69,7 @@ export async function POST(req: Request) {
     if (e instanceof FixtureUnavailableError) {
       return Response.json({ ok: false, error: { code: "FIXTURE_UNAVAILABLE", message: e.message } }, { status: 409, headers: NO_STORE });
     }
-    console.error("[test/fixtures] failed", e);
+    log("error", "test_fixtures.failed", { fixture: name, error: e });
     return Response.json({ ok: false, error: { code: "INTERNAL", message: "The fixture could not be imported." } }, { status: 500, headers: NO_STORE });
   }
 }
