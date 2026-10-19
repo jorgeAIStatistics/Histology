@@ -17,6 +17,11 @@ export interface AlertBannerProps {
   action?: ReactNode;
   /** Danger banners that block the current action are announced as alerts. */
   blocking?: boolean;
+  /**
+   * Announce as an alert whatever the tone: for the failure of an action the user just pressed, which appears
+   * after the press (a status region that appears with its text is not reliably read out; an alert is).
+   */
+  announce?: "alert";
   icon?: LucideIcon;
   /** Heading level for the title (default: a <p>). */
   headingLevel?: 2 | 3 | 4;
@@ -24,10 +29,10 @@ export interface AlertBannerProps {
   id?: string;
 }
 
-export function AlertBanner({ tone, title, children, action, blocking, icon, headingLevel, className, id }: AlertBannerProps) {
+export function AlertBanner({ tone, title, children, action, blocking, announce, icon, headingLevel, className, id }: AlertBannerProps) {
   const Icon = icon ?? TONE_ICON[tone];
   const c = TONE_CLASSES[tone];
-  const role = tone === "danger" && blocking ? "alert" : "status";
+  const role = announce === "alert" || (tone === "danger" && blocking) ? "alert" : "status";
   const TitleTag = headingLevel ? (`h${headingLevel}` as const) : "p";
   return (
     <div

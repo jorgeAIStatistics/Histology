@@ -143,12 +143,15 @@ export function reviewSourceConflict(
   // The patient reference is never touched by this review; the audit shows it is unchanged.
   const after = patientRefId ? patientSnapshot(db, patientRefId) : null;
   const orderList = orders.map((o) => o.source_order_id).join(", ") || "the order";
-  audit(ctx, {
+  // One row per intake item the conflict held, so every affected item's History shows who reviewed it and why
+  // (a patient-level conflict can hold several items: each one's accession was blocked by it).
+  const historyItems: (string | null)[] = task.intake_item_id ? [task.intake_item_id] : intakeItemIds.length ? intakeItemIds : [null];
+  for (const intakeItemId of historyItems) audit(ctx, {
     action: "source_conflict.reviewed",
     entityType: "task",
     entityId: task.id,
     accessionId: task.accession_id,
-    intakeItemId: task.intake_item_id ?? intakeItemIds[0] ?? null,
+    intakeItemId,
     summary: `${ctx.actor.name} reviewed the source conflict on ${orderList}: details on file confirmed. The patient reference and the order link were not changed; nothing was merged.`,
     reason,
     before: { task: { status: task.status, version: task.version, entityType: task.entity_type, entityId: task.entity_id, title: task.title }, patientRef: before },

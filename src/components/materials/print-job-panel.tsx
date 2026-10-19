@@ -51,7 +51,10 @@ function OutputCheck({ detail, now }: { detail: PrintJobDetail; now: string }) {
   const [note, setNote] = useState("");
   const [needNote, setNeedNote] = useState<string | null>(null);
   const cmd = useCommand<{ message: string; state: string }, ReconcileInput>("print.reconcile", { errorToast: false });
+  // While one outcome is being recorded the four buttons are aria-disabled, not disabled, so the pressed one keeps
+  // keyboard focus (and stays beside the error if the record fails); a second press records nothing.
   const record = async (outcome: string) => {
+    if (cmd.pending) return;
     if ((outcome === "cant_tell" || outcome === "printed_damaged") && !note.trim()) {
       setNeedNote(outcome === "cant_tell" ? "Describe what you checked so the supervisor can follow up." : "Describe the damage (for example: smudged code).");
       return;
@@ -92,16 +95,16 @@ function OutputCheck({ detail, now }: { detail: PrintJobDetail; now: string }) {
           <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} disabled={!!disabledReason} placeholder={`For example: output tray empty, no label for ${detail.target.label}`} />
         </Field>
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="secondary" disabled={!!disabledReason || cmd.pending} onClick={() => void record("printed_ok")}>
+          <Button size="md" variant="secondary" disabled={!!disabledReason} aria-disabled={cmd.pending || undefined} onClick={() => void record("printed_ok")}>
             Label printed
           </Button>
-          <Button size="sm" variant="secondary" disabled={!!disabledReason || cmd.pending} onClick={() => void record("not_printed")}>
+          <Button size="md" variant="secondary" disabled={!!disabledReason} aria-disabled={cmd.pending || undefined} onClick={() => void record("not_printed")}>
             Not printed
           </Button>
-          <Button size="sm" variant="secondary" disabled={!!disabledReason || cmd.pending} onClick={() => void record("cant_tell")}>
+          <Button size="md" variant="secondary" disabled={!!disabledReason} aria-disabled={cmd.pending || undefined} onClick={() => void record("cant_tell")}>
             Can&apos;t tell (escalate)
           </Button>
-          <Button size="sm" variant="secondary" disabled={!!disabledReason || cmd.pending} onClick={() => void record("printed_damaged")}>
+          <Button size="md" variant="secondary" disabled={!!disabledReason} aria-disabled={cmd.pending || undefined} onClick={() => void record("printed_damaged")}>
             Printed but damaged
           </Button>
         </div>

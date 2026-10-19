@@ -242,11 +242,11 @@ function Bench({ bench }: { bench: BenchSlide[] }) {
                   )}
                 </div>
                 {hidden ? (
-                  <Button size="sm" variant="quiet" icon={<Eye className="size-4" aria-hidden />} onClick={() => setFound((f) => ({ ...f, [b.key]: true }))}>
+                  <Button size="md" variant="quiet" icon={<Eye className="size-4" aria-hidden />} onClick={() => setFound((f) => ({ ...f, [b.key]: true }))}>
                     Found it<span className="sr-only"> {b.label}</span>
                   </Button>
                 ) : (
-                  <Button size="sm" variant="secondary" icon={<ScanLine className="size-4" aria-hidden />} disabled={scan.pending} onClick={() => void scan.submit(b.payload).then(() => scan.focus())}>
+                  <Button size="md" variant="secondary" icon={<ScanLine className="size-4" aria-hidden />} disabled={scan.pending} onClick={() => void scan.submit(b.payload).then(() => scan.focus())}>
                     Scan<span className="sr-only"> {b.label}</span>
                   </Button>
                 )}

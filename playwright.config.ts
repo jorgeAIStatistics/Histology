@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { defineConfig, devices } from "@playwright/test";
 
 // Browser acceptance tests run against a production build on its own port,
@@ -8,6 +9,17 @@ const TAG = process.env.E2E_TAG ? `-${process.env.E2E_TAG}` : "";
 const DIST = `.next-e2e${TAG}`;
 const DB = `data/e2e${TAG}.db`;
 
+// Test-only source-message fixtures (POST /api/test/fixtures, src/server/test-fixtures.ts):
+// one random token per run. This file is evaluated first by the runner process, which
+// sets the variable before it starts the web server and the workers; both inherit it,
+// and a worker evaluating this file again finds it set and keeps it. The token never
+// leaves this machine and changes on every run.
+if (!process.env.HLOS_TEST_FIXTURE_TOKEN) process.env.HLOS_TEST_FIXTURE_TOKEN = crypto.randomBytes(24).toString("hex");
+const FIXTURE_TOKEN = process.env.HLOS_TEST_FIXTURE_TOKEN;
+if (!/^[A-Za-z0-9_-]{32,256}$/.test(FIXTURE_TOKEN)) {
+  throw new Error("HLOS_TEST_FIXTURE_TOKEN must be 32 to 256 letters, digits, '-' or '_' (leave it unset to get a random one per run).");
+}
+
 export default defineConfig({
   testDir: "tests/e2e",
   timeout: 60_000,
@@ -16,6 +28,8 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   reporter: [["list"], ["html", { open: "never", outputFolder: `playwright-report${TAG}` }]],
+  // Failure screenshots and traces per run tag too (inside the ignored test-results folder), so two runs never clear each other's.
+  outputDir: `test-results/e2e${TAG}`,
   use: {
     baseURL: `http://localhost:${PORT}`,
     viewport: { width: 1366, height: 768 },
@@ -24,10 +38,10 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1366, height: 768 } } }],
   webServer: {
-    command: `rm -f ${DB} ${DB}-wal ${DB}-shm && node scripts/gen-schema-module.mjs && NEXT_DIST_DIR=${DIST} HLOS_DB_PATH=${DB} npx next build && HLOS_MODE=demo NEXT_DIST_DIR=${DIST} HLOS_DB_PATH=${DB} npx next start -p ${PORT}`,
+    command: `rm -f ${DB} ${DB}-wal ${DB}-shm && node scripts/gen-schema-module.mjs && NEXT_DIST_DIR=${DIST} HLOS_DB_PATH=${DB} npx next build && HLOS_MODE=demo HLOS_TEST_FIXTURES=1 HLOS_TEST_FIXTURE_TOKEN=${FIXTURE_TOKEN} NEXT_DIST_DIR=${DIST} HLOS_DB_PATH=${DB} npx next start -p ${PORT}`,
     url: `http://localhost:${PORT}/api/live`,
     timeout: 300_000,
     reuseExistingServer: false,
-    env: { NEXT_DIST_DIR: DIST, HLOS_DB_PATH: DB, HLOS_MODE: "demo" },
+    env: { NEXT_DIST_DIR: DIST, HLOS_DB_PATH: DB, HLOS_MODE: "demo", HLOS_TEST_FIXTURES: "1", HLOS_TEST_FIXTURE_TOKEN: FIXTURE_TOKEN },
   },
 });

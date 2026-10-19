@@ -116,7 +116,7 @@ function VerifyControl({ action, item, primary, frame, onFailure }: { action: Ve
     <div className="space-y-1.5">
       <Button
         variant={primary ? "primary" : "secondary"}
-        size={primary ? "block" : "sm"}
+        size={primary ? "block" : "md"}
         icon={<UserRoundCheck />}
         loading={verify.pending}
         loadingLabel="Recording..."
@@ -168,7 +168,8 @@ function ActionControl({
   const a = w.action;
   if (!a) return frame({});
   const variant = primary ? "primary" : "secondary";
-  const size = primary ? "block" : "sm";
+  // A step that is also yours (not the current one) is still a record or decision button: 40px, not the compact 32px.
+  const size = primary ? "block" : "md";
   const wide = primary ? undefined : SECONDARY_WRAP;
   const keys = primary ? "Control+Enter Meta+Enter" : undefined;
   const mark = primary ? "" : undefined;

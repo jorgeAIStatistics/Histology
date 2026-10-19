@@ -17,7 +17,8 @@ import { useLiveActions } from "./live";
  * stored result instead of creating a duplicate). A successful run clears it.
  */
 
-export type CommandErrorCode = DomainErrorCode | "NETWORK";
+/** NETWORK: the request never reached the server. UNCONFIRMED: the server answered without a result (for example an HTTP 500), so the outcome is unknown. */
+export type CommandErrorCode = DomainErrorCode | "NETWORK" | "UNCONFIRMED";
 
 export interface CommandFailure {
   code: CommandErrorCode;
@@ -75,16 +76,21 @@ export async function runCommand<R = unknown>(
   try {
     json = await res.json();
   } catch {
+    // No result body: never treat it as a validation problem, and never as success. A server error may or may not have
+    // been recorded, so the screen says the outcome is unconfirmed; a retry reuses the same key and cannot duplicate it.
     return {
       ok: false,
-      error: { code: STATUS_CODE[res.status] ?? "VALIDATION", message: `Unexpected response from the local server (HTTP ${res.status}).` },
+      error: {
+        code: res.status >= 500 ? "UNCONFIRMED" : (STATUS_CODE[res.status] ?? "UNCONFIRMED"),
+        message: `Unexpected response from the local server (HTTP ${res.status}). Reload to see what was recorded before trying again.`,
+      },
     };
   }
   const body = json as { ok?: boolean; result?: R; replayed?: boolean; error?: CommandFailure };
   if (body.ok) return { ok: true, result: body.result as R, replayed: Boolean(body.replayed) };
   return {
     ok: false,
-    error: body.error ?? { code: STATUS_CODE[res.status] ?? "VALIDATION", message: `Request failed (HTTP ${res.status}).` },
+    error: body.error ?? { code: res.status >= 500 ? "UNCONFIRMED" : (STATUS_CODE[res.status] ?? "UNCONFIRMED"), message: `Request failed (HTTP ${res.status}).` },
   };
 }
 
@@ -103,6 +109,7 @@ export const ERROR_TITLE: Record<CommandErrorCode, string> = {
   IDEMPOTENCY_EXPIRED: "This request has expired",
   AUTH_REQUIRED: "Sign-in is not configured",
   NETWORK: "Could not reach the local server",
+  UNCONFIRMED: "The server did not confirm this action",
 };
 
 /**

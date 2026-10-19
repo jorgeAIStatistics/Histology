@@ -190,15 +190,15 @@ function BlockItem({ item, total, now, requestDisplayId, canAct, inBox }: { item
         {canAct && (item.status === "picked" || item.status === "delivered" || wasMissing) ? (
           <div className="flex flex-wrap items-end gap-2">
             <Field label="Return to slot" className="w-[260px]" hint="Confirms this block's slot only, not the rest of the box.">
-              <Input size="sm" mono value={code} onChange={(e) => setCode(e.target.value)} placeholder="CAB-2/DR-4/BX-11/S-14" />
+              <Input mono value={code} onChange={(e) => setCode(e.target.value)} placeholder="CAB-2/DR-4/BX-11/S-14" />
             </Field>
             {wasMissing ? (
               <Field label="Where it was found" required className="w-[300px]" hint="Closes the missing-material investigation with this note.">
-                <Input size="sm" value={foundNote} onChange={(e) => setFoundNote(e.target.value)} placeholder="e.g. found in the embedding-station tray" />
+                <Input value={foundNote} onChange={(e) => setFoundNote(e.target.value)} placeholder="e.g. found in the embedding-station tray" />
               </Field>
             ) : null}
             <Button
-              size="sm"
+              size="md"
               variant="secondary"
               icon={<Undo2 className="size-4" aria-hidden />}
               loading={ret.pending}
@@ -359,7 +359,7 @@ function PickRow({ label, payload, note, pending, apart = false }: { label: stri
         <span className="id-mono text-sm font-medium text-ink">{label}</span>
         {note ? <span className="block text-xs text-ink-muted">{note}</span> : null}
       </span>
-      <Button size="sm" variant="secondary" icon={<ScanLine className="size-4" aria-hidden />} disabled={pending} onClick={() => void scan.submit(payload).then(() => scan.focus())}>
+      <Button size="md" variant="secondary" icon={<ScanLine className="size-4" aria-hidden />} disabled={pending} onClick={() => void scan.submit(payload).then(() => scan.focus())}>
         Scan<span className="sr-only"> {label}</span>
       </Button>
     </li>

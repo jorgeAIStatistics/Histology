@@ -133,7 +133,7 @@ function StaffCommit({ a, detail, forms, hold }: { a: ActionView; detail: Clarif
           <Reason id={reasonId} text={reason} />
           {a.enabled ? (
             <>
-              <Button variant="secondary" size="block" disabled={f.pending} onClick={f.insufficient}>
+              <Button variant="secondary" size="block" aria-disabled={f.pending || undefined} onClick={f.pending ? undefined : f.insufficient}>
                 Answer is insufficient
               </Button>
               <p className="text-sm text-ink-secondary">
@@ -241,7 +241,7 @@ function AlsoPossible({ detail, rest, readOnly }: { detail: ClarificationDetail;
               <CommandButton
                 command="clarification.followUp"
                 input={{ clarificationId: id }}
-                size="sm"
+                size="md"
                 pendingLabel="Sending..."
                 disabledReason={a.enabled ? undefined : a.reason}
                 successToast={(r: { suppressed: boolean; message: string }) => (r.suppressed ? null : r.message)}
@@ -255,7 +255,7 @@ function AlsoPossible({ detail, rest, readOnly }: { detail: ClarificationDetail;
               <CommandButton
                 command="clarification.escalate"
                 input={{ clarificationId: id }}
-                size="sm"
+                size="md"
                 pendingLabel="Escalating..."
                 disabledReason={a.enabled ? undefined : a.reason}
                 successToast={(r: { message: string; suppressed: boolean }) => (r.suppressed ? null : r.message)}
@@ -270,7 +270,7 @@ function AlsoPossible({ detail, rest, readOnly }: { detail: ClarificationDetail;
               <CommandButton
                 command="clarification.recordAck"
                 input={{ clarificationId: id }}
-                size="sm"
+                size="md"
                 pendingLabel="Recording..."
                 disabledReason={a.enabled ? undefined : a.reason}
                 successToast="Acknowledgment recorded. Still waiting for the answer."
@@ -278,7 +278,7 @@ function AlsoPossible({ detail, rest, readOnly }: { detail: ClarificationDetail;
                 Record acknowledgment
               </CommandButton>
             ) : a.enabled ? (
-              <Button size="sm" variant="secondary" onClick={() => openForm(a.key === "recordAnswer" ? "clr-answer-form" : "clr-delivery-form")}>
+              <Button size="md" variant="secondary" onClick={() => openForm(a.key === "recordAnswer" ? "clr-answer-form" : "clr-delivery-form")}>
                 {a.key === "recordAnswer" ? "Record an answer given by phone" : "Record a delivery outcome"}
               </Button>
             ) : null}

@@ -1,24 +1,19 @@
-import { Atkinson_Hyperlegible_Mono, Atkinson_Hyperlegible_Next } from "next/font/google";
+import localFont from "next/font/local";
 
 /**
- * Concept B type: Atkinson Hyperlegible Next for text and display, Atkinson
- * Hyperlegible Mono for identifiers. The family was drawn (Braille Institute)
- * to keep look-alike characters apart: I/l/1 and 0/O differ in shape, not
- * just in width, which is the job an accessioner does all day with INT, ORD,
- * CLR and MRN strings. One superfamily keeps the contrast in weight and tone
- * rather than in a second decorative face. Scoped to this route only.
+ * Concept B type pair (scoped to this preview route): Atkinson Hyperlegible
+ * Next and Mono, the same self-hosted files the app uses (src/app/font-files,
+ * SIL OFL 1.1). Local files keep the build offline and deterministic.
  */
-export const atkSans = Atkinson_Hyperlegible_Next({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+export const atkSans = localFont({
+  src: [{ path: "../../font-files/AtkinsonHyperlegibleNext-Latin-wght200-800.woff2", weight: "200 800", style: "normal" }],
   variable: "--b-font-sans",
   display: "swap",
   adjustFontFallback: false,
 });
 
-export const atkMono = Atkinson_Hyperlegible_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
+export const atkMono = localFont({
+  src: [{ path: "../../font-files/AtkinsonHyperlegibleMono-Latin-wght200-800.woff2", weight: "200 800", style: "normal" }],
   variable: "--b-font-mono",
   display: "swap",
   adjustFontFallback: false,

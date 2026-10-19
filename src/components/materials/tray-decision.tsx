@@ -190,7 +190,7 @@ function MissingItem({
               Removed from tray
             </CommandButton>
           ) : active ? (
-            <Button size="sm" variant="secondary" onClick={() => onDisposition(item)}>
+            <Button size="md" variant="secondary" onClick={() => onDisposition(item)}>
               {item.disposition ? "Change disposition" : "Record as not on tray…"}
             </Button>
           ) : null}

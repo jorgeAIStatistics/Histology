@@ -38,6 +38,9 @@ interface Props {
   actor: { id: string; name: string; role: Role };
 }
 
+/** The failed print or download says why beside the buttons; focus stays on the button, which points to it. */
+const SNAPSHOT_ERROR_ID = "worklist-snapshot-error";
+
 const STAGE_RANK = new Map<string, number>(["intake", ...Object.keys(STAGE)].map((s, i) => [s, i]));
 
 function hrefFor(view: WorklistView, filters: WorklistFilters, selected?: string | null): string {
@@ -394,9 +397,12 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
                 downloading={csvPending}
                 onPrint={() => void printSnapshot()}
                 onDownload={() => void downloadCsv()}
+                errorId={snapError ? SNAPSHOT_ERROR_ID : undefined}
               />
               {snapError ? (
                 <AlertBanner
+                  id={SNAPSHOT_ERROR_ID}
+                  announce="alert"
                   tone="warning"
                   title={ERROR_TITLE[snapError.code] ?? "Could not create the snapshot"}
                   action={
@@ -529,6 +535,7 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
         onCancel={() => setAckTarget(null)}
         pending={ack.pending}
         pendingLabel="Recording..."
+        error={ack.error ? <CommandError error={ack.error} /> : null}
       >
         <p className="text-sm text-ink">
           This clears the New, Changed and Canceled tags for you in the {VIEW_LABEL[view]} view ({ackTarget?.counts.new ?? 0} new, {ackTarget?.counts.changed ?? 0} changed,{" "}

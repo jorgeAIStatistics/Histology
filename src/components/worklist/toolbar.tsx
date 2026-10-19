@@ -42,6 +42,7 @@ export function WorklistHeader({
   downloading,
   onPrint,
   onDownload,
+  errorId,
 }: {
   view: WorklistView;
   readOnly: boolean;
@@ -53,6 +54,8 @@ export function WorklistHeader({
   downloading: boolean;
   onPrint: () => void;
   onDownload: () => void;
+  /** The banner that says why the last print or download failed (both buttons point to it). */
+  errorId?: string;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -85,13 +88,13 @@ export function WorklistHeader({
       <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
         {savedMenu}
         <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" icon={<Printer />} onClick={onPrint} loading={printing} loadingLabel="Recording...">
+          <Button variant="secondary" size="sm" icon={<Printer />} onClick={onPrint} loading={printing} loadingLabel="Recording..." aria-describedby={errorId}>
             Print<span className="@max-5xl/wl:sr-only"> snapshot</span>
             <Kbd aria-hidden className="ml-0.5">
               P
             </Kbd>
           </Button>
-          <Button variant="quiet" size="sm" icon={<Download />} onClick={onDownload} loading={downloading} loadingLabel="Preparing..." className="border border-line" title="Download CSV">
+          <Button variant="quiet" size="sm" icon={<Download />} onClick={onDownload} loading={downloading} loadingLabel="Preparing..." className="border border-line" title="Download CSV" aria-describedby={errorId}>
             <span className="@max-5xl/wl:sr-only">Download CSV</span>
           </Button>
         </div>

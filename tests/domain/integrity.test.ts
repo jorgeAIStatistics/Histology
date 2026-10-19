@@ -193,6 +193,27 @@ describe("A-2: a source conflict on the patient or the order gates accession unt
     expect(must<{ outcome: string }>(db, STAFF.maya, "accession.request", { intakeItemIds: [r.intakeItemId] }).outcome).toBe("issued");
   });
 
+  it("a patient-level conflict that holds two items records the review in each item's History", () => {
+    const db = testDb();
+    arrive(db);
+    const a = receive(db, "phys_quinlanA");
+    const b = receive(db, "phys_quinlanB");
+    const v1 = orderPayload(db, "ORD-77120", 1);
+    const patientRef = one<{ id: string }>(db, "SELECT patient_ref_id id FROM source_order WHERE source_order_id = 'ORD-77120'").id;
+    importSourceMessage(importCtx(db), "src_ema", {
+      messageId: "ORD-77991#v1", messageType: "order.upsert", payload: { ...v1, order_id: "ORD-77991", patient: { ...v1.patient, birth_date: "1916-03-22" } },
+    });
+    // Both items of that patient are held by the one review.
+    expect(accessionBlockers(db, [a.intakeItemId]).map((x) => x.code)).toContain("source_conflict_open");
+    expect(accessionBlockers(db, [b.intakeItemId]).map((x) => x.code)).toContain("source_conflict_open");
+    const task = one<{ id: string; version: number }>(db, "SELECT id, version FROM task WHERE kind = 'source_conflict' AND entity_type = 'patient_ref' AND entity_id = ?", patientRef);
+    must(db, STAFF.kim, "sourceConflict.review", { taskId: task.id, expectedVersion: task.version, decision: "details_on_file_confirmed", reason: "Office confirmed the date of birth on file (synthetic)" });
+    const rows = all<{ intake_item_id: string; reason: string }>(db, "SELECT intake_item_id, reason FROM audit_event WHERE action = 'source_conflict.reviewed' AND entity_id = ? ORDER BY intake_item_id", task.id);
+    expect(rows.map((r) => r.intake_item_id).sort()).toEqual([a.intakeItemId, b.intakeItemId].sort());
+    expect(rows.every((r) => /date of birth on file/.test(r.reason))).toBe(true);
+    expect(accessionBlockers(db, [b.intakeItemId]).map((x) => x.code)).not.toContain("source_conflict_open");
+  });
+
   it("a newer version of the linked order that changes the patient's details blocks accession through its order-level review", () => {
     const db = testDb();
     arrive(db);

@@ -166,3 +166,36 @@ export async function postCommandFromPage(page: Page, name: string, input: unkno
     { name, input },
   );
 }
+
+/** What POST /api/test/fixtures answered: the importer's own result for the fixture's message (src/server/domain/sourceImport.ts ImportResult). */
+export interface FixtureImport {
+  outcome: "applied" | "duplicate_ignored" | "stale_ignored" | "failed";
+  eventId: string;
+  messageId: string;
+  detail: string;
+  orderId?: string;
+  sourceOrderId?: string;
+  version?: number;
+  previousVersion?: number;
+  receiptCount?: number;
+  reconciliation: { kind: string; summary: string; ref?: string }[];
+}
+
+/** The fixture names the test endpoint knows (src/server/test-fixtures.ts TEST_FIXTURE_NAMES). */
+export type FixtureName = "source-conflict-patient" | "source-conflict-order-amend";
+
+/**
+ * Import one named, synthetic source message through the test-only endpoint POST /api/test/fixtures (the real
+ * importer, as the simulated source would deliver it). Sends this run's token, which playwright.config.ts generated
+ * and the web server and this worker both inherited, in the x-hlos-fixture-token header. Returns the ImportResult.
+ */
+export async function importFixture(request: APIRequestContext, name: FixtureName): Promise<FixtureImport> {
+  const token = process.env.HLOS_TEST_FIXTURE_TOKEN;
+  expect(token, "HLOS_TEST_FIXTURE_TOKEN is set for this worker by playwright.config.ts").toBeTruthy();
+  const res = await request.post("/api/test/fixtures", { data: { fixture: name }, headers: { "x-hlos-fixture-token": token! } });
+  expect(res.status(), `fixture ${name}: HTTP ${res.status()} ${await res.text()}`).toBe(200);
+  const body = (await res.json()) as { ok: boolean; fixture: string; result: FixtureImport };
+  expect(body.ok).toBe(true);
+  expect(body.fixture).toBe(name);
+  return body.result;
+}
