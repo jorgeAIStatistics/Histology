@@ -86,7 +86,9 @@
 
   /* Layout: no banner strip (demo status lives in the top bar); one top bar, no side rail */
   --hlo-banner-h: 0px;
-  --hlo-topbar-h: 52px;
+  /* In rem, so the bar grows with the browser's text size (52px at the default 16px; 65px at 20px text):
+     its 44px targets grow to 2.75rem and must stay inside it. Every sticky offset reads this token. */
+  --hlo-topbar-h: 3.25rem;
   --hlo-identity-h: 68px;
   --hlo-panel-w: 420px;
 
@@ -110,7 +112,7 @@
    rows; sticky offsets follow. On short viewports the identity bar stops
    being sticky so pinned chrome never covers more than a third of the view. */
 @media (max-width: 63.99875rem) {
-  :root { --hlo-topbar-h: 102px; }
+  :root { --hlo-topbar-h: 6.375rem; } /* 102px at the default text size */
 }
 
 /* Map tokens into Tailwind utilities, e.g. bg-surface, text-ink, text-ink-muted, border-line-strong, bg-hold-bg, rounded-pill, shadow-2 */

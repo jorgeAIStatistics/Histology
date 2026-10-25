@@ -14,7 +14,8 @@
  * - resolveSession(db, cookieValue, { touch, policy, now? }) -> { ok: true, session, staff } | { ok: false, reason, session? }
  * - touchSession(db, idHash, now?)                    records user-driven activity
  * - lockSession(db, idHash, now?)                     manual lock (idempotent)
- * - unlockAfterReauth(db, idHash, input, now?)        same person signed in again: new auth_time, unlocked
+ * - rotateAfterReauth(db, idHash, input, policy, now?) same person signed in again: a NEW session id (new cookie),
+ *                                                     new auth_time, unlocked; the old id is revoked ("rotated")
  * - revokeSession(db, idHash, reason, now?)
  * - revokeAllForStaff(db, staffId, reason, now?)      -> number revoked (admin CLI)
  * - isReauthFresh(session | authTimeIso, policy, now?) sensitive-command freshness
@@ -89,6 +90,7 @@ export type SessionFailureReason =
   | "missing" // no cookie
   | "unknown" // malformed or not in the database
   | "revoked" // signed out, replaced by another person's sign-in, or revoked by an administrator
+  | "rotated" // this id was replaced by a new one when the same person signed in again (re-authentication, unlock)
   | "expired" // absolute lifetime reached
   | "locked" // locked by the user (or earlier by the idle timer)
   | "idle_locked" // locked now: no user-driven request within the idle window
@@ -179,7 +181,7 @@ export function resolveSession(
   if (!cookieValue) return { ok: false, reason: "missing" };
   const row = peekSession(db, cookieValue);
   if (!row) return { ok: false, reason: "unknown" };
-  if (row.revoked_at) return { ok: false, reason: "revoked" };
+  if (row.revoked_at) return { ok: false, reason: row.revoked_reason === "rotated" ? "rotated" : "revoked" };
   if (now >= Date.parse(row.expires_at)) return { ok: false, reason: "expired", session: toInfo(row, policy) };
   if (row.lab_id !== policy.labId) {
     revokeSession(db, row.id_hash, "wrong_lab", now);
@@ -226,20 +228,32 @@ export function lockSession(db: DB, idHash: string, now: number = Date.now()): b
   return db.prepare("UPDATE auth_session SET locked_at = ? WHERE id_hash = ? AND locked_at IS NULL AND revoked_at IS NULL").run(iso(now), idHash).changes > 0;
 }
 
-/** The same person authenticated again: records the new auth_time and unlocks. The absolute expiry is unchanged. */
-export function unlockAfterReauth(
+/**
+ * The same person authenticated again (unlock, or "Confirm it's you"): the session continues under a NEW random
+ * id, so an id that was observed or fixed before the re-authentication is worth nothing after it. In one
+ * transaction: the old row is revoked ("rotated", kept for investigations) and a new row carries the session on
+ * with the same staff member, lab, start (created_at), absolute expiry (unchanged: re-authenticating never
+ * extends a session) and user-agent HMAC; the new auth_time, issuer and subject; unlocked; activity now.
+ * Returns the new cookie value (the only copy of the new id), or null when the old session is not open.
+ */
+export function rotateAfterReauth(
   db: DB,
   idHash: string,
   input: { authTimeMs: number; issuer: string; subject: string },
   now: number = Date.now(),
-): boolean {
-  return (
-    db
-      .prepare(
-        "UPDATE auth_session SET auth_time = ?, issuer = ?, subject = ?, locked_at = NULL, last_activity_at = ? WHERE id_hash = ? AND revoked_at IS NULL",
-      )
-      .run(iso(input.authTimeMs), input.issuer, input.subject, iso(now), idHash).changes > 0
-  );
+): { cookieValue: string; idHash: string } | null {
+  return db.transaction(() => {
+    const row = db.prepare("SELECT * FROM auth_session WHERE id_hash = ?").get(idHash) as SessionRow | undefined;
+    if (!row || row.revoked_at) return null;
+    const cookieValue = randomBytes(32).toString("base64url");
+    const next = hashSessionId(cookieValue);
+    revokeSession(db, idHash, "rotated", now);
+    db.prepare(
+      `INSERT INTO auth_session (id_hash, staff_id, lab_id, issuer, subject, auth_time, created_at, last_activity_at, expires_at, user_agent_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(next, row.staff_id, row.lab_id, input.issuer, input.subject, iso(input.authTimeMs), row.created_at, iso(now), row.expires_at, row.user_agent_hash);
+    return { cookieValue, idHash: next };
+  })();
 }
 
 export function revokeSession(db: DB, idHash: string, reason: string, now: number = Date.now()): boolean {

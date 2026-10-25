@@ -185,6 +185,7 @@ test.describe("secured mode: sign-in, the server guard, lock, hand-over, re-auth
 
   for (const who of [LOGIN.admin, LOGIN.auditor] as const) {
     test(`the ${who === LOGIN.admin ? "laboratory administrator" : "auditor"} gets the 403 page on every bench screen and no bench data`, async ({ page }) => {
+      const before = auditHead();
       await signIn(page, who, "/operations");
       await expect(page).toHaveURL(/\/forbidden$/);
       await expect(page.getByRole("heading", { level: 1, name: "Not allowed" })).toBeVisible();
@@ -222,6 +223,25 @@ test.describe("secured mode: sign-in, the server guard, lock, hand-over, re-auth
       for (const text of [leaks.rsc, leaks.live, await page.content()]) {
         expect(text).not.toMatch(/EMA-SIM|OTHER-EHR-SIM|Sunrise Coast|"counts":\{"intake":\d|"auditSeq":[1-9]/);
       }
+      // Security review finding 7: each refused screen (and the export) is on record as this person's refusal, once per
+      // view however often it was asked for (rate limit: /operations was opened twice, the worklist page and its export
+      // share view.worklist), with no request content (no path, query or record id). Background polling of /api/live
+      // (403 for these roles) is not a refusal of the person and is not recorded.
+      const staffId = who === LOGIN.admin ? "stf_test_admin" : "stf_test_auditor";
+      const refusals = db()
+        .prepare("SELECT actor_id, origin, reason, permission, session_ref, after_json, summary FROM audit_event WHERE seq > ? AND action = 'auth.refused' ORDER BY seq")
+        .all(before) as { actor_id: string; origin: string; reason: string; permission: string; session_ref: string | null; after_json: string; summary: string }[];
+      const targets = refusals.map((r) => JSON.parse(r.after_json).target as string);
+      expect(refusals.length).toBeGreaterThanOrEqual(5);
+      expect(new Set(targets).size, `one event per view: ${targets.join(", ")}`).toBe(targets.length);
+      expect(targets).toContain("view.operations");
+      expect(targets).toContain("view.worklist");
+      for (const r of refusals) {
+        expect(r).toMatchObject({ actor_id: staffId, origin: "user", reason: "view_denied" });
+        expect(r.permission).toMatch(/^view\./);
+        expect(r.session_ref).toMatch(/^[0-9a-f]{16}$/);
+        expect(`${r.after_json} ${r.summary}`).not.toMatch(/\/[a-z]|\?|INT-|CLR-|D26-/);
+      }
     });
   }
 
@@ -246,10 +266,11 @@ test.describe("secured mode: sign-in, the server guard, lock, hand-over, re-auth
     });
   }
 
-  test("Lock: the page content leaves the DOM (no patient, case or operator details), and Unlock as the same person returns to the same page", async ({ page, context }) => {
+  test("Lock: the page content leaves the DOM (no patient, case or operator details), and Unlock as the same person returns to the same page", async ({ page, context, request }) => {
     await signIn(page, LOGIN.kim, "/clarifications?selected=CLR-0453");
     await expect(page.getByRole("region", { name: /^Identity conflict question: INT-1014-022/ })).toContainText("Tobias Kettering");
     const before = await sessionRow(context);
+    const beforeCookie = await sessionCookie(context);
 
     await sessionGroup(page).getByRole("button", { name: "Lock" }).click();
     await expect(page.getByRole("heading", { level: 1, name: "Workstation locked" })).toBeVisible();
@@ -272,11 +293,17 @@ test.describe("secured mode: sign-in, the server guard, lock, hand-over, re-auth
     await expect(page).toHaveURL("/clarifications?selected=CLR-0453");
     await expect(page.getByRole("region", { name: /^Identity conflict question: INT-1014-022/ })).toContainText("Tobias Kettering");
     await expect(sessionGroup(page).getByRole("note", { name: "Signed in: Kim Nguyen, Accessioning lead" })).toBeVisible();
-    // The same session, unlocked by the fresh sign-in.
+    // The same person's session continues, unlocked by the fresh sign-in, under a NEW session id (rotation): the
+    // browser holds a new cookie, and the old id is revoked as "rotated" and refused.
     const after = await sessionRow(context);
-    expect(after.id_hash).toBe(before.id_hash);
+    expect(after.id_hash).not.toBe(before.id_hash);
+    expect(after.staff_id).toBe("stf_kim");
     expect(after.locked_at).toBeNull();
     expect(after.revoked_at).toBeNull();
+    expect((db().prepare("SELECT revoked_reason FROM auth_session WHERE id_hash = ?").get(before.id_hash) as { revoked_reason: string }).revoked_reason).toBe("rotated");
+    const old = await request.get("/api/live", { headers: { cookie: `hlos_session=${beforeCookie}` } });
+    expect(old.status()).toBe(401);
+    expect((await old.json()).error).toMatchObject({ code: "SIGN_IN_REQUIRED", details: { reason: "rotated" } });
   });
 
   test("after a lock, the Back button and the browser cache reveal nothing (pages are no-store and the server decides)", async ({ page }) => {
@@ -519,6 +546,10 @@ test.describe("secured mode: sign-in, the server guard, lock, hand-over, re-auth
     await expect(error).toContainText("Confirm it's you: This decision needs a recent sign-in. Nothing was recorded.");
     expect(clarificationState("CLR-0453")).toBe("reviewed");
     expect(labEventsSince(before).filter((e) => e.action !== "command.denied")).toEqual([]);
+    // Security review finding 7: the refusal itself is on record (who, which command, the session), never the typed note.
+    const refused = db().prepare("SELECT actor_id, reason, permission, after_json FROM audit_event WHERE seq > ? AND action = 'auth.refused'").all(before) as { actor_id: string; reason: string; permission: string; after_json: string }[];
+    expect(refused.map((r) => [r.actor_id, r.reason, JSON.parse(r.after_json).target])).toEqual([["stf_kim", "reauth_required", "clarification.resolve"]]);
+    expect(JSON.stringify(db().prepare("SELECT * FROM audit_event WHERE seq > ?").all(before))).not.toContain(NOTE);
 
     const popupPromise = page.waitForEvent("popup");
     await error.getByRole("button", { name: "Confirm it's you" }).click();

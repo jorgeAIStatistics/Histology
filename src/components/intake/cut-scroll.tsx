@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -97,6 +97,11 @@ const still = () => typeof window !== "undefined" && window.matchMedia("(prefers
  * "More below" cue takes the rest; the cue scrolls to the next whole unit.
  * A unit scrolled partly out at the top is covered the same way. Keyboard
  * focus is kept clear of the covers. With room to spare it is plain content.
+ * While its content is cut (and only then) the scrolling box itself is a
+ * keyboard stop: a named region (tabIndex 0) that the arrow keys scroll, so
+ * text with no control in it is reachable without a mouse (axe
+ * scrollable-region-focusable). Content that fits adds no stop, so the Tab
+ * order at the bench sizes is unchanged.
  * With `snap`, the region gives back the room under its cue: it ends at the
  * last whole unit plus the cue, so no empty strip is left inside the sheet
  * (the column below gets the room instead).
@@ -150,6 +155,8 @@ export function CutScroll({
   // How many of `countSelector` are below the cut (0: something else is, the cue says "More below").
   const [counted, setCounted] = useState(0);
   const [names, setNames] = useState<string[]>([]);
+  // The content does not fit (cut at the bottom, the top or both): the scroller is then a keyboard stop.
+  const [overflowing, setOverflowing] = useState(false);
   const reported = useRef(-1);
   const report = (n: number, c = 0, named: string[] = []) => {
     setMore(n);
@@ -182,9 +189,11 @@ export function CutScroll({
       coverTop.style.height = "0px";
       coverBottom.style.height = "0px";
       cut.current = { ...cut.current, top: 0, bottom: 0 };
+      setOverflowing(false);
       report(0);
       return;
     }
+    setOverflowing(true);
     const boxes = measureBoxes(sc);
     const atEnd = top + H >= total - 1;
     const end = atEnd ? top + H : bottomCut(boxes, top, top + H - cueH, sc.getBoundingClientRect().top - top);
@@ -250,7 +259,8 @@ export function CutScroll({
     // Keyboard focus is never left under a cover (WCAG 2.4.11).
     const onFocus = (e: FocusEvent) => {
       const el = e.target instanceof HTMLElement ? e.target : null;
-      if (!el) return;
+      // The scroller itself (a keyboard stop while cut): its view stays where it is; the arrow keys scroll it.
+      if (!el || el === sc) return;
       requestAnimationFrame(() => {
         measureRef.current();
         const unit = el.closest<HTMLElement>(UNIT);
@@ -278,13 +288,50 @@ export function CutScroll({
     };
   }, []);
 
+  // Where each "More below" step started, so the Up keys on the focused scroller step back through the same views.
+  const steps = useRef<number[]>([]);
+
   /** Bring what follows the cut to the top of the view (a page down if nothing whole fitted). */
   const showMore = () => {
     const sc = scrollRef.current;
     if (!sc) return;
     const end = sc.scrollTop + sc.clientHeight - cut.current.bottom;
     const step = end - 6 > sc.scrollTop + 1 ? end - 6 : sc.scrollTop + sc.clientHeight - cut.current.cueH;
+    steps.current.push(sc.scrollTop);
     sc.scrollTo({ top: step, behavior: still() ? "auto" : "smooth" });
+  };
+
+  /** The view before the last "More below" step (the top when there is none). */
+  const showLess = () => {
+    const sc = scrollRef.current;
+    if (!sc) return;
+    let back = steps.current.pop();
+    while (back !== undefined && back >= sc.scrollTop - 1) back = steps.current.pop();
+    sc.scrollTo({ top: back ?? 0, behavior: still() ? "auto" : "smooth" });
+  };
+
+  /**
+   * The scroller itself has focus (it is a stop only while cut): the arrow and page keys move by whole units, the
+   * way the cue does, so a short view never lands on half a line that the covers then hide.
+   */
+  const onScrollerKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const sc = scrollRef.current;
+    if (!sc || e.target !== sc || e.altKey || e.ctrlKey || e.metaKey) return;
+    const atEnd = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 1;
+    if (e.key === "ArrowDown" || e.key === "PageDown" || (e.key === " " && !e.shiftKey)) {
+      e.preventDefault();
+      if (!atEnd) showMore();
+    } else if (e.key === "ArrowUp" || e.key === "PageUp" || (e.key === " " && e.shiftKey)) {
+      e.preventDefault();
+      showLess();
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      steps.current = [];
+      sc.scrollTo({ top: 0, behavior: still() ? "auto" : "smooth" });
+    } else if (e.key === "End") {
+      e.preventDefault();
+      sc.scrollTo({ top: sc.scrollHeight, behavior: still() ? "auto" : "smooth" });
+    }
   };
 
   useEffect(() => {
@@ -304,7 +351,17 @@ export function CutScroll({
   const cueText = !countSelector || (countNoun && !counted) ? "More below" : `${countNoun ? counted : more} more ${countNoun ? `${countNoun}${counted === 1 ? "" : "s"} ` : ""}below`;
   return (
     <div ref={wrapRef} className={cn("relative flex min-h-0 flex-col overflow-hidden", className)}>
-      <div ref={scrollRef} data-cut-scroller="" className={cn("min-h-0 flex-auto overflow-y-auto", scrollerClassName)} style={{ scrollPaddingBottom: 48, scrollPaddingTop: 6 }}>
+      <div
+        ref={scrollRef}
+        data-cut-scroller=""
+        // Cut content: a named, focusable region the arrow keys scroll (the ring is drawn inside: the wrapper clips).
+        tabIndex={overflowing ? 0 : undefined}
+        role={overflowing ? "region" : undefined}
+        aria-label={overflowing ? `${label.charAt(0).toUpperCase()}${label.slice(1)} (scrollable)` : undefined}
+        className={cn("peer min-h-0 flex-auto overflow-y-auto", overflowing && "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus", scrollerClassName)}
+        style={{ scrollPaddingBottom: 48, scrollPaddingTop: 6 }}
+        onKeyDown={overflowing ? onScrollerKey : undefined}
+      >
         <div className={contentClassName}>{children}</div>
       </div>
       <div ref={topRef} aria-hidden className={cn("pointer-events-none absolute inset-x-0 top-0 h-0 overflow-hidden", bg)}>
@@ -316,6 +373,7 @@ export function CutScroll({
           <button
             ref={cueRef}
             type="button"
+            data-cut-cue=""
             tabIndex={more ? 0 : -1}
             aria-label={`${cueText} in ${label}${names.length ? `: ${names.join("; ")}` : ""}`}
             onClick={showMore}
@@ -331,6 +389,8 @@ export function CutScroll({
           ) : null}
         </div>
       </div>
+      {/* The focus ring of the scroller, drawn above the covers (its own outline is under them where it is cut). */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 peer-focus-visible:outline-2 peer-focus-visible:-outline-offset-2 peer-focus-visible:outline-focus" />
     </div>
   );
 }

@@ -59,7 +59,7 @@
   - one character class only with fewer than 16 distinct characters (all digits, for example).
 
   It is a floor against obvious mistakes, **not an entropy measurement**. Generate secrets with `openssl rand -hex 32`.
-- **A failing secret locks the build.** The build is **locked**: no page, read or write. The locked reason names the key and never its value. Tests: `privacy.test.ts` covers the weak, short and reused cases; `auth.test.ts` and `audit-seal.test.ts` cover missing and short ones.
+- **A failing secret locks the build.** The build is **locked**: no page, read or write. The server log line `runtime.locked_misconfigured` names the key and never its value; the `/locked` page itself shows nothing about the configuration. Tests: `privacy.test.ts` covers the weak, short and reused cases; `auth.test.ts` and `audit-seal.test.ts` cover missing and short ones.
 - **Environment only.** No secret is written to the database, which `audit-seal.test.ts` checks for the audit key. Sessions store only the SHA-256 of the session id. There is no configuration file with secrets.
 - **Never logged.**
   - The structured logger (`src/server/core/log.ts`, `log.test.ts`) replaces any field named like a secret, token, password, authorization, cookie, session id, nonce, verifier or key.

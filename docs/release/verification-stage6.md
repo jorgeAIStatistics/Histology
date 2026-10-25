@@ -95,3 +95,32 @@
 - `4a98213` Phase D: integration boundary
 - `3f59ed3` Phase E: backup, health, recovery
 - Phase F and documents: the final commit on this branch
+
+## 7. Addendum, 2026-10-24: refinements before the director presentation
+Code changes made after the commits above:
+- **N3:** the Intake decision column's scroller is a keyboard stop only while its content is cut, so axe is clean at 20px text.
+- **N4:** the top bar's height scales with text size (rem token).
+- **N2:** below 1280px the side panel is a modal sheet: the page behind it is inert, focus moves in and returns, Esc closes it.
+- **Security review finding 7:** refusals of signed-in users are audited as `auth.refused`, rate-limited.
+- **Session id rotation** on re-authentication and unlock.
+- **A server log line** (`runtime.locked_misconfigured`) names the settings that lock a secured build, never their values. The `/locked` page still shows nothing about the configuration.
+
+| Gate | Result (final run, 2026-10-24 about 23:20, the same tree as committed) |
+|---|---|
+| Type check | Clean |
+| Unit, integration and contract tests | **643 passed, 0 failed** |
+| Demo browser suite | **139 passed, 0 failed** (3 new checks for N2, N3 and N4) |
+| Secured browser suite | **26 passed, 0 failed** |
+
+**Resolved items from section 5:**
+- finding 7;
+- session rotation;
+- N2, N3 and N4.
+
+**Still open:**
+- the health check's disk-full blind spot;
+- no service-account path to the detailed health in secured mode;
+- everything that needs a human, real hardware, a real identity provider or a real LIS (production-readiness).
+
+The director presentation package (`docs/proposal/`) quotes this run.
+

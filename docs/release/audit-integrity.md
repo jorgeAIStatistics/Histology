@@ -150,3 +150,12 @@ Suggested schedule (not provided by this application): `npm run audit:anchor` an
 | `tests/domain/receipts.test.ts` | Expiry then compaction with the key still refused; purge only after the retention and the pinned residual risk; the retention setting; bounded batches; audit events untouched; cleanup concurrent with mutations (lock held by another connection; another process cleaning while this one runs and replays commands); the opportunistic run; the CLI. |
 
 The vitest configuration sets a fixed, synthetic `HLOS_AUDIT_KEY` (public, test only) so the existing secured-mode tests keep running now that secured mode requires a key; the secured browser suite generates a random one per run (`playwright.secured.config.ts`).
+
+## Addendum (2026-10-24): refusals of signed-in users
+In secured mode, refusals of a signed-in user are now audited:
+- REAUTH_REQUIRED and refused page or API views are recorded as `auth.refused`;
+- command refusals stay `command.denied`.
+
+Both are rate-limited to at most one event per staff member, kind and target per minute. The next event records how many were skipped. No request content is recorded. Prefetches, link probes and `/api/live` polling are not audited.
+
+The limit is kept in each server process's memory. A skipped count is written only with the next event for the same staff member, kind and target. Every request still appears in the `http.request` log lines. Demo mode records every command denial, as before (`src/server/auth/refusals.ts`; tests in `tests/domain/auth.test.ts`).

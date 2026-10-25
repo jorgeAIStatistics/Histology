@@ -37,6 +37,8 @@ import { authConfig } from "@/server/auth/config";
 import { completeSignIn } from "@/server/auth/flow";
 import { currentViewer, requireActor, requireApiActor, requireView, redirectTargetFor, resolveViewer } from "@/server/auth/guard";
 import { createSession, hashSessionId, isReauthFresh, resolveSession, revokeSession, sessionPolicyFromEnv } from "@/server/auth/sessions";
+import { REFUSAL_WINDOW_MS } from "@/server/auth/refusals";
+import { sessionRefFor } from "@/server/core/audit-seal";
 import { createTransaction, consumeTransaction, safeReturnTo } from "@/server/auth/transactions";
 import { deactivateStaff, linkIdentity, revokeSessions, setRole, unlinkIdentity } from "@/server/auth/admin";
 import { POST as commandPOST } from "@/app/api/commands/[name]/route";
@@ -419,7 +421,7 @@ describe("sessions: missing, expired, idle-locked, revoked", () => {
     expect(resolveSession(db(), kim, { touch: false, policy, now: now + 10 * 60_000 }).ok).toBe(true);
   });
 
-  it("manual lock, then the same person signs in again: unlocked, same session, new auth_time", async () => {
+  it("manual lock, then the same person signs in again: unlocked, the same session under a new id, new auth_time", async () => {
     const cookie = signIn("stf_kim", { authTimeMs: Date.now() - 30 * 60_000 });
     const lock = await lockPOST(post("/api/auth/lock", {}, { session: cookie }));
     expect(lock.status).toBe(200);
@@ -430,11 +432,15 @@ describe("sessions: missing, expired, idle-locked, revoked", () => {
     expect(() => signIn("stf_kim", { existingCookie: cookie, reauth: false })).toThrow("reauth_not_fresh");
     expect(sessionRow(cookie).locked_at).not.toBeNull();
     expect(audits("auth.denied")).toBe(1);
+    // Unlocking continues the session (same start and absolute expiry) under a NEW id (session id rotation).
     const again = signIn("stf_kim", { existingCookie: cookie });
-    expect(again).toBe(cookie);
-    expect(sessionRow(cookie).locked_at).toBeNull();
-    expect(Date.now() - Date.parse(sessionRow(cookie).auth_time)).toBeLessThan(5_000);
-    expect((await liveGET(get("/api/live", cookie))).status).toBe(200);
+    expect(again).not.toBe(cookie);
+    expect(sessionRow(again).locked_at).toBeNull();
+    expect(sessionRow(again).expires_at).toBe(sessionRow(cookie).expires_at);
+    expect(Date.now() - Date.parse(sessionRow(again).auth_time)).toBeLessThan(5_000);
+    expect((await liveGET(get("/api/live", again))).status).toBe(200);
+    expect(sessionRow(cookie).revoked_reason).toBe("rotated");
+    expect((await liveGET(get("/api/live", cookie))).status).toBe(401);
   });
 
   it("revoked (sign-out, admin revoke): 401 SIGN_IN_REQUIRED; sign-out clears the cookie and is audited", async () => {
@@ -709,13 +715,14 @@ describe("secured commands: actor from the session only, actor header, re-authen
     expect(released()).toBe(0);
     expect(count("SELECT COUNT(*) n FROM command_receipt WHERE idempotency_key = ?", key)).toBe(0);
 
-    // "Confirm it's you": the same person signs in again (same session, fresh auth_time).
-    expect(signIn("stf_kim", { existingCookie: kim })).toBe(kim);
-    const fresh = await command("hold.release", { holdId: hold.holdId, expectedVersion: hold.version, reason: "Synthetic: resolved" }, { session: kim, actor: "stf_kim", key });
+    // "Confirm it's you": the same person signs in again (the same session under a new id, fresh auth_time).
+    const renewed = signIn("stf_kim", { existingCookie: kim });
+    expect(renewed).not.toBe(kim);
+    const fresh = await command("hold.release", { holdId: hold.holdId, expectedVersion: hold.version, reason: "Synthetic: resolved" }, { session: renewed, actor: "stf_kim", key });
     expect(fresh.status).toBe(200);
     expect(released()).toBe(1);
-    expect(isReauthFresh(sessionRow(kim).auth_time, sessionPolicyFromEnv()!)).toBe(true);
-    expect(isReauthFresh(sessionRow(kim).auth_time, sessionPolicyFromEnv()!, Date.now() + 6 * 60_000)).toBe(false);
+    expect(isReauthFresh(sessionRow(renewed).auth_time, sessionPolicyFromEnv()!)).toBe(true);
+    expect(isReauthFresh(sessionRow(renewed).auth_time, sessionPolicyFromEnv()!, Date.now() + 6 * 60_000)).toBe(false);
   });
 
   it("the sensitive commands are exactly the decisions the design names", () => {
@@ -761,13 +768,15 @@ describe("secured commands: actor from the session only, actor header, re-authen
     const correction = (id: string) => db().prepare("SELECT status, version FROM correction_review WHERE id = ?").get(id) as { status: string; version: number };
     const closed = () => audits("correction.closed");
 
-    // Stale sign-in: closing (which would release the hold) is refused, nothing recorded.
+    // Stale sign-in: closing (which would release the hold) is refused, nothing recorded: no domain event, only the
+    // refusal itself (auth.refused, security review finding 7).
     const before = { audit: audits(), closed: closed() };
     const stale = await command("correction.close", { correctionId: site, outcome: "closed_no_change", note: "Synthetic: no change", expectedVersion: 1 }, { session: kim, actor: "stf_kim" });
     expect([stale.status, stale.body.error?.code]).toEqual([401, "REAUTH_REQUIRED"]);
     expect(holdRow()).toEqual({ status: "active", released_by: null });
     expect(correction(site).status).toBe("open");
-    expect(audits()).toBe(before.audit);
+    expect(audits()).toBe(before.audit + 1);
+    expect(audits("auth.refused")).toBe(1);
     // An identity discrepancy is an identity decision, even with no hold.
     const identity = await open("identity_discrepancy");
     const idStale = await command("correction.close", { correctionId: identity, outcome: "closed_corrected_in_source", note: "Synthetic", expectedVersion: 1 }, { session: kim, actor: "stf_kim" });
@@ -789,9 +798,10 @@ describe("secured commands: actor from the session only, actor header, re-authen
     expect(code).toBe("REAUTH_REQUIRED");
     expect(holdRow().status).toBe("active");
 
-    // "Confirm it's you", then the same close releases the hold as Kim.
-    expect(signIn("stf_kim", { existingCookie: kim })).toBe(kim);
-    const fresh = await command("correction.close", { correctionId: site, outcome: "closed_no_change", note: "Synthetic: no change", expectedVersion: correction(site).version }, { session: kim, actor: "stf_kim" });
+    // "Confirm it's you" (a new session id), then the same close releases the hold as Kim.
+    const renewed = signIn("stf_kim", { existingCookie: kim });
+    expect(renewed).not.toBe(kim);
+    const fresh = await command("correction.close", { correctionId: site, outcome: "closed_no_change", note: "Synthetic: no change", expectedVersion: correction(site).version }, { session: renewed, actor: "stf_kim" });
     expect(fresh.status).toBe(200);
     expect(holdRow()).toEqual({ status: "released", released_by: "stf_kim" });
     expect(closed()).toBe(before.closed + 1);
@@ -1010,6 +1020,185 @@ describe("proxy (optimistic) and security headers", () => {
     expect(plain["Strict-Transport-Security"]).toBeUndefined();
     process.env.HLOS_PUBLIC_URL = "https://lab.synthetic.test";
     expect((await load())["Strict-Transport-Security"]).toMatch(/^max-age=\d+/);
+  });
+});
+
+// ------------------------------------------------------------------ refusals of a signed-in person, session id rotation
+
+describe("refusals of a signed-in person are audited, rate-limited, with no request content (security review finding 7)", () => {
+  interface RefusalRow {
+    action: string;
+    actor_id: string;
+    origin: string;
+    reason: string | null;
+    permission: string | null;
+    session_ref: string | null;
+    entity_id: string;
+    correlation_id: string;
+    after_json: string | null;
+  }
+  const rows = (action: string) =>
+    db().prepare("SELECT action, actor_id, origin, reason, permission, session_ref, entity_id, correlation_id, after_json FROM audit_event WHERE action = ? ORDER BY seq").all(action) as RefusalRow[];
+  const authOf = (cookie: string) => ({ sessionIdHash: hashSessionId(cookie), staffId: sessionRowFull(cookie).staff_id, authTime: sessionRow(cookie).auth_time });
+  const sessionRowFull = (cookie: string) => db().prepare("SELECT staff_id FROM auth_session WHERE id_hash = ?").get(hashSessionId(cookie)) as { staff_id: string };
+
+  it("REAUTH_REQUIRED: one auth.refused per person and command per minute, the next one carries the skipped count; nothing else is written", () => {
+    const kim = signIn("stf_kim", { authTimeMs: Date.now() - 10 * 60_000 });
+    const auth = authOf(kim);
+    const item = intakeItem();
+    const placed = executeCommand<{ holdId: string; version: number }>(db(), "stf_kim", "hold.place", {
+      scope: { type: "intake_item", id: item.id }, scopeLabel: "INT-1014-022 (synthetic)", blocks: ["accession_request"], reasonText: "Synthetic test hold",
+    }, { auth });
+    if (!placed.ok) throw new Error(placed.error.message);
+    const TYPED = "Synthetic release reason typed by Kim, 7731";
+    const before = { audit: audits(), receipts: count("SELECT COUNT(*) n FROM command_receipt") };
+    const t0 = Date.now();
+    const release = (dt: number) =>
+      executeCommand(db(), "stf_kim", "hold.release", { holdId: placed.result.holdId, expectedVersion: placed.result.version, reason: TYPED }, {
+        auth, nowMs: t0 + dt, correlationId: `req-refusal-${dt}`, idempotencyKey: `refusal-key-${dt}`,
+      });
+    for (const dt of [0, 10_000, REFUSAL_WINDOW_MS - 1_000]) {
+      const r = release(dt);
+      expect(!r.ok && r.error.code, `+${dt} ms`).toBe("REAUTH_REQUIRED");
+    }
+    expect(rows("auth.refused")).toHaveLength(1);
+    // After the window: the next refusal is recorded and says how many were not recorded one by one.
+    const late = release(REFUSAL_WINDOW_MS + 1_000);
+    expect(!late.ok && late.error.code).toBe("REAUTH_REQUIRED");
+    const [first, second] = rows("auth.refused");
+    expect(first).toMatchObject({
+      actor_id: "stf_kim", origin: "user", reason: "reauth_required", permission: "hold.release", entity_id: "stf_kim",
+      session_ref: sessionRefFor(auth.sessionIdHash), correlation_id: "req-refusal-0",
+    });
+    expect(first.session_ref).toMatch(/^[0-9a-f]{16}$/);
+    expect(JSON.parse(first.after_json!)).toEqual({ kind: "reauth_required", target: "hold.release", skipped: 0, windowSeconds: 60 });
+    expect(JSON.parse(second.after_json!)).toMatchObject({ kind: "reauth_required", target: "hold.release", skipped: 2 });
+    // Nothing recorded besides the refusals: the hold is still active, no receipt, no other event.
+    expect((db().prepare("SELECT status FROM hold WHERE id = ?").get(placed.result.holdId) as { status: string }).status).toBe("active");
+    expect(count("SELECT COUNT(*) n FROM command_receipt")).toBe(before.receipts);
+    expect(audits()).toBe(before.audit + 2);
+    // No request content: not the typed reason, the record or the key.
+    const written = JSON.stringify(db().prepare("SELECT * FROM audit_event WHERE action = 'auth.refused'").all());
+    for (const secret of [TYPED, placed.result.holdId, "refusal-key-0", kim, auth.sessionIdHash]) expect(written).not.toContain(secret);
+  });
+
+  it("view_denied: a page or a read/export API the role may not open is audited once per view per minute; a prefetch and a link probe are not", async () => {
+    const admin = signIn("stf_labadmin");
+    page.cookies.set("hlos_session", admin);
+    page.headers.set("x-hlos-path", "/intake");
+    expect(await redirected(() => requireView("view.intake"))).toBe("/forbidden");
+    expect(await redirected(() => requireView("view.intake"))).toBe("/forbidden"); // inside the window: counted, not written
+    expect(await redirected(() => requireView("view.worklist"))).toBe("/forbidden");
+    // A Next.js prefetch is not the person asking for the page.
+    page.headers.set("next-router-prefetch", "1");
+    expect(await redirected(() => requireView("view.grossing"))).toBe("/forbidden");
+    page.headers.delete("next-router-prefetch");
+    // currentViewer only asks whether to show something (a link): never a refusal.
+    expect((await currentViewer({ touch: false, view: "view.integration" })).ok).toBe(false);
+    // The export API (view.worklist, already written this minute: counted) and a read API needing view.operations.
+    const csv = await exportPOST(post("/api/worklist/export", { view: "histotech", filters: {} }, { session: admin, actor: "stf_labadmin" }));
+    expect(csv.status).toBe(403);
+    const reconciliation = requireApiActor(get("/api/integration/reconciliation", admin), { touch: false, view: "view.operations" });
+    expect(!reconciliation.ok && [reconciliation.status, reconciliation.reason]).toEqual([403, "view_denied"]);
+    const written = rows("auth.refused");
+    expect(written.map((r) => [r.actor_id, r.reason, r.permission, JSON.parse(r.after_json!).target])).toEqual([
+      ["stf_labadmin", "view_denied", "view.intake", "view.intake"],
+      ["stf_labadmin", "view_denied", "view.worklist", "view.worklist"],
+      ["stf_labadmin", "view_denied", "view.operations", "view.operations"],
+    ]);
+    expect(written.every((r) => r.origin === "user" && r.entity_id === "stf_labadmin")).toBe(true);
+    // The response never carries the internal refusal details.
+    expect(JSON.stringify(await csv.json())).not.toMatch(/sessionIdHash|staffId|refused/);
+    // A view the role holds is not a refusal.
+    page.headers.set("x-hlos-path", "/audit");
+    expect(await requireView("view.audit")).toMatchObject({ id: "stf_labadmin" });
+    expect(rows("auth.refused")).toHaveLength(3);
+  });
+
+  it("FORBIDDEN on commands: command.denied once per person and command per minute in secured mode (the next carries the skipped count); every denial in the demo", () => {
+    const maya = signIn("stf_maya");
+    const auth = authOf(maya);
+    const t0 = Date.now();
+    const deny = (name: string, dt: number) => {
+      const r = executeCommand(db(), "stf_maya", name, {}, { auth, nowMs: t0 + dt, correlationId: `req-denied-${name}-${dt}` });
+      expect(!r.ok && r.error.code, `${name} +${dt}`).toBe("FORBIDDEN");
+    };
+    deny("integration.retryEvent", 0);
+    deny("integration.retryEvent", 1_000);
+    deny("integration.retryEvent", 2_000);
+    deny("routing.override", 3_000);
+    const kim = signIn("stf_kim");
+    const kimDenied = executeCommand(db(), "stf_kim", "integration.retryEvent", {}, { auth: authOf(kim), nowMs: t0 + 4_000 });
+    expect(!kimDenied.ok && kimDenied.error.code).toBe("FORBIDDEN");
+    deny("integration.retryEvent", REFUSAL_WINDOW_MS + 1_000);
+    expect(rows("command.denied").map((r) => [r.actor_id, r.entity_id, r.after_json ? JSON.parse(r.after_json) : null])).toEqual([
+      ["stf_maya", "integration.retryEvent", null],
+      ["stf_maya", "routing.override", null],
+      ["stf_kim", "integration.retryEvent", null],
+      ["stf_maya", "integration.retryEvent", { skipped: 2 }],
+    ]);
+    // The synthetic demo has no sign-in: every denial is recorded, as before.
+    process.env.HLOS_MODE = "demo";
+    const before = rows("command.denied").length;
+    for (let i = 0; i < 3; i++) {
+      const r = executeCommand(db(), "stf_maya", "integration.retryEvent", { eventId: "evt_none" });
+      expect(!r.ok && r.error.code).toBe("FORBIDDEN");
+    }
+    expect(rows("command.denied")).toHaveLength(before + 3);
+    expect(rows("auth.refused")).toEqual([]);
+  });
+});
+
+describe("session id rotation: re-authentication and unlock issue a new session id", () => {
+  it("'Confirm it's you' and unlock each issue a new cookie; the old id is revoked as rotated and refused everywhere; the audit trail links the two", async () => {
+    const first = signIn("stf_kim", { authTimeMs: Date.now() - 10 * 60_000 });
+    const started = db().prepare("SELECT created_at, expires_at FROM auth_session WHERE id_hash = ?").get(hashSessionId(first)) as { created_at: string; expires_at: string };
+
+    // "Confirm it's you" (a forced re-authentication of the same person).
+    const second = signIn("stf_kim", { existingCookie: first });
+    expect(second).not.toBe(first);
+    expect(second).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(sessionRow(first)).toMatchObject({ revoked_reason: "rotated" });
+    expect(sessionRow(second)).toMatchObject({ revoked_at: null, locked_at: null, expires_at: started.expires_at });
+    expect((db().prepare("SELECT created_at FROM auth_session WHERE id_hash = ?").get(hashSessionId(second)) as { created_at: string }).created_at).toBe(started.created_at);
+    expect(Date.now() - Date.parse(sessionRow(second).auth_time)).toBeLessThan(5_000);
+
+    // The old id is worth nothing: commands, read APIs and pages refuse it (reason "rotated"), and nothing is recorded.
+    const item = intakeItem();
+    const audit = audits();
+    const old = await command("intake.updateItem", { intakeItemId: item.id, expectedVersion: item.version, patch: { notes: "with the old id" } }, { session: first, actor: "stf_kim" });
+    expect([old.status, old.body.error?.code, (old.body.error?.details as { reason: string }).reason]).toEqual([401, "SIGN_IN_REQUIRED", "rotated"]);
+    expect(intakeItem().notes).not.toBe("with the old id");
+    expect(audits()).toBe(audit);
+    expect((await liveGET(get("/api/live", first))).status).toBe(401);
+    page.cookies.set("hlos_session", first);
+    page.headers.set("x-hlos-path", "/intake");
+    expect(await redirected(() => requireView("view.intake"))).toBe("/signin?returnTo=%2Fintake");
+    // The new one works.
+    const ok = await command("intake.updateItem", { intakeItemId: item.id, expectedVersion: item.version, patch: { notes: "Kim (synthetic)" } }, { session: second, actor: "stf_kim" });
+    expect(ok.status).toBe(200);
+
+    // The audit trail links the two ids by their session references (keyed HMACs), never the ids or their hashes.
+    const reauth = db().prepare("SELECT after_json FROM audit_event WHERE action = 'auth.reauthenticated' ORDER BY seq DESC LIMIT 1").get() as { after_json: string };
+    expect(JSON.parse(reauth.after_json)).toMatchObject({ rotated: true, unlocked: false, previousSessionRef: sessionRefFor(hashSessionId(first)), sessionRef: sessionRefFor(hashSessionId(second)) });
+    expect(JSON.parse(reauth.after_json).sessionRef).toMatch(/^[0-9a-f]{16}$/);
+    for (const v of [first, second, hashSessionId(first), hashSessionId(second)]) expect(JSON.stringify(db().prepare("SELECT * FROM audit_event").all())).not.toContain(v);
+
+    // Unlock: lock, then the same person signs in again. Another new id, unlocked.
+    expect((await lockPOST(post("/api/auth/lock", {}, { session: second }))).status).toBe(200);
+    const third = signIn("stf_kim", { existingCookie: second });
+    expect([first, second]).not.toContain(third);
+    expect(sessionRow(second).revoked_reason).toBe("rotated");
+    expect(sessionRow(third)).toMatchObject({ locked_at: null, revoked_at: null, expires_at: started.expires_at });
+    expect((await liveGET(get("/api/live", third))).status).toBe(200);
+    expect((await liveGET(get("/api/live", second))).status).toBe(401);
+    expect(JSON.parse((db().prepare("SELECT after_json FROM audit_event WHERE action = 'auth.reauthenticated' ORDER BY seq DESC LIMIT 1").get() as { after_json: string }).after_json)).toMatchObject({ rotated: true, unlocked: true });
+
+    // A rotated id cannot be continued: a sign-in that brings it starts a new session (it does not revive the old one).
+    const fresh = signIn("stf_kim", { existingCookie: first });
+    expect([first, second, third]).not.toContain(fresh);
+    expect(sessionRow(first).revoked_reason).toBe("rotated");
+    expect(sessionRow(third).revoked_at).toBeNull(); // the browser's own current session is not touched by an old id
   });
 });
 

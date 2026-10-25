@@ -82,8 +82,8 @@ export function LiveRefresh({
           if (!res.ok) {
             // Secured mode: a locked or ended session goes to the session screens (no-op in the synthetic demo).
             if (res.status === 401 || res.status === 409) {
-              const body = (await res.json().catch(() => null)) as { error?: { code?: string } } | null;
-              reportAuthFailure(body?.error?.code);
+              const body = (await res.json().catch(() => null)) as { error?: { code?: string; details?: { reason?: string } } } | null;
+              reportAuthFailure(body?.error?.code, { reason: body?.error?.details?.reason });
             }
             throw new Error(`Live status returned HTTP ${res.status}`);
           }

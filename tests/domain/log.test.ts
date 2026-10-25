@@ -179,3 +179,27 @@ describe("call sites", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe("a secured build that falls back to locked names the failing settings in the server log, never their values", () => {
+  it("logs the setting names once, without the configured values", async () => {
+    const { runtimeMode } = await import("@/server/runtime-mode");
+    const { setLogSink } = await import("@/server/core/log");
+    const saved = { ...process.env };
+    const lines: string[] = [];
+    const restore = setLogSink((_level, line) => lines.push(line));
+    try {
+      process.env.HLOS_MODE = "secured";
+      process.env.HLOS_OIDC_CLIENT_SECRET = "value-that-must-never-be-logged-0123456789";
+      delete process.env.HLOS_OIDC_ISSUER;
+      expect(runtimeMode()).toBe("locked");
+      expect(runtimeMode()).toBe("locked");
+      const hits = lines.filter((l) => l.includes("runtime.locked_misconfigured"));
+      expect(hits).toHaveLength(1);
+      expect(hits[0]).toContain("HLOS_OIDC_ISSUER");
+      expect(lines.join("\n")).not.toContain("value-that-must-never-be-logged");
+    } finally {
+      restore();
+      process.env = saved;
+    }
+  });
+});

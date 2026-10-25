@@ -55,9 +55,10 @@ import {
   reauthFreshUntil,
   resolveSession,
   revokeSession,
-  unlockAfterReauth,
+  rotateAfterReauth,
   type SessionPolicy,
 } from "./sessions";
+import { sessionRefFor } from "../core/audit-seal";
 import { consumeTransaction, createTransaction, safeReturnTo, TRANSACTION_TTL_MS, txBindingMatches, txBindingValue } from "./transactions";
 import { log } from "../core/log";
 
@@ -183,16 +184,26 @@ export function completeSignIn(db: DB, identity: VerifiedIdentity, opts: Complet
   return db.transaction((): SignInOutcome => {
     if (existingUsable && existing.staff_id === staff.id) {
       if (existing.locked_at && !opts.reauth) return deny("reauth_not_fresh", staff.id);
-      // The same person authenticated again (unlock, or "Confirm it's you"): same session, new auth_time.
-      unlockAfterReauth(db, existing.id_hash, { authTimeMs, issuer: identity.issuer, subject: identity.subject }, now);
+      // The same person authenticated again (unlock, or "Confirm it's you"): the session continues (same start and
+      // absolute expiry) under a NEW id, with the new auth_time; the old id is revoked as "rotated".
+      const rotated = rotateAfterReauth(db, existing.id_hash, { authTimeMs, issuer: identity.issuer, subject: identity.subject }, now);
+      if (!rotated) return deny("token_invalid", staff.id); // unreachable: checked open just above, inside this transaction
       auditAuth(db, {
         action: "auth.reauthenticated",
         staffId: staff.id,
-        summary: `Signed in again${existing.locked_at ? " (unlocked)" : ""}`,
-        details: { issuer: identity.issuer, subject: sub, unlocked: Boolean(existing.locked_at) },
+        summary: `Signed in again${existing.locked_at ? " (unlocked)" : ""}; new session id`,
+        // Session references (keyed HMACs, never the ids or their hashes) link the two ids in the audit trail.
+        details: {
+          issuer: identity.issuer,
+          subject: sub,
+          unlocked: Boolean(existing.locked_at),
+          rotated: true,
+          previousSessionRef: sessionRefFor(existing.id_hash),
+          sessionRef: sessionRefFor(rotated.idHash),
+        },
         correlationId: opts.correlationId,
       });
-      return { ok: true, cookieValue: opts.existingCookie!, staffId: staff.id, kind: "reauthenticated" };
+      return { ok: true, cookieValue: rotated.cookieValue, staffId: staff.id, kind: "reauthenticated" };
     }
     let kind: "signed_in" | "handover" = "signed_in";
     if (existing && !existing.revoked_at) {

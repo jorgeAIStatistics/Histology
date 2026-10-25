@@ -55,7 +55,7 @@ To follow one request into the audit trail, look up the correlation id in `audit
 |---|---|
 | healthy | Nothing. |
 | degraded | Open `/api/health/details` as the administrator or auditor, find the `warn` or `fail` check, and act on it (table below). Do **not** take the node out of service for this alone. |
-| unavailable | A **locked** build: read the `/locked` page, which names the missing or invalid environment keys (never their values). Fix the environment and restart. Never switch to `HLOS_MODE=demo` to get it running. A **database** failure: check the disk (full, read-only, permissions), the volume mount, and whether another process holds the write lock. Do not delete `-wal` or `-shm` files. If the file is damaged, restore the newest verified backup into a **new** path (section 5), review it, then repoint `HLOS_DB_PATH`. |
+| unavailable | A **locked** build: the `/locked` page deliberately shows nothing about the configuration. Read the server log instead: the line `runtime.locked_misconfigured` names the missing or invalid settings (never their values). Fix the environment and restart. Never switch to `HLOS_MODE=demo` to get it running. A **database** failure: check the disk (full, read-only, permissions), the volume mount, and whether another process holds the write lock. Do not delete `-wal` or `-shm` files. If the file is damaged, restore the newest verified backup into a **new** path (section 5), review it, then repoint `HLOS_DB_PATH`. |
 
 | Check | `warn` / `fail` means | Action |
 |---|---|---|
@@ -127,7 +127,7 @@ Check, in order:
    curl -sS -m 10 "$HLOS_OIDC_ISSUER/.well-known/openid-configuration" | head -c 300
    ```
    Look at DNS, TLS (certificate chain and expiry), an outbound proxy or firewall, and the provider's status page. Discovery times out after 10 s. A failure is not cached, so the next sign-in tries again, and a success is cached for 10 minutes.
-2. **Is the configuration intact?** If a key is missing or invalid, the build is **locked**, not "provider unavailable". The `/locked` page names the keys. Has the client secret been rotated at the provider and not in the environment? The callback then fails as `token_invalid`, not `provider_unavailable`.
+2. **Is the configuration intact?** If a key is missing or invalid, the build is **locked**, not "provider unavailable". The server log line `runtime.locked_misconfigured` names the failing settings (the `/locked` page shows none). Has the client secret been rotated at the provider and not in the environment? The callback then fails as `token_invalid`, not `provider_unavailable`.
 3. **Redirect URI.** `HLOS_PUBLIC_URL` + `/api/auth/callback` must be registered at the provider exactly as written.
 4. **Clocks.** Skew between the server and the provider makes ID tokens look expired or not yet valid (`token_invalid`), or the authentication look stale (`reauth_not_fresh`). Check NTP.
 5. **Other denial reasons are not outages:**

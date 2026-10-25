@@ -35,6 +35,8 @@ export function SessionNotice() {
     <div
       role="alert"
       aria-label={title}
+      // Stays usable (Sign in again, Reload) while a modal side sheet makes the page inert.
+      data-modal-exempt=""
       className="no-print fixed left-1/2 top-[calc(var(--hlo-chrome-h)+0.5rem)] z-[65] flex w-[min(44rem,calc(100vw-2rem))] -translate-x-1/2 items-start gap-3 rounded-md border border-warning-border bg-warning-bg px-3 py-2.5 shadow-2"
     >
       <UserRoundX className="mt-0.5 size-4 shrink-0 text-warning-solid" aria-hidden />

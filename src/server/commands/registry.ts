@@ -19,6 +19,7 @@ import { sessionRefFor } from "../core/audit-seal";
 import { LOCKED_MESSAGE, runtimeMode } from "../runtime-mode";
 import type { CommandAuth } from "../auth/guard";
 import { isReauthFresh, sessionPolicyFromEnv } from "../auth/sessions";
+import { auditSignedInRefusal, refusalGate } from "../auth/refusals";
 
 export interface CommandDef<S extends z.ZodType, R> {
   name: string;
@@ -117,6 +118,13 @@ export interface ExecuteOptions {
  * (HMAC of the session id hash under the audit key; never the id or its hash).
  * Each event is sealed in the same transaction (src/server/core/audit.ts).
  *
+ * Refusals of a signed-in person (secured mode; src/server/auth/refusals.ts):
+ * a role without the permission is recorded as command.denied, and a stale
+ * sign-in on a sensitive command (REAUTH_REQUIRED) as auth.refused, both
+ * rate-limited to one event per staff member, kind and command per minute
+ * (the next event carries how many were skipped), with no request content.
+ * In the synthetic demo every denial is recorded, as before.
+ *
  * After the transaction COMMITS (and only when this call was not itself
  * nested in an outer transaction), expired idempotency receipts are compacted
  * opportunistically: at most once per 10 minutes per process, one bounded
@@ -175,13 +183,13 @@ export function executeCommand<R = unknown>(
   if (securedUser) {
     // Presenter controls (and any command without a permission) exist only in the synthetic demo.
     if ((def.audience ?? "lab") === "presenter" || def.permission === null) {
-      return deniedFailure(ctx, name, new DomainError("FORBIDDEN", "Not allowed: this is a synthetic demo control and does not exist in this build."));
+      return deniedFailure(ctx, name, new DomainError("FORBIDDEN", "Not allowed: this is a synthetic demo control and does not exist in this build."), opts.nowMs ?? Date.now());
     }
     // A role without the permission is refused before the input is read (no validation details leak).
     try {
       requirePermission(ctx, def.permission);
     } catch (e) {
-      return deniedFailure(ctx, name, e);
+      return deniedFailure(ctx, name, e, opts.nowMs ?? Date.now());
     }
   }
 
@@ -251,25 +259,48 @@ export function executeCommand<R = unknown>(
   } catch (e) {
     const failure = toFailure(e, { command: name, correlationId: ctx.correlationId });
     if (!failure.ok && origin === "user" && (failure.error.code === "FORBIDDEN" || failure.error.code === "IDEMPOTENCY_CONFLICT")) {
-      auditRefusal(ctx, name, failure.error);
+      auditRefusal(ctx, name, failure.error, securedUser ? (opts.nowMs ?? Date.now()) : null);
+    }
+    if (!failure.ok && securedUser && failure.error.code === "REAUTH_REQUIRED" && opts.auth) {
+      // Nothing ran (the transaction rolled back); the refusal itself is on record, rate-limited, without the input.
+      auditSignedInRefusal(db, {
+        staffId: ctx.actor.id,
+        kind: "reauth_required",
+        target: name,
+        permission: def.permission,
+        sessionIdHash: opts.auth.sessionIdHash,
+        correlationId: ctx.correlationId,
+        now: opts.nowMs,
+      });
     }
     return failure;
   }
 }
 
-/** A FORBIDDEN refusal before the transaction: audited like the in-transaction one, then returned. */
-function deniedFailure(ctx: Ctx, name: string, e: unknown): CommandResult<never> {
+/** A FORBIDDEN refusal before the transaction (secured mode only): audited like the in-transaction one, then returned. */
+function deniedFailure(ctx: Ctx, name: string, e: unknown, nowMs: number): CommandResult<never> {
   const failure = toFailure(e);
   if (!failure.ok && ctx.origin !== "system" && (failure.error.code === "FORBIDDEN" || failure.error.code === "IDEMPOTENCY_CONFLICT")) {
-    auditRefusal(ctx, name, failure.error);
+    auditRefusal(ctx, name, failure.error, nowMs);
   }
   return failure;
 }
 
-/** Denied attempts and refused key reuse are kept in the local audit trail (no request content is stored). */
-function auditRefusal(ctx: Ctx, name: string, error: { code: DomainErrorCode; message: string; details?: unknown }): void {
+/**
+ * Denied attempts and refused key reuse are kept in the local audit trail (no request content is stored).
+ * `limitAt` (secured mode, the wall clock in ms): a denial of the signed-in person is rate-limited per staff
+ * member and command (src/server/auth/refusals.ts); the event written carries `skipped` when earlier identical
+ * denials inside the window were not recorded one by one. null (demo): every denial is recorded.
+ */
+function auditRefusal(ctx: Ctx, name: string, error: { code: DomainErrorCode; message: string; details?: unknown }, limitAt: number | null = null): void {
   try {
     const denied = error.code === "FORBIDDEN";
+    let skipped = 0;
+    if (denied && limitAt !== null) {
+      const gate = refusalGate(ctx.db, ctx.actor.id, "forbidden", name, limitAt);
+      if (!gate) return;
+      skipped = gate.skipped;
+    }
     audit(ctx, {
       action: denied ? "command.denied" : "command.idempotency_rejected",
       entityType: "command",
@@ -278,7 +309,7 @@ function auditRefusal(ctx: Ctx, name: string, error: { code: DomainErrorCode; me
         ? `Denied: ${ctx.actor.name} (${ctx.actor.role}) attempted ${name}`
         : `Refused a reused idempotency key: ${ctx.actor.name} (${ctx.actor.role}) on ${name}`,
       reason: error.message,
-      after: denied ? undefined : { reason: (error.details as { reason?: string } | undefined)?.reason ?? null },
+      after: denied ? (skipped ? { skipped } : undefined) : { reason: (error.details as { reason?: string } | undefined)?.reason ?? null },
     });
   } catch {
     /* ignore */

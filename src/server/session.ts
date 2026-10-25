@@ -50,7 +50,12 @@ export function actorIdFromRequest(req: Request): string {
 
 /** One correlation id per HTTP request: the caller's X-Request-Id when well formed, else a new UUID. Recorded on every audit event and receipt. */
 export function correlationIdFor(req: Request): string {
-  const given = req.headers.get("x-request-id")?.trim();
+  return correlationIdFromHeaders(req.headers);
+}
+
+/** The same rule from a header set (pages, through next/headers). */
+export function correlationIdFromHeaders(headers: Pick<Headers, "get">): string {
+  const given = headers.get("x-request-id")?.trim();
   return given && /^[A-Za-z0-9._:-]{8,100}$/.test(given) ? given : `req-${crypto.randomUUID()}`;
 }
 

@@ -1,4 +1,5 @@
 import { authConfig } from "./auth/config";
+import { log } from "./core/log";
 
 /**
  * Runtime mode: the explicit boundary between the synthetic demonstration and
@@ -39,8 +40,23 @@ function requestedMode(): "demo" | "secured" | "other" {
 export function runtimeMode(): RuntimeMode {
   const requested = requestedMode();
   if (requested === "demo") return "demo";
-  if (requested === "secured" && authConfig().ok) return "secured";
+  if (requested === "secured") {
+    const cfg = authConfig();
+    if (cfg.ok) return "secured";
+    reportMisconfiguration(cfg.keys);
+  }
   return "locked";
+}
+
+// The /locked page deliberately says nothing about the configuration (a visitor must not learn how the build is set
+// up). The operator learns it from the server log instead: one line per distinct set of failing settings, naming the
+// settings and never their values.
+let reportedKeys = "";
+function reportMisconfiguration(keys: readonly string[]): void {
+  const settings = keys.join(", ");
+  if (settings === reportedKeys) return;
+  reportedKeys = settings;
+  log("warn", "runtime.locked_misconfigured", { requested_mode: "secured", settings });
 }
 
 /** Synthetic demo mode (unchanged semantics: HLOS_MODE=demo, or `next dev` without HLOS_MODE). */

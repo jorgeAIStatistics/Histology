@@ -60,8 +60,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
+      {/* data-modal-exempt: stays live (announced, dismissible) while a modal side sheet makes the page inert. */}
       <section
         aria-label="Notifications"
+        data-modal-exempt=""
         className="no-print pointer-events-none fixed bottom-4 left-1/2 z-[70] flex w-[min(360px,calc(100vw-2rem))] -translate-x-1/2 flex-col gap-2"
       >
         <ol aria-live="polite" aria-relevant="additions text" className="flex flex-col gap-2">

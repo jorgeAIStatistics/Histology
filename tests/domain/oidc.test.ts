@@ -412,7 +412,7 @@ describe("OIDC authorization code flow with PKCE against a local oidc-provider",
     expect(denials().map((d) => [d.reason, JSON.parse(d.after_json).detail])).toEqual([["provider_error", "access_denied"]]);
   });
 
-  it("re-authentication forces a fresh login (prompt=login, max_age=0) and keeps the same session with a new auth_time", async () => {
+  it("re-authentication forces a fresh login (prompt=login, max_age=0) and continues the session under a new id with a new auth_time", async () => {
     const first = await signInFlow("synthetic-kim");
     const cookie = first.jar.get(PUBLIC, "hlos_session")!;
     db().prepare("UPDATE auth_session SET auth_time = ?, locked_at = ? WHERE id_hash = ?").run(
@@ -423,18 +423,24 @@ describe("OIDC authorization code flow with PKCE against a local oidc-provider",
     expect(again.authUrl.searchParams.get("prompt")).toBe("login");
     expect(again.authUrl.searchParams.get("max_age")).toBe("0");
     expect(again.final.headers.get("location")).toBe(`${PUBLIC}/intake`);
-    expect(again.jar.get(PUBLIC, "hlos_session")).toBe(cookie);
-    const [s] = sessions();
-    expect(sessions()).toHaveLength(1);
-    expect(s.locked_at).toBeNull();
+    // Session id rotation: the callback sets a NEW cookie; the old id is revoked ("rotated"), the session goes on.
+    const renewed = again.jar.get(PUBLIC, "hlos_session")!;
+    expect(renewed).toBeTruthy();
+    expect(renewed).not.toBe(cookie);
+    const row = (c: string) => db().prepare("SELECT staff_id, created_at, expires_at, auth_time, locked_at, revoked_reason FROM auth_session WHERE id_hash = ?").get(hashSessionId(c)) as {
+      staff_id: string; created_at: string; expires_at: string; auth_time: string; locked_at: string | null; revoked_reason: string | null;
+    };
+    expect(sessions()).toHaveLength(2);
+    expect(row(cookie).revoked_reason).toBe("rotated");
+    const s = row(renewed);
+    expect(s).toMatchObject({ staff_id: "stf_kim", locked_at: null, revoked_reason: null, created_at: row(cookie).created_at, expires_at: row(cookie).expires_at });
     expect(Date.now() - Date.parse(s.auth_time)).toBeLessThan(60_000);
     // A different person on the same browser: hand-over, the previous session is revoked.
-    const other = await signInFlow("synthetic-maya", { jar: first.jar });
-    expect(other.jar.get(PUBLIC, "hlos_session")).not.toBe(cookie);
-    expect(sessions().map((x) => [x.staff_id, x.revoked_at === null])).toEqual([
-      ["stf_kim", false],
-      ["stf_maya", true],
-    ]);
+    const other = await signInFlow("synthetic-maya", { jar: again.jar });
+    const maya = other.jar.get(PUBLIC, "hlos_session")!;
+    expect([cookie, renewed]).not.toContain(maya);
+    expect(row(renewed).revoked_reason).toBe("handover");
+    expect(row(maya)).toMatchObject({ staff_id: "stf_maya", revoked_reason: null });
   });
 
   it("sign-out revokes the session and returns the provider's end-session URL", async () => {

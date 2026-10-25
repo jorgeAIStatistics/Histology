@@ -25,7 +25,9 @@ import type { Role } from "@/lib/roles";
  *                  offers sign-in
  *     revoked      the server no longer knows the session (SIGN_IN_REQUIRED:
  *                  revoked by an administrator, signed out elsewhere, gone):
- *                  content removed at once, neutral screen
+ *                  content removed at once, neutral screen. A refusal for
+ *                  an id that a new sign-in of the same person replaced
+ *                  (reason "rotated") is checked again first.
  *     handover     someone else signed in on this browser after this page was
  *                  opened: the page stays, nothing from it can be recorded
  *     signing_out / signed_out / no_access: content removed, neutral screen
@@ -192,9 +194,16 @@ export function isShownBySession(code: string | undefined | null): boolean {
  * recorded) or by background polling, and moves the screen to the matching
  * status. Ignored in the synthetic demo.
  */
-export function reportAuthFailure(code: string | undefined | null, opts: { fromCommand?: boolean } = {}): void {
+export function reportAuthFailure(code: string | undefined | null, opts: { fromCommand?: boolean; reason?: string | null } = {}): void {
   if (!state.secured || !code) return;
   const fromCommand = Boolean(opts.fromCommand);
+  if (code === "SIGN_IN_REQUIRED" && opts.reason === "rotated") {
+    // The request carried a session id that a new sign-in of the same person replaced (re-authentication or
+    // unlock, for example in the sign-in pop-up) while it was on its way. Ask again with this browser's cookie
+    // now: still signed in as this page's person -> nothing changes; anything else -> the usual screens.
+    void refreshSessionStatus();
+    return;
+  }
   switch (code) {
     case "SESSION_LOCKED":
       lockLocally("server", fromCommand);
@@ -325,9 +334,17 @@ export async function handleCommandAuthFailure<E extends AuthFailureLike>(error:
     const name = await currentActorName();
     return { ...error, message: actorMismatchMessage(name ?? state.current?.name ?? null) };
   }
+  const reason = (error.details as { reason?: unknown } | undefined)?.reason;
+  if (error.code === "SIGN_IN_REQUIRED" && reason === "rotated") {
+    reportAuthFailure(error.code, { fromCommand: true, reason });
+    return { ...error, message: ROTATED_MESSAGE };
+  }
   reportAuthFailure(error.code, { fromCommand: true });
   return { ...error, message: AUTH_MESSAGE[error.code] ?? error.message };
 }
+
+/** A command sent with a session id replaced by a new sign-in of the same person while it was on its way. */
+const ROTATED_MESSAGE = "Nothing was recorded: your sign-in was renewed while this was being sent. Press the button again.";
 
 // ------------------------------------------------------------------ lock, unlock, sign-in, sign-out
 

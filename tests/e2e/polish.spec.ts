@@ -8,6 +8,14 @@
 // 4. With the browser text size at 20px, the Materials decision column still shows the rows to act on (the retrieval
 //    pick list and the tray's "not on the tray" items were squeezed under the "more below" cue before).
 // 5. At 200% zoom, a tray in the sideways tray row reached with Tab comes fully into view (4% visible before).
+// Pre-presentation refinements (open items N2 to N4 of operator-ux-stage6.md):
+// 6. N3: with the browser text at 20px, Intake's cut next-step details are a named keyboard stop (axe
+//    scrollable-region-focusable before), stepped by the arrow keys with a visible ring; content that fits adds no stop.
+// 7. N4: with the browser text at 20px the top bar grows with it (rem), every bar control stays inside the bar
+//    (9 overhung the fixed 52px bar before), and the sticky offsets follow; at the default text size it is 52px.
+// 8. N2: at 200% zoom the side panel is a modal sheet (the page controls it covered stayed in the Tab order before):
+//    focus moves in, the page behind it is inert, Esc closes it and focus returns to the opener; the scrim closes it
+//    too. At the bench size 1024x768 it stays a non-modal panel.
 //
 // Starting state: the synthetic demo day after the 11:00 courier is unpacked (the guided demo's step 1 world event), as in
 // accessibility.spec.ts. Only check 3 records anything (one rejected wrong-block scan); the demo is reset at the end.
@@ -219,4 +227,156 @@ test("200% zoom: a tray reached with Tab in the sideways tray row comes fully in
   }
   expect(errors).toEqual([]);
   await context.close();
+});
+
+test("Browser text at 20px: Intake's cut next-step details are a named keyboard stop, stepped by the arrow keys; content that fits adds none", async ({ browser }) => {
+  const { context, page, errors } = await openAt(browser, STAFF.maya, { width: 1366, height: 768, fontPx: 20 });
+  await open(page, "/intake?item=INT-1014-025");
+  expect(await page.evaluate(() => getComputedStyle(document.documentElement).fontSize), "the browser text size applies").toBe("20px");
+  const details = page.getByRole("complementary", { name: "Decision" }).getByRole("region", { name: "Your next step (scrollable)" });
+  await expect(details).toHaveAttribute("tabindex", "0");
+  expect(await details.evaluate((el) => el.scrollHeight > el.clientHeight + 1), "the details are cut at this size").toBe(true);
+  const results = await new AxeBuilder({ page }).withTags(AXE_TAGS).analyze();
+  expect(results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`)).toEqual([]);
+  // Reached with Tab, with a visible ring drawn above the covers.
+  for (let i = 0; i < 80 && !(await details.evaluate((el) => el === document.activeElement)); i++) await page.keyboard.press("Tab");
+  await expect(details).toBeFocused();
+  const ring = await details.evaluate((el) => {
+    const overlay = el.parentElement!.lastElementChild as HTMLElement;
+    const cs = getComputedStyle(overlay);
+    return { style: cs.outlineStyle, width: parseFloat(cs.outlineWidth), last: overlay !== el };
+  });
+  expect(ring.style).toBe("solid");
+  expect(ring.width).toBeGreaterThanOrEqual(2);
+  expect(ring.last).toBe(true);
+  // The arrow keys move through the details the way "More below" does; Home goes back to the top.
+  const top = () => details.evaluate((el) => el.scrollTop);
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(top).toBeGreaterThan(0);
+  const after = await top();
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(top).toBeGreaterThan(after);
+  await page.keyboard.press("ArrowUp");
+  await expect.poll(top).toBe(after);
+  await page.keyboard.press("Home");
+  await expect.poll(top).toBe(0);
+  await expect(details).toBeFocused();
+  expect(errors).toEqual([]);
+  await context.close();
+
+  // At the default text size the same details fit: no extra keyboard stop, no region.
+  const normal = await openAt(browser, STAFF.maya, { width: 1366, height: 768 });
+  await open(normal.page, "/intake?item=INT-1014-025");
+  await expect(normal.page.locator("[data-cut-scroller]").first()).toBeAttached();
+  expect(await normal.page.locator("[data-cut-scroller][tabindex]").count()).toBe(0);
+  await expect(normal.page.getByRole("region", { name: /\(scrollable\)$/ })).toHaveCount(0);
+  expect(normal.errors).toEqual([]);
+  await normal.context.close();
+});
+
+test("Browser text at 20px: the top bar grows with the text, keeps every control inside it, and the sticky offsets follow", async ({ browser }) => {
+  for (const size of [
+    { width: 1366, height: 768, fontPx: 20, bar: 65 }, // 3.25rem
+    { width: 1024, height: 768, fontPx: 20, bar: 127.5 }, // 6.375rem: below 64rem the bar takes two rows
+    { width: 1366, height: 768, bar: 52 }, // the default text size: unchanged
+  ]) {
+    const { context, page, errors } = await openAt(browser, STAFF.maya, size);
+    for (const url of ["/intake?item=INT-1014-025", "/worklist?view=histotech"]) {
+      await open(page, url);
+      const m = await page.evaluate(() => {
+        const header = document.querySelector("header[data-shell-chrome]")!.getBoundingClientRect();
+        const controls = [...document.querySelectorAll<HTMLElement>("header[data-shell-chrome] :is(a, button, input, [role=note])")].filter((e) => e.getClientRects().length > 0);
+        const outside = controls
+          .filter((e) => {
+            const r = e.getBoundingClientRect();
+            return r.top < header.top - 0.5 || r.bottom > header.bottom + 0.5 || r.right > innerWidth + 0.5;
+          })
+          .map((e) => (e.getAttribute("aria-label") ?? e.textContent ?? e.tagName).trim().slice(0, 30));
+        return {
+          bar: header.height,
+          outside,
+          controls: controls.length,
+          // html scroll-padding-top is the bar plus 24px (no sticky identity bar on these screens).
+          scrollPadding: parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) - header.height,
+          sideways: document.documentElement.scrollWidth - innerWidth,
+        };
+      });
+      const where = `${size.width}x${size.height} at ${size.fontPx ?? 16}px text, ${url}`;
+      expect(m.bar, where).toBeCloseTo(size.bar, 1);
+      expect(m.controls, where).toBeGreaterThan(8);
+      expect(m.outside, where).toEqual([]);
+      expect(m.scrollPadding, where).toBeCloseTo(24, 1);
+      expect(m.sideways, where).toBeLessThanOrEqual(0);
+    }
+    // Intake's bench fills the window below the bar exactly (its height reads the same token).
+    await open(page, "/intake?item=INT-1014-025");
+    if (size.width >= 1024 && size.height >= 768) {
+      const fit = await page.evaluate(() => {
+        const header = document.querySelector("header[data-shell-chrome]")!.getBoundingClientRect();
+        const bench = document.getElementById("main")!.firstElementChild as HTMLElement;
+        return { gap: bench.getBoundingClientRect().top - header.bottom, fill: header.height + bench.getBoundingClientRect().height - innerHeight };
+      });
+      expect(Math.abs(fit.gap), "the bench starts right under the bar").toBeLessThanOrEqual(1);
+      if (size.width >= 1280 || !size.fontPx) expect(Math.abs(fit.fill), "bar + bench = the window").toBeLessThanOrEqual(1);
+    }
+    expect(errors).toEqual([]);
+    await context.close();
+  }
+});
+
+test("200% zoom: the side panel is a modal sheet (focus in, the page behind inert, Esc and the scrim close it, focus back on the opener); at 1024 it stays non-modal", async ({ browser }) => {
+  const { context, page, errors } = await openAt(browser, STAFF.priya, { width: 720, height: 450, dpr: 2 });
+  await open(page, "/materials?tab=print");
+  const opener = page.locator("#main").getByRole("link", { name: "PJ-8841", exact: true }).first();
+  await opener.click();
+  const sheet = page.getByRole("dialog", { name: "D26-04783 A1-5 H&E deeper L1" });
+  await expect(sheet).toBeVisible();
+  await expect(sheet).toHaveAttribute("aria-modal", "true");
+  await expect(sheet.getByRole("heading", { level: 2, name: "D26-04783 A1-5 H&E deeper L1" })).toBeFocused();
+  // What the sheet covers (and the top bar) is inert: out of the Tab order and the accessibility tree.
+  const inert = (locator: Locator) => locator.evaluate((el) => !!el.closest("[inert]"));
+  expect(await inert(page.locator("#main").getByRole("link", { name: /^Assemble trays/ }).first())).toBe(true);
+  expect(await inert(page.locator("#scan-field"))).toBe(true);
+  expect(await inert(opener)).toBe(true);
+  // The notifications stay live.
+  expect(await inert(page.getByRole("region", { name: "Notifications" }))).toBe(false);
+  // Tab never leaves the sheet (the browser's own stops show as <body>).
+  const outside: string[] = [];
+  for (let i = 0; i < 30; i++) {
+    await page.keyboard.press("Tab");
+    const where = await page.evaluate(() => {
+      const el = document.activeElement;
+      if (!el || el === document.body) return null;
+      return el.closest("[role=dialog]") ? null : `${el.tagName.toLowerCase()} ${(el.textContent ?? "").trim().slice(0, 30)}`;
+    });
+    if (where) outside.push(where);
+  }
+  expect(outside).toEqual([]);
+  const results = await new AxeBuilder({ page }).withTags(AXE_TAGS).analyze();
+  expect(results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(" ")).join(" | ")}`)).toEqual([]);
+  // Esc closes it; the page is interactive again and focus is back on the job's link.
+  await sheet.getByRole("heading", { level: 2 }).focus();
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+  await expect(page.locator("[inert]")).toHaveCount(0);
+  await expect(opener).toBeFocused();
+  // A click on the scrim (the dimmed page) closes it the same way.
+  await opener.click();
+  await expect(sheet).toBeVisible();
+  await page.mouse.click(40, 300);
+  await expect(sheet).toHaveCount(0);
+  await expect(page.locator("[inert]")).toHaveCount(0);
+  expect(errors).toEqual([]);
+  await context.close();
+
+  // The bench size 1024x768: the same panel overlays as before, non-modal, and nothing is inert.
+  const bench = await openAt(browser, STAFF.priya, { width: 1024, height: 768 });
+  await open(bench.page, "/materials?tab=print&selected=PJ-8841");
+  const panel = bench.page.getByRole("complementary", { name: "D26-04783 A1-5 H&E deeper L1" });
+  await expect(panel).toBeVisible();
+  await expect(panel).not.toHaveAttribute("aria-modal", /.*/);
+  await expect(bench.page.locator("[inert]")).toHaveCount(0);
+  await expect(bench.page.getByRole("dialog")).toHaveCount(0);
+  expect(bench.errors).toEqual([]);
+  await bench.context.close();
 });

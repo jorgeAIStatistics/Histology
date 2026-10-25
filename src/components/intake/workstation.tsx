@@ -108,7 +108,8 @@ function ItemWorkspace({
       const behavior = reducedMotion() ? "auto" : "smooth";
       if (window.matchMedia(STACKED_QUERY).matches) {
         // Stacked layout: the page scrolls; land the target just under the top bar (the only pinned chrome).
-        const bar = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--hlo-topbar-h")) || 52;
+        // The bar's rendered height (the token is in rem and follows the browser's text size).
+        const bar = document.querySelector<HTMLElement>("header[data-shell-chrome]")?.getBoundingClientRect().height || 52;
         window.scrollTo({ top: Math.max(0, el.getBoundingClientRect().top + window.scrollY - bar - 8), behavior });
       } else {
         el.scrollIntoView({ block: key === "differences" ? "center" : "start", behavior });

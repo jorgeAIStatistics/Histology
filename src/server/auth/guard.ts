@@ -45,6 +45,13 @@
  *   view are checked BEFORE the session is touched.
  *
  * STATE-CHANGING ROUTES also call requireSameOrigin(req) first.
+ *
+ * REFUSALS OF A SIGNED-IN PERSON (secured mode): a role without the view a
+ * page (requireView) or a read/export API (requireApiActor with `view`) needs
+ * is audited as auth.refused (view_denied), rate-limited: see
+ * src/server/auth/refusals.ts. A prefetch is not audited, and neither is
+ * currentViewer (it only asks whether something may be shown, for example
+ * whether to render a link).
  */
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -53,9 +60,10 @@ import { getDb } from "../db/db";
 import { roleCan, type ViewPermission } from "@/lib/roles";
 import type { Actor } from "../core/context";
 import { LOCKED_MESSAGE, runtimeMode, type RuntimeMode } from "../runtime-mode";
-import { actorIdFromRequest, demoActor, getActorId } from "../session";
+import { actorIdFromRequest, correlationIdFor, correlationIdFromHeaders, demoActor, getActorId } from "../session";
 import { authConfig, sessionCookieName } from "./config";
 import { readCookie } from "./cookies";
+import { auditSignedInRefusal } from "./refusals";
 import { resolveSession, sessionPolicyFromEnv, touchSession, type SessionFailureReason, type SessionInfo } from "./sessions";
 import { safeReturnTo } from "./transactions";
 
@@ -91,6 +99,11 @@ export interface GuardFail {
   message: string;
   /** Lock state and expiry for a locked or expired session (never an actor or any lab data). */
   session?: Pick<SessionInfo, "expiresAt" | "lockedAt">;
+  /**
+   * Server side only, never sent: a signed-in person refused a view (secured mode), for the refusal audit
+   * (src/server/auth/refusals.ts). guardFailureResponse does not serialize it.
+   */
+  refused?: { staffId: string; sessionIdHash: string; view: ViewPermission };
 }
 
 export type GuardResult = GuardOk | GuardFail;
@@ -184,7 +197,10 @@ export function resolveViewer(input: GuardInput, opts: GuardOptions): GuardResul
   if (!r.ok) return sessionFailure(r.reason, r.session);
   const actor: Actor = { id: r.staff.id, name: r.staff.name, role: r.staff.role };
   if (opts.view && !roleCan(actor.role, opts.view)) {
-    return fail("secured", 403, "FORBIDDEN", "view_denied", "Not allowed: this role cannot open this screen.");
+    return {
+      ...fail("secured", 403, "FORBIDDEN", "view_denied", "Not allowed: this role cannot open this screen."),
+      refused: { staffId: actor.id, sessionIdHash: r.session.idHash, view: opts.view },
+    };
   }
   if (opts.checkActorHeader && (input.actorHeader ?? "").trim() !== actor.id) {
     return fail("secured", 409, "ACTOR_MISMATCH", "actor_mismatch");
@@ -204,11 +220,25 @@ export function sessionCookieFromHeader(cookieHeader: string | null | undefined)
   return readCookie(cookieHeader, sessionCookieName(cfg.config.secureCookies));
 }
 
-/** Route handlers: resolve the actor from a plain Request. */
+/** Records a signed-in person's refused view (secured mode; rate-limited, no request content). */
+function auditRefusedView(f: GuardFail, db: DB, correlationId: string, now?: number): void {
+  if (!f.refused) return;
+  auditSignedInRefusal(db, {
+    staffId: f.refused.staffId,
+    kind: "view_denied",
+    target: f.refused.view,
+    permission: f.refused.view,
+    sessionIdHash: f.refused.sessionIdHash,
+    correlationId,
+    now,
+  });
+}
+
+/** Route handlers: resolve the actor from a plain Request. A refused view of a signed-in person is audited. */
 export function requireApiActor(req: Request, opts: GuardOptions): GuardResult {
   const mode = runtimeMode();
   if (mode === "locked") return fail("locked", 401, "AUTH_REQUIRED", "not_configured");
-  return resolveViewer(
+  const r = resolveViewer(
     {
       sessionCookie: mode === "secured" ? sessionCookieFromHeader(req.headers.get("cookie")) : undefined,
       demoActorId: mode === "demo" ? actorIdFromRequest(req) : "",
@@ -216,6 +246,8 @@ export function requireApiActor(req: Request, opts: GuardOptions): GuardResult {
     },
     opts,
   );
+  if (!r.ok && r.refused) auditRefusedView(r, opts.db ?? getDb(), correlationIdFor(req), opts.now);
+  return r;
 }
 
 /** JSON response for a guard failure: { ok: false, error: { code, message, details: { reason } } }, never any data. */
@@ -252,7 +284,7 @@ export function redirectTargetFor(f: GuardFail, returnTo: string): string {
   }
 }
 
-async function pageInput(): Promise<{ input: GuardInput; returnTo: string; prefetch: boolean; background: boolean }> {
+async function pageInput(): Promise<{ input: GuardInput; returnTo: string; prefetch: boolean; background: boolean; correlationId: string }> {
   const mode = runtimeMode();
   const h = await headers();
   let sessionCookie: string | undefined;
@@ -270,6 +302,8 @@ async function pageInput(): Promise<{ input: GuardInput; returnTo: string; prefe
     // router.refresh() from LiveRefresh, a client-side navigation or a prefetch) is not activity; the click behind
     // a navigation is already reported by the client (POST /api/auth/activity after real input).
     background: (h.get("sec-fetch-dest") ?? "document") !== "document",
+    // For a refusal audited from a page guard (same rule as the API routes: a well-formed X-Request-Id, else a new id).
+    correlationId: correlationIdFromHeaders(h),
   };
 }
 
@@ -292,12 +326,18 @@ export async function requireActor(): Promise<Actor> {
   return r.actor;
 }
 
-/** Pages: the signed-in actor holding `view`, or a redirect (sign-in, locked, no access, 403). */
+/**
+ * Pages: the signed-in actor holding `view`, or a redirect (sign-in, locked, no access, 403). A signed-in person
+ * refused the view is audited (auth.refused, rate-limited), except for a prefetch.
+ */
 export async function requireView(view: ViewPermission): Promise<Actor> {
   if (runtimeMode() === "locked") redirect("/locked");
-  const { input, returnTo, prefetch, background } = await pageInput();
+  const { input, returnTo, prefetch, background, correlationId } = await pageInput();
   const r = resolveViewer(input, { touch: !prefetch && !background, view });
-  if (!r.ok) redirect(redirectTargetFor(r, returnTo));
+  if (!r.ok) {
+    if (r.refused && !prefetch) auditRefusedView(r, getDb(), correlationId);
+    redirect(redirectTargetFor(r, returnTo));
+  }
   return r.actor;
 }
 

@@ -450,18 +450,28 @@ function NextStepSheet({
   const actionRef = useRef<HTMLDivElement>(null);
   const foldRef = useRef<HTMLDivElement>(null);
   // The sheet may give up body lines to a short column, never its heading, the cue or its action:
-  // its card is floored at heading + 3rem + action (the card itself is otherwise free to shrink).
+  // its card is floored at heading + body + action (the card itself is otherwise free to shrink). The body keeps
+  // at least 48px, and at least its "More below" cue plus one whole line of the details (at a larger text size the
+  // cue alone is taller than 48px, which left no line of the step to read, scroll to or focus).
   useEffect(() => {
     const card = rootRef.current?.parentElement;
     if (!card) return;
+    const cue = () => rootRef.current?.querySelector<HTMLElement>("[data-cut-cue]") ?? null;
+    const bodyFloor = () => {
+      const c = cue();
+      const line = 1.25 * (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16); // text-sm leading-5
+      return Math.max(48, c ? Math.ceil(c.offsetHeight + 1 + line) : 0);
+    };
     const floor = () => {
-      const h = (titleRef.current?.offsetHeight ?? 0) + (actionRef.current?.offsetHeight ?? 0) + (hasBody && !folded ? 48 : 0) + (folded ? (foldRef.current?.offsetHeight ?? 0) : 0) + 2;
+      const h = (titleRef.current?.offsetHeight ?? 0) + (actionRef.current?.offsetHeight ?? 0) + (hasBody && !folded ? bodyFloor() : 0) + (folded ? (foldRef.current?.offsetHeight ?? 0) : 0) + 2;
       card.style.minHeight = `${h}px`;
     };
     floor();
     const ro = new ResizeObserver(floor);
     if (titleRef.current) ro.observe(titleRef.current);
     if (actionRef.current) ro.observe(actionRef.current);
+    const c = cue();
+    if (c) ro.observe(c);
     return () => {
       ro.disconnect();
       card.style.minHeight = "";

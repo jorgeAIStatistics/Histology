@@ -33,6 +33,7 @@
    - The client also locks the screen on its own idle timer, and on the user's request ("Lock").
    - A locked session can read nothing and write nothing. The lock screen shows **no patient, case or operator details**.
    - Unlocking requires signing in again at the provider. If a different person signs in, the old session is revoked and a new one starts: a workstation hand-over.
+   - Re-authentication and unlock **rotate the session id**: a new cookie is issued and the old id is revoked as `rotated`. The session keeps its start time and absolute expiry (2026-10-24).
 5. **Sign-out.** `POST /api/auth/logout` revokes the session, clears the cookie, audits `auth.signed_out`, then offers the provider's end-session endpoint if it advertises one.
 6. **Workstation hand-over safety.** Every command carries the actor the page was rendered for (`X-HLOS-Actor`). If it differs from the session's staff member, the request gets 409 `ACTOR_MISMATCH` and nothing is recorded. An action is therefore never attributed to the next operator because the screen was left open.
 7. **Re-authentication.** Commands marked `sensitive` require `auth_time` within `HLOS_REAUTH_MAX_AGE_MIN` (default 5) minutes; otherwise they get 401 `REAUTH_REQUIRED`. The screen keeps the user's input and offers "Confirm it's you", which redirects to the provider and returns to the same page. Nothing is replayed automatically. The sensitive commands are:
