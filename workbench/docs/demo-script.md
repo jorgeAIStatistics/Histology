@@ -2,14 +2,14 @@
 
 *DermPath Research Workbench (working name). Research use only. For a five-minute meeting with the medical director, presented by Jorge Rodriguez.*
 
-Every step below was walked in a dry run on 2026-10-26: production build (`npm run build && npm start`), fresh demo data, Chromium at 1440 × 900. Text in quotation marks is the exact on-screen label. The walkthrough follows the brief: a fictional case with two specimen parts, a QC issue, expert review and an approved label, a frozen dataset, a reproducible experiment, error inspection and adjustable economic impact, after the 60-second "Why this matters".
+Every step below was walked in a dry run on 2026-10-26: production build (`npm run build && npm start`), fresh demo data, Chromium at 1440 × 900. After that dry run the frontend iteration changed the Overview (a scroll-through of one slide), message placement on Slide Review and the Freeze dialog (open items must be acknowledged). Those three passages were updated from the built pages and are covered by automated browser tests (`tests/e2e/iteration.spec.ts`), not by a second walk-through with a timer; rehearse them once. Text in quotation marks is the exact on-screen label. The walkthrough follows the brief: a fictional case with two specimen parts, a QC issue, expert review and an approved label, a frozen dataset, a reproducible experiment, error inspection and adjustable economic impact, after the 60-second "Why this matters".
 
 **Conventions**
 
 - **Role menu** is the button at the top right that shows the current demo user. It is a demo role switch, not authentication. The names in it (Sam Rivera, Dr. Imani Castell, Priya Navarro, Dr. Elena Marsh, Jordan Pike) are **fictional demo users**: on-screen labels, not people. Click the name; the role is printed under it.
 - **Nav** is the top navigation: "Overview", "Worklist", "Slide Review", "Dataset", "Experiments", "Impact".
 - Slide pages (`/review/…`) and run pages (`/experiments/…`) get new IDs after every reset. Always get there by clicking, never from a saved link.
-- A green message box appears at the bottom right after each save and stays about 4 seconds. On Slide Review it can cover the next button ("Resolve issue", "Confirm: Approved"): close it with × or wait.
+- A message box confirms each save and stays about 4 seconds (longer while the pointer is on it). On Slide Review it appears over the slide's bottom-left corner, never over the review panel's buttons; elsewhere it appears at the bottom right. Inside a dialog, messages appear in the dialog itself, above its buttons.
 
 ## The case: DEMO-S26-0003 (coded patient P-0003)
 
@@ -51,7 +51,7 @@ cd workbench/web && npm run build && npm start      # http://localhost:3600
 - [ ] Do not rehearse after the reset, or reset again afterwards: the demo writes records (a QC resolution, an approval, a dataset, two runs).
 - [ ] Start position: role menu → "Sam Rivera" (Histology assistant); nav "Overview"; scroll to the top; let the message box disappear.
 - [ ] Window at least 1440 × 900, zoom 100 %. Close every other window and tab; notifications off. **No real patient material is open on this machine.**
-- [ ] Fallback: the twelve images in `workbench/docs/screenshots/` (01-overview … 12-impact-calculator) open in an image viewer.
+- [ ] Fallback: the fourteen images in `workbench/docs/screenshots/` (01-overview … 14-freeze-acknowledgement) open in an image viewer.
 
 Dry-run timings (production build, local machine): every action answered in under 0.5 s, apart from waiting for a message box to clear; the first slide tile was drawn about 70 ms after the viewer started; two experiment runs finished about 5 s after the first click. The five minutes are set by what you say, so rehearse once with a timer.
 
@@ -63,7 +63,9 @@ Dry-run timings (production build, local machine): every action answered in unde
 
 ## 0:15–1:15. Why this matters (60 seconds)
 
-**Screen:** Overview. Point to the panel "The five-minute walkthrough · one fictional case, end to end" (six steps). Then scroll down to "We build this to augment pathologists, not to replace them." and its five commitments.
+**Screen:** Overview. Scroll slowly: the public CC0 slide stays on the right while five numbered steps pass on the left. At step 2 ("The screen finds tissue; people record the problems") the background fades and the readout under the slide shows "28.2%"; at step 4 ("Patches at a known scale") the 41 patches appear. Keep going past "After the freeze, synthetic data only" to "We build this to augment pathologists, not to replace them." and its five commitments. The six-step walkthrough panel ("The five-minute walkthrough", "One fictional case, end to end") is at the bottom, beside "Open the worklist".
+
+If asked about the slide: it is a public CC0 test image from the OpenSlide project, not a patient of the lab. The tissue mask and the patches were computed by the prototype's own code; the outline at step 3 is marked as illustrative, and no diagnosis is shown or inferred.
 
 > "I would like to explore building a tool around how you already work. The goal is to give you more time for the cases that need your judgement, by reducing repetitive work and helping the lab organise and learn from its slides. You would define what matters, review every suggestion the software makes and stay in control. We would start with one small research pilot and measure whether it actually saves time and supports consistent decisions. If the measurements say it does not, we stop or change course."
 
@@ -131,15 +133,15 @@ Dry-run timings (production build, local machine): every action answered in unde
 1. Role menu → "Priya Navarro". Nav "Dataset". The seeded "Workflow demo slides — pipeline test (synthetic) · v1" opens first (frozen before the demo: 8 slides from 4 patients).
 2. "New draft" → dialog "New dataset draft". Keep the defaults (Name "BCC slide-level research set", "Initial split": "Random, grouped by coded patient (60 / 20 / 20)", Seed 7) → "Create draft".
 3. Point to "What is in it": "5 unique coded patients → 6 unique cases → 7 unique blocks → 9 unique slides", and "Patients are the unit that matters for leakage: 9 slides come from only 5 coded patients." P-0003 is in because you approved its slide a minute ago. Point to "Exclusions, with reasons": "8 slides in the project did not enter", including "Excluded by a resolved QC issue 1" (Part B) and "Open reader disagreement 1" (Level 2).
-4. "Freeze" → dialog "Freeze BCC slide-level research set v1?" with the counts and the split → "Freeze permanently". The "Manifest" tab opens: "Hash verified now", "sha256 …" (64 characters, different after every reset), and the table "Items (9)", which includes the row P-0003 · "DEMO-S26-0003 / A / A1 / L1" H&E · "BCC present" with its split.
+4. "Freeze" → dialog "Freeze BCC slide-level research set v1?" with the counts and the split. Below them, an amber box "… open item(s) would be frozen into this version" lists the seeded open fold (and a near-duplicate pair when the random split put its two slides on different sides). Tick "Freeze anyway and record these items in the manifest", type a reason (for example "demo: open items kept on purpose"), then "Freeze permanently". The "Manifest" tab opens: "Hash verified now", "sha256 …" (64 characters, different after every reset), the amber note "Frozen with acknowledged open items" with your reason, and the table "Items (9)", which includes the row P-0003 · "DEMO-S26-0003 / A / A1 / L1" H&E · "BCC present" with its split.
 5. Tab "Splits and test lock": patients and slides per split, the guarantee "every slide, level and stain of one coded patient is in exactly one split", and "Test set lock … locked away from training, active learning and threshold selection … audited."
 
 Read the split off the screen. It is random by patient and changed between resets in the dry run (train 3 patients with 5 or 7 slides; validation 1 patient; test 1 patient with 3 or 1 slides). The 5 / 6 / 7 / 9 counts did not change.
 
 **Say:**
-> "Freezing records the exact image hashes, label versions and split assignments. If a label changes later, we get a new version; this one never changes. Every slide from one patient lands on the same side, so the model is never tested on a patient it has already seen. The test set is locked away from training and tuning."
+> "Freezing records the exact image hashes, label versions and split assignments. If a label changes later, we get a new version; this one never changes. Every slide from one patient lands on the same side, so the model is never tested on a patient it has already seen. The test set is locked away from training and tuning. And it will not freeze over open problems silently: it lists them, and if we go ahead anyway, our reason is written into the record."
 
-If asked about the two warnings lower in the summary ("1 included slide has open QC issues (Fold). Resolve them before freezing." and a near-duplicate pair "in different splits: possible leakage · Awaiting human review"): they are seeded examples of what the summary surfaces before freezing. Freezing does not hide or fix them; in a real study the research lead resolves them first.
+If asked about the warnings lower in the summary ("1 included slide has open QC issues (Fold). Resolve them first, or record them with a reason when you freeze: freezing asks." and a near-duplicate pair "in different splits: possible leakage · Awaiting human review"): they are seeded examples. Freezing refuses until someone either resolves them or acknowledges them with a reason, and the acknowledgement becomes part of the hashed manifest. In a real study the research lead resolves them first.
 
 **Behind it:** `POST /projects/{pid}/datasets`, `GET /datasets/{id}/summary`, `POST /datasets/{id}/freeze`, `GET /datasets/{id}/manifest`.
 
@@ -229,11 +231,11 @@ Say what failed in plain words and move on. Do not improvise a claim to cover th
 |---|---|---|
 | "Choose a demo role", or "The API is not reachable" | No demo session, or the API is down | Pick the role from the list. If the API is down, restart it (`cd workbench/api && .venv/bin/uvicorn dermpath.main:app --port 8000`) and reload. |
 | A button is grey and its message names a role ("…needs the pathologist demo role…") | Wrong demo role | Role menu → the role the script names for that step. |
-| A green message box covers "Resolve issue" or "Confirm: Approved" | Messages stay about 4 s at the bottom right | Close it with × or wait. |
 | The worklist shows "SYN-…" cases or the wrong case | Project is still "Synthetic pipeline-test cohort" | Top bar "Project" → "BCC research template (demo)". |
 | The issue already says "Resolved", the slide is already "Approved", or "BCC slide-level research set" already exists | The data was used after the last reset | Show the record that is there (each issue's "History" says who did what), and reset before the next showing. |
 | "Approve" is unavailable: "Approval is blocked until the open disagreement is adjudicated." | You are on Level 2 (disputed) | Case rail → "Level 1 · H&E" under Part A. |
 | "Freeze" is unavailable: "Assign patient-grouped splits before freezing (Splits tab)." | "Initial split" was changed to "None yet" | Tab "Splits and test lock" → "Assign splits", then "Freeze". |
+| "Freeze permanently" answers "Resolve the open items first, or tick …" or "Give a reason …" | The draft includes open items (the seeded fold, perhaps a near-duplicate pair) | Tick "Freeze anyway and record these items in the manifest", type a reason, then "Freeze permanently". |
 | New runs stay "queued" ("waiting for the worker"); the status shows "Worker" not ok | Worker not running | Say so, open the finished seeded run "Workflow demo slides · meanpool_logreg (PIPELINE TEST)" for the provenance, and start the worker afterwards (`cd workbench/api && .venv/bin/python -m dermpath.worker`). |
 | "Loading tiles…" stays, or the image is blank | Tile request failed | Reload the page (Cmd+R). The image is synthetic; the step does not depend on it. |
 | Impact says "You have changed the fictional defaults" | Inputs remembered from a rehearsal | "Reset to fictional defaults". |

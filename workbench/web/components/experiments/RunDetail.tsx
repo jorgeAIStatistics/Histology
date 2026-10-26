@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, Lock, ShieldCheck } from "lucide-react";
 import { useApi } from "@/lib/useApi";
@@ -235,6 +236,7 @@ function ErrorCard({ item, runId, attention }: { item: ErrorItem & { threshold?:
 
 export function RunDetail({ runId }: { runId: string }) {
   const { can, demoUsers, projectId, setProjectId, me } = useSession();
+  const router = useRouter();
   const toast = useToast();
   const ml = useApi<{ items: unknown[] }>("/encoders");
   const run = useApi<Run & Record<string, unknown>>(`/experiments/${runId}`);
@@ -249,14 +251,18 @@ export function RunDetail({ runId }: { runId: string }) {
   const [alOut, setAlOut] = useState<{ items: { slide_id: string; reason: string; score: number | null }[]; pool: string; notice: string } | null>(null);
 
   // Align the header's project with the run's project once per run. Re-aligning on every change silently undid a
-  // project chosen in the top bar while this page was open (the switcher snapped back to the run's project).
+  // project chosen in the top bar while this page was open; that choice now opens the chosen project's experiments.
   const projectSynced = useRef<string | null>(null);
+  const runProject = run.data?.id === runId ? (run.data.project_id ?? null) : null;
   useEffect(() => {
-    const pid = run.data?.project_id;
-    if (!pid || !projectId || projectSynced.current === runId) return;
-    projectSynced.current = runId;
-    if (pid !== projectId && me?.memberships.some((m) => m.project_id === pid)) setProjectId(pid);
-  }, [run.data?.project_id, projectId, me, setProjectId, runId]);
+    if (!runProject || !projectId) return;
+    if (projectSynced.current !== runId) {
+      projectSynced.current = runId;
+      if (runProject !== projectId && me?.memberships.some((m) => m.project_id === runProject)) setProjectId(runProject);
+      return;
+    }
+    if (runProject !== projectId) router.push("/experiments");
+  }, [runProject, projectId, me, setProjectId, runId, router]);
 
   const active = run.data && (run.data.status === "queued" || run.data.status === "running");
   useEffect(() => {

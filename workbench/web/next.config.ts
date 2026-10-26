@@ -14,6 +14,8 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: ROOT,
   // Do not write AGENTS.md / CLAUDE.md into the project on `next dev`.
   agentRules: false,
+  // No page uses next/image; switch the optimizer off so its endpoint is not exposed at all.
+  images: { unoptimized: true },
   async rewrites() {
     return [{ source: "/api/v1/:path*", destination: `${API}/api/v1/:path*` }];
   },

@@ -510,6 +510,17 @@ export interface ManifestItem {
   partition: string | null;
 }
 
+export interface FreezeWarnings {
+  open_qc_issues: { slide_id: string; open_issues: { id: string; category: string; status: string }[] }[];
+  unreviewed_near_duplicates: DatasetSummary["duplicates"]["near_duplicate_candidates"];
+}
+
+/** GET /datasets/{id}/freeze-check: what freezing would lock in that a person should look at first. */
+export interface FreezeCheck extends FreezeWarnings {
+  slides: Record<string, { accession_code: string | null; part: string | null; block: string | null; level_index: number | null; stain: string | null }>;
+  requires_acknowledgement: boolean;
+}
+
 export interface Manifest {
   manifest: {
     schema: string;
@@ -527,6 +538,8 @@ export interface Manifest {
     items: ManifestItem[];
     splits: { coded_patient_id: string; patient_code: string; split: string; partition: string }[];
     exclusions: unknown[];
+    /** Present when the version was frozen with open items a research lead acknowledged. */
+    acknowledged_warnings?: FreezeWarnings & { reason: string; acknowledged_by: string };
   };
   manifest_sha256: string;
   verified: boolean;

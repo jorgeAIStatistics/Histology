@@ -7,7 +7,7 @@ import { api, findSlide, loginAs, USERS, waitForViewer } from "./helpers";
 const OUT = path.resolve(__dirname, "../../../docs/screenshots");
 async function shot(page: Page, name: string) {
   // Hide transient confirmation toasts so they do not cover the view.
-  await page.addStyleTag({ content: '[data-testid="toaster"] { display: none !important; }' });
+  await page.addStyleTag({ content: '[data-testid="toaster"], [data-testid="dialog-messages"] { display: none !important; }' });
   await page.waitForTimeout(150);
   await page.screenshot({ path: path.join(OUT, name), animations: "disabled" });
 }
@@ -33,7 +33,15 @@ test("key views", async ({ page, context }) => {
   // 1. Overview, before any role is chosen.
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await page.waitForFunction(() => document.getAnimations().every((a) => a.playState !== "running"));
   await shot(page, "01-overview.png");
+  // 13. The slide journey at the patch step: the prototype's own tissue mask and 41-patch grid on the CC0 slide.
+  await page.locator('[data-step="4"]').evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    window.scrollBy(0, r.top + r.height / 2 - window.innerHeight / 2);
+  });
+  await page.waitForTimeout(400);
+  await shot(page, "13-overview-slide-journey.png");
 
   // 2. Worklist as the histology assistant.
   await loginAs(page, USERS.assistant);
@@ -124,8 +132,17 @@ test("key views", async ({ page, context }) => {
   await expect(page.getByTestId("dataset-summary")).toBeVisible();
   await shot(page, "06-dataset-summary.png");
   await page.getByTestId("freeze-open").click();
-  await expect(page.getByTestId("freeze-dialog")).toBeVisible();
-  await page.getByTestId("freeze-dialog").getByLabel("Reason (optional)").fill("first research set for the pipeline test");
+  const freeze = page.getByTestId("freeze-dialog");
+  await expect(freeze).toBeVisible();
+  await expect(freeze.getByTestId("freeze-warnings").or(freeze.getByTestId("freeze-clear"))).toBeVisible();
+  if (await freeze.getByTestId("freeze-warnings").isVisible()) {
+    // 14. Open items found before freezing: acknowledged with a reason that goes into the manifest.
+    await freeze.getByTestId("freeze-acknowledge").check();
+    await freeze.getByTestId("freeze-reason").fill("demo slides keep their open issues on purpose; recorded for the pipeline test");
+    await shot(page, "14-freeze-acknowledgement.png");
+  } else {
+    await freeze.getByTestId("freeze-reason").fill("first research set for the pipeline test");
+  }
   await page.getByTestId("freeze-confirm").click();
   await expect(page.getByTestId("manifest-verified")).toBeVisible();
   await page.waitForTimeout(500);

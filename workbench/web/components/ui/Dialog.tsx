@@ -3,8 +3,13 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { cn } from "./cn";
+import { useToastHost } from "./Toaster";
 
-/** Native <dialog> (modal): focus is trapped by the browser, Escape closes, focus returns to the opener. */
+/**
+ * Native <dialog> (modal): focus is trapped by the browser, Escape closes, focus returns to the opener.
+ * Messages raised while it is open (including "not available" explanations) appear in its own outlet above the footer,
+ * because a modal dialog covers the page's message area.
+ */
 export function Dialog({
   open,
   onClose,
@@ -26,6 +31,7 @@ export function Dialog({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
+  const toastHost = useToastHost();
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
@@ -43,7 +49,7 @@ export function Dialog({
         onClose();
       }}
       className={cn(
-        "m-auto max-h-[88vh] w-[min(560px,calc(100vw-2rem))] overflow-hidden rounded-[var(--radius-panel)] border border-line-strong bg-surface p-0 text-ink shadow-[0_24px_60px_-24px_rgba(30,35,39,0.6)] backdrop:bg-ink/40",
+        "wb-dialog m-auto max-h-[88vh] w-[min(560px,calc(100vw-2rem))] overflow-hidden rounded-[var(--radius-panel)] border border-line-strong bg-surface p-0 text-ink shadow-[0_24px_60px_-24px_rgba(30,35,39,0.6)] backdrop:bg-ink/40",
         wide && "w-[min(920px,calc(100vw-2rem))]",
       )}
     >
@@ -61,6 +67,7 @@ export function Dialog({
             </button>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+          <div ref={toastHost} role="status" aria-live="polite" data-testid="dialog-messages" className="flex flex-col gap-2 px-5 empty:hidden [&:not(:empty)]:pb-3" />
           {footer ? <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line bg-paraffin/50 px-5 py-3">{footer}</div> : null}
         </div>
       ) : null}

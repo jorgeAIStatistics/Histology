@@ -21,9 +21,23 @@ const toneIcon: Record<Tone, ReactNode> = {
   neutral: <Info size={16} className="text-graphite" aria-hidden />,
 };
 
-export function Notice({ tone = "info", title, children, className, role }: { tone?: Tone; title?: ReactNode; children?: ReactNode; className?: string; role?: "status" | "alert" | "note" }) {
+export function Notice({
+  tone = "info",
+  title,
+  children,
+  className,
+  role,
+  testId,
+}: {
+  tone?: Tone;
+  title?: ReactNode;
+  children?: ReactNode;
+  className?: string;
+  role?: "status" | "alert" | "note";
+  testId?: string;
+}) {
   return (
-    <div role={role ?? (tone === "error" ? "alert" : "note")} className={cn("flex gap-2.5 rounded-[var(--radius-control)] border px-3 py-2.5 text-small", toneStyle[tone], className)}>
+    <div role={role ?? (tone === "error" ? "alert" : "note")} data-testid={testId} className={cn("flex gap-2.5 rounded-[var(--radius-control)] border px-3 py-2.5 text-small", toneStyle[tone], className)}>
       <span className="mt-0.5 shrink-0">{toneIcon[tone]}</span>
       <div className="min-w-0 flex-1 space-y-1">
         {title ? <p className="font-semibold">{title}</p> : null}

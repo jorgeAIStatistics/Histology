@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { CheckCircle2, OctagonAlert } from "lucide-react";
 import { useApi } from "@/lib/useApi";
-import { LABEL_SHORT, formatDateTime, shortHash } from "@/lib/format";
+import { LABEL_SHORT, formatDateTime, humanize, shortHash, userName } from "@/lib/format";
 import type { DatasetVersion, Manifest } from "@/lib/types";
 import { ErrorBox, Loading, Notice } from "@/components/ui/Notice";
 import { Button } from "@/components/ui/Button";
@@ -12,12 +12,14 @@ import { useSession } from "@/lib/session";
 type Staleness = { stale: boolean; changed_labels: { slide_id: string; dataset_value: string; current_value: string | null; current_status: string }[]; action: string };
 
 export function ManifestPanel({ dv, onNewVersion }: { dv: DatasetVersion; onNewVersion: () => void }) {
-  const { can } = useSession();
+  const { can, demoUsers } = useSession();
   const m = useApi<Manifest>(`/datasets/${dv.id}/manifest`);
   const st = useApi<Staleness>(`/datasets/${dv.id}/staleness`);
   if (m.error) return <ErrorBox error={m.error} what="load the manifest" />;
   if (!m.data) return <Loading label="Loading the manifest" />;
   const man = m.data.manifest;
+  const ackd = man.acknowledged_warnings;
+  const ackIssues = ackd ? ackd.open_qc_issues.reduce((n, w) => n + w.open_issues.length, 0) : 0;
   return (
     <div className="space-y-4" data-testid="manifest-panel">
       <section className="rounded-[var(--radius-panel)] border border-line bg-surface p-4">
@@ -50,6 +52,28 @@ export function ManifestPanel({ dv, onNewVersion }: { dv: DatasetVersion; onNewV
         </dl>
         {man.notice ? <p className="mt-2 text-small text-hema">Recorded in the manifest: {man.notice}</p> : null}
       </section>
+
+      {ackd ? (
+        <Notice tone="warning" title="Frozen with acknowledged open items" testId="manifest-acknowledged">
+          <p>
+            {userName(ackd.acknowledged_by, demoUsers)} froze this version with {ackIssues} open quality issue{ackIssues === 1 ? "" : "s"}
+            {ackd.unreviewed_near_duplicates.length ? ` and ${ackd.unreviewed_near_duplicates.length} unreviewed near-duplicate pair${ackd.unreviewed_near_duplicates.length === 1 ? "" : "s"}` : ""}. Reason
+            recorded: &ldquo;{ackd.reason}&rdquo;
+          </p>
+          {ackd.open_qc_issues.length ? (
+            <ul className="mt-1 list-disc pl-5">
+              {ackd.open_qc_issues.map((w) => (
+                <li key={w.slide_id}>
+                  <Link href={`/review/${w.slide_id}`} className="text-teal-deep underline">
+                    {man.items.find((it) => it.slide_id === w.slide_id)?.accession_code ?? w.slide_id.slice(0, 8)}
+                  </Link>
+                  : {w.open_issues.map((i) => humanize(i.category)).join(", ")}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </Notice>
+      ) : null}
 
       {st.data?.stale ? (
         <Notice tone="warning" title={`${st.data.changed_labels.length} label${st.data.changed_labels.length === 1 ? "" : "s"} changed since this version was frozen`}>

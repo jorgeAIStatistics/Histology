@@ -388,6 +388,11 @@ def test_freeze_with_open_qc_issue_requires_acknowledgement_recorded_in_manifest
     assert issue.status_code in (200, 201), issue.text
     ds = _create(lead, "gate", split={"partition": "random", "seed": 4})
 
+    check = lead.get(f"/api/v1/datasets/{ds['id']}/freeze-check").json()
+    assert check["requires_acknowledgement"] is True
+    assert any(w["slide_id"] == sid for w in check["open_qc_issues"])
+    assert check["slides"][sid]["accession_code"] and check["slides"][sid]["part"]
+
     refused = lead.post(f"/api/v1/datasets/{ds['id']}/freeze", json={"reason": "x"})
     assert refused.status_code == 409, refused.text
     err = refused.json()["error"]

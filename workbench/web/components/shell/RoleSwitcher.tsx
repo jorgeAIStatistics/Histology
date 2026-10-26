@@ -50,7 +50,14 @@ export function RoleSwitcher() {
   ) : (
     <span className="flex items-center gap-1.5 text-small font-semibold text-teal-deep">
       <UserRound size={16} aria-hidden />
-      {loading ? "Loading…" : "Choose a demo role"}
+      {loading ? (
+        "Loading…"
+      ) : (
+        <>
+          <span className="sm:hidden">Demo role</span>
+          <span className="hidden sm:inline">Choose a demo role</span>
+        </>
+      )}
       <ChevronDown size={14} aria-hidden />
     </span>
   );

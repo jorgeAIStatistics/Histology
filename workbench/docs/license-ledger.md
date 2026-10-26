@@ -55,23 +55,28 @@ workbench/api/.venv/bin/python -c "import importlib.metadata as m; [print(d.meta
 
 | Package (pinned) | Licence (npm registry) | Role | Status | Commercial-use implications |
 |---|---|---|---|---|
-| next 16.3.8 | MIT | Web framework | USED | Permissive. |
+| next 16.4.2 | MIT | Web framework | USED | Permissive. Upgraded from 16.3.8 on 2026-10-26: `npm audit` reported critical advisories for 16.0.0–16.4.0 (GHSA-2464-fhr4-w9xw, GHSA-p3m5-59mp-jv5r, GHSA-673q-mjm6-r5xr). The workbench uses none of the affected features (next/image, server actions, `use cache`), and the image optimiser is now switched off in `next.config.ts`. |
 | react 19.2.8, react-dom 19.2.8 | MIT | UI library | USED | Permissive. |
 | openseadragon 6.1.1 | BSD-3-Clause (GitHub `LICENSE.txt` agrees) | Tile viewer | USED | Permissive; keep the notice and do not use the project's name to endorse ours. |
 | tailwindcss 4.3.3, @tailwindcss/postcss 4.3.3 | MIT | Styling | USED (build) | Permissive. |
 | lucide-react 0.577.0 | ISC | Icons | USED | Permissive. |
 | clsx 2.1.1, tailwind-merge 3.7.0 | MIT | Class utilities | USED | Permissive. |
 | typescript 5.9.3 | Apache-2.0 | Type checking | DEV/TEST | Permissive. |
-| vitest 4.1.11 | MIT | Unit tests (ROI calculator) | DEV/TEST | Permissive. |
+| vitest 4.1.12 | MIT | Unit tests (ROI calculator) | DEV/TEST | Permissive. Upgraded from 4.1.11 for GHSA-qxg6-89mg-rqv8 and GHSA-xp26-3454-mjgp (moderate). |
 | @playwright/test 1.64.0 | Apache-2.0 | Browser tests | DEV/TEST | Permissive. |
+| motion 14.1.0 (with framer-motion, motion-dom and motion-utils 14.1.0) | MIT (each package; npm registry) | Scroll-linked and value motion on the Overview and Impact pages only | USED | Permissive. Published 2026-10-09, pinned exactly. Loaded through `LazyMotion` with the `domAnimation` feature set, so working screens do not ship it. |
 
-**Transitive npm packages (169 in `package-lock.json`).** 101 MIT, 21 Apache-2.0, 5 ISC, 2 BSD-3-Clause, 1 0BSD, plus these that need attention:
+**Transitive npm packages (173 in `package-lock.json`, re-counted 2026-10-26).** 105 MIT, 21 Apache-2.0, 5 ISC, 2 BSD-3-Clause, 1 0BSD, plus these that need attention:
 
 | Package | Licence | Why it is there | Note |
 |---|---|---|---|
 | `@img/sharp-libvips-*` 1.3.4 (platform builds; the darwin-arm64 build is installed) and some `@img/sharp-*` builds | LGPL-3.0-or-later (some combined with Apache-2.0 and MIT) | Optional dependency of Next.js image optimisation (`sharp`) | Prebuilt libvips binaries. If a container image or bundle is **distributed**, keep the licence texts and the library replaceable; confirm with counsel. The workbench does not need Next.js image optimisation for slide tiles. |
 | `lightningcss` 1.32.0 / 1.33.0 and platform builds | MPL-2.0 | CSS tooling for the build | Build-time; file-level copyleft applies only to modified MPL files. |
 | `caniuse-lite` | CC-BY-4.0 | Browser-support data used by build tools | Attribution licence for data. |
+
+**Considered and not adopted: GSAP 3.15.0.** Its npm licence is GreenSock's "Standard 'no charge' license" (https://gsap.com/standard-license), which is not an OSI-approved open-source licence and carries its own use conditions. Motion (MIT) covers what the workbench needs (scroll progress, value tweens, in-view triggers), so GSAP was not installed. Revisit only with counsel if a GSAP-only feature (for example pinned timelines with ScrollTrigger) is ever needed.
+
+**Derived image assets.** `web/public/overview/*` (two WebP renderings of the slide and a background mask) and `web/lib/overview-data.json` are produced from the CC0 fixture `CMU-1-Small-Region.svs` by `scripts/build_overview_assets.py`, using the prototype's own QC and patching code. CC0 imposes no conditions; the source is credited on the page anyway.
 
 ## C. Infrastructure named in `docker-compose.yml` (written, not yet run)
 

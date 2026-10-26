@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
-import { Download, FileLock2, GitBranch, Lock, Plus, RefreshCw, Snowflake } from "lucide-react";
+import { Download, GitBranch, Lock, Plus, RefreshCw, Snowflake } from "lucide-react";
 import { useApi } from "@/lib/useApi";
 import { useSession } from "@/lib/session";
 import { api, errorText } from "@/lib/api";
@@ -17,6 +17,7 @@ import { TextField } from "@/components/ui/Field";
 import { useToast } from "@/components/ui/Toaster";
 import { cn } from "@/components/ui/cn";
 import { CreateDatasetDialog } from "./CreateDatasetDialog";
+import { FreezeDialog } from "./FreezeDialog";
 import { SummaryPanel } from "./SummaryPanel";
 import { SplitsPanel } from "./SplitsPanel";
 import { ManifestPanel } from "./ManifestPanel";
@@ -34,7 +35,6 @@ export function DatasetView() {
   const [tab, setTab] = useState("summary");
   const [createOpen, setCreateOpen] = useState(false);
   const [freezeOpen, setFreezeOpen] = useState(false);
-  const [freezeReason, setFreezeReason] = useState("");
   const [versionOpen, setVersionOpen] = useState(false);
   const [versionReason, setVersionReason] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -250,59 +250,16 @@ export function DatasetView() {
         }}
       />
 
-      <Dialog
+      <FreezeDialog
         open={freezeOpen}
         onClose={() => setFreezeOpen(false)}
-        title={dv ? `Freeze ${dv.name} v${dv.version}?` : "Freeze"}
-        testId="freeze-dialog"
-        description="Freezing is permanent. The manifest records the exact image hashes, label versions, split assignments and configuration. If a label changes later, create a new version; this one never changes."
-        footer={
-          <>
-            <Button onClick={() => setFreezeOpen(false)}>Keep as draft</Button>
-            <Button
-              variant="primary"
-              icon={<FileLock2 size={15} aria-hidden />}
-              busy={busy === "freeze"}
-              data-testid="freeze-confirm"
-              onClick={async () => {
-                if (!dv) return;
-                setBusy("freeze");
-                try {
-                  await api(`/datasets/${dv.id}/freeze`, { method: "POST", body: { reason: freezeReason || null } });
-                  toast.show({ tone: "success", title: "Frozen", body: "The manifest is immutable. The test split is locked away from training and tuning." });
-                  setFreezeOpen(false);
-                  setFreezeReason("");
-                  await reloadAll();
-                  setTab("manifest");
-                } catch (err) {
-                  toast.show({ tone: "error", title: "Not frozen", body: errorText(err) });
-                } finally {
-                  setBusy(null);
-                }
-              }}
-            >
-              Freeze permanently
-            </Button>
-          </>
-        }
-      >
-        {summary.data ? (
-          <ul className="space-y-1 text-small">
-            <li>
-              <strong>{summary.data.counts.patients}</strong> coded patients, <strong>{summary.data.counts.cases}</strong> cases, <strong>{summary.data.counts.blocks}</strong> blocks,{" "}
-              <strong>{summary.data.counts.slides}</strong> slides
-            </li>
-            <li>
-              Splits: {summary.data.splits.partition ?? "not assigned"} ·{" "}
-              {Object.entries(summary.data.splits.per_split)
-                .map(([k, v]) => `${k} ${v.patients} patients / ${v.slides} slides`)
-                .join(" · ")}
-            </li>
-            <li>{summary.data.exclusions.count} slides excluded, each with its reasons</li>
-          </ul>
-        ) : null}
-        <TextField className="mt-4" label="Reason (optional)" value={freezeReason} onChange={(e) => setFreezeReason(e.target.value)} />
-      </Dialog>
+        dv={dv}
+        summary={summary.data}
+        onFrozen={async () => {
+          await reloadAll();
+          setTab("manifest");
+        }}
+      />
 
       <Dialog
         open={versionOpen}

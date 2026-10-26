@@ -42,6 +42,17 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   useEffect(() => setMenuOpen(false), [pathname]);
+  // Publish the header's height so sticky page elements (the Overview slide) sit just below it at every width.
+  const headerRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const h = headerRef.current;
+    if (!h) return;
+    const set = () => document.documentElement.style.setProperty("--wb-header-h", `${Math.round(h.getBoundingClientRect().height)}px`);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(h);
+    return () => ro.disconnect();
+  }, []);
   const fullBleed = pathname.startsWith("/review/");
 
   return (
@@ -49,7 +60,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <a href="#main" className="sr-only-focusable fixed left-3 top-3 z-[70] rounded bg-ink px-3 py-2 text-white">
         Skip to content
       </a>
-      <header className="sticky top-0 z-40 border-b border-line bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/85">
+      <header ref={headerRef} className="sticky top-0 z-40 border-b border-line bg-surface/95 backdrop-blur supports-[backdrop-filter]:bg-surface/85">
         <div className="flex h-14 items-center gap-3 px-4 xl:gap-5 xl:px-6">
           <Wordmark />
           <nav aria-label="Main" className="hidden min-w-0 flex-1 md:block">

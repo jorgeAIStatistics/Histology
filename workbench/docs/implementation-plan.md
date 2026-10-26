@@ -146,7 +146,8 @@ workbench/
   - `GET /projects/{pid}/datasets`, `POST /projects/{pid}/datasets` (draft from a config);
   - `GET /datasets/{id}/summary` (patients, slides, blocks, label balance, batches, missing metadata, exclusions, agreement, duplicates);
   - `POST /datasets/{id}/splits` (patient-grouped; random, temporal or external_site);
-  - `POST /datasets/{id}/freeze`;
+  - `GET /datasets/{id}/freeze-check` (open QC issues a person raised or confirmed, and unreviewed near-duplicates across splits, with slide descriptors);
+  - `POST /datasets/{id}/freeze` (409 `freeze_warnings_unacknowledged` while freeze-check lists anything, unless `acknowledge_warnings` is sent with a reason; the list and the reason are then written into the manifest);
   - `GET /datasets/{id}/manifest`, `GET /datasets/{id}/export`.
 - **ML** (built by the ML pass):
   - `GET /encoders` (each with license metadata and dependency status: `available` | `missing_weights` | `missing_dependency`);

@@ -120,13 +120,70 @@
   }
 }
 
+/*
+  Motion. Working screens get only state transitions that answer an action (a dialog opening, a message arriving),
+  animated with transform and opacity alone. Scroll-linked motion lives on Overview and Impact (motion/react).
+  The reduced-motion rule below turns all of it into instant state changes.
+*/
+@keyframes wb-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes wb-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes wb-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.wb-toast {
+  animation: wb-rise 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.wb-dialog[open] {
+  animation: wb-dialog-in 200ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.wb-dialog[open]::backdrop {
+  animation: wb-fade-in 200ms ease-out;
+}
+/* Overview: on first load the slide is revealed top to bottom, the way a scanner reads it. One moment, once. */
+@keyframes wb-scan {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(101%);
+  }
+}
+.wb-scan-cover {
+  animation: wb-scan 1300ms cubic-bezier(0.45, 0, 0.2, 1) 200ms both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+    transition-delay: 0ms !important;
     scroll-behavior: auto !important;
   }
 }

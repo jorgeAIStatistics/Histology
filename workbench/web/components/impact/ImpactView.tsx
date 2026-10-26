@@ -5,6 +5,7 @@ import { RotateCcw } from "lucide-react";
 import { FICTIONAL_DEFAULTS, ILLUSTRATIVE_SUBSCRIPTIONS, arr, computeRoi, validateRoiInputs, valuation, type RoiInputs, type ScannerMode } from "@/lib/roi";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/components/ui/cn";
+import { AnimatedFigure, Composition, SectionNav } from "./ResultMotion";
 
 const STORE = "wb.roi.v1";
 const usd0 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
@@ -149,14 +150,17 @@ export function ImpactView() {
 
   return (
     <div className="mx-auto max-w-[1440px] px-4 pb-20 pt-6 md:px-6 xl:px-8">
-      <h1 className="text-display font-bold tracking-tight">Impact</h1>
-      <p className="mt-1 max-w-[78ch] text-graphite">
-        What a pilot could change for the lab, what it would cost, and how to tell whether it is worth it. Nothing here is a measured result: patient outcomes,
-        diagnostic accuracy and turnaround have not been studied, and none is claimed.
-      </p>
+      <header className="pb-5 pt-4">
+        <h1 className="text-[clamp(2.1rem,1.4rem+1.6vw,2.9rem)] font-bold leading-[1.08] tracking-[-0.022em]">Impact</h1>
+        <p className="mt-2 max-w-[72ch] text-lead text-graphite">
+          What a pilot could change for the lab, what it would cost, and how to tell whether it is worth it. Nothing here is a measured result: patient
+          outcomes, diagnostic accuracy and turnaround have not been studied, and none is claimed.
+        </p>
+      </header>
+      <SectionNav />
 
       <section aria-labelledby="contrib" className="mt-6 grid gap-4 lg:grid-cols-2">
-        <h2 id="contrib" className="sr-only">
+        <h2 id="contrib" className="sr-only scroll-mt-[calc(var(--wb-header-h,56px)+64px)]">
           Two connected contributions
         </h2>
         <article className="rounded-[var(--radius-panel)] border border-line bg-surface p-5">
@@ -184,7 +188,7 @@ export function ImpactView() {
       <section aria-labelledby="roi" className="mt-10">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 id="roi" className="text-title font-bold">
+            <h2 id="roi" className="scroll-mt-[calc(var(--wb-header-h,56px)+64px)] text-title font-bold">
               Live ROI calculator
             </h2>
             <p className="mt-1 max-w-[78ch] text-small text-graphite">Every input is editable. The result updates as you type, including when the pilot does not pay.</p>
@@ -296,9 +300,14 @@ export function ImpactView() {
             </Group>
           </div>
 
-          <aside aria-label="Results" className="space-y-4 xl:sticky xl:top-20" aria-live="polite">
+          <aside aria-label="Results" className="space-y-4 xl:sticky xl:top-[calc(var(--wb-header-h,56px)+64px)]" aria-live="polite">
             <div className="rounded-[var(--radius-panel)] border border-line-strong bg-sheet p-5" data-testid="roi-results">
-              <h3 className="font-bold">Result with these inputs</h3>
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="font-bold">Result with these inputs</h3>
+                <span className="rounded-[3px] bg-amber-tint px-1.5 py-0.5 text-micro font-bold text-amber-ink" data-testid="roi-fictional-chip">
+                  {isDefault ? "Fictional defaults" : "Fictional, edited"}
+                </span>
+              </div>
               {!r ? (
                 <p className="mt-2 text-small text-rust" data-testid="roi-invalid">
                   Fix the highlighted inputs to see a result: {issues.length} problem{issues.length === 1 ? "" : "s"}.
@@ -307,8 +316,11 @@ export function ImpactView() {
                 <>
                   <div className={cn("mt-3 rounded-[var(--radius-control)] px-4 py-3", r.annualNetCashBenefit < 0 ? "bg-rust-tint" : "bg-approved-tint")}>
                     <p className="text-small font-semibold text-ink">Annual net cash benefit</p>
-                    <p className={cn("tabular text-[2.1rem] font-bold leading-tight", r.annualNetCashBenefit < 0 ? "text-rust" : "text-approved")} data-testid="roi-annual-net">
-                      {money(r.annualNetCashBenefit)}
+                    <p className={cn("tabular text-[2.1rem] font-bold leading-tight transition-colors duration-300", r.annualNetCashBenefit < 0 ? "text-rust" : "text-approved")}>
+                      <span className="sr-only" data-testid="roi-annual-net">
+                        {money(r.annualNetCashBenefit)}
+                      </span>
+                      <AnimatedFigure value={r.annualNetCashBenefit} format={money} />
                     </p>
                     <p className="text-small text-ink" data-testid="roi-verdict">
                       {r.annualNetCashBenefit < 0
@@ -318,6 +330,7 @@ export function ImpactView() {
                           : "Positive every year, before one-time costs."}
                     </p>
                   </div>
+                  <Composition r={r} format={money} />
                   <dl className="mt-3">
                     <Line sign="+" label={`Realised labour savings (${Math.round(inp.realizationFraction * 100)}% of released capacity)`} value={r.realizedLaborSavings} testId="roi-realized" />
                     <Line sign="+" label={`Avoided rework (${num1.format(r.avoidedRepeats)} repeats × ${money(r.incrementalCostPerRepeat)})`} value={r.avoidedReworkCost} testId="roi-rework" />
@@ -405,7 +418,7 @@ export function ImpactView() {
       </section>
 
       <section aria-labelledby="biz" className="mt-12 border-t border-line pt-8">
-        <h2 id="biz" className="text-title font-bold">
+        <h2 id="biz" className="scroll-mt-[calc(var(--wb-header-h,56px)+64px)] text-title font-bold">
           Business-model scenarios
         </h2>
         <ul className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">

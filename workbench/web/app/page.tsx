@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
+import { SlideJourney } from "@/components/overview/SlideJourney";
 
 export const metadata: Metadata = { title: "Why this matters" };
 
@@ -36,45 +37,37 @@ const NOW_FUTURE: [string, string][] = [
 
 export default function OverviewPage() {
   return (
-    <div className="mx-auto max-w-[1280px] px-4 pb-20 pt-10 md:px-8">
-      <section aria-labelledby="hero" className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)] lg:items-end">
+    <div className="mx-auto max-w-[1280px] px-4 pb-20 pt-4 md:px-8 lg:pt-4">
+      <SlideJourney />
+
+      <section aria-labelledby="after" className="mt-6 grid gap-6 border-t border-line pt-10 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
         <div>
-          <p className="text-small font-semibold text-teal-deep">Why this matters</p>
-          <h1 id="hero" className="mt-2 max-w-[18ch] text-[2.6rem] font-bold leading-[1.08] tracking-[-0.02em] text-ink md:text-[3.1rem]">
-            More time for the cases that need a pathologist&rsquo;s judgement.
-          </h1>
-          <p className="mt-5 max-w-[56ch] text-lead text-graphite">
-            A research prototype built around how the lab already works: it links slide quality, expert review and honest evaluation, so a small pilot can
-            measure whether repetitive work actually goes down. The pathologist defines what matters, reviews every suggestion and stays in control.
-          </p>
-          <p className="mt-4 max-w-[56ch] text-small text-graphite">
-            Research use only. Fictional workflow records, procedural synthetic images and one public CC0 test slide. No patient data, no diagnostic
-            capability, and no endorsement by any physician or employer is implied.
+          <h2 id="after" className="text-title font-bold">
+            After the freeze, synthetic data only
+          </h2>
+          <p className="mt-3 max-w-[48ch] text-graphite">
+            Training and evaluation run end to end, but on synthetic embeddings. They prove the plumbing, not pathology performance, and every result says so.
           </p>
         </div>
-        <figure aria-labelledby="walkthrough-caption" className="rounded-[var(--radius-panel)] border border-line bg-surface p-5">
-          <figcaption id="walkthrough-caption" className="flex items-baseline justify-between gap-3">
-            <span className="font-bold text-ink">The five-minute walkthrough</span>
-            <span className="text-small text-graphite">one fictional case, end to end</span>
-          </figcaption>
-          <ol className="mt-4 space-y-0">
-            {STAGES.map((s, i) => (
-              <li key={s.n} className="relative grid grid-cols-[2rem_minmax(0,1fr)_auto] gap-x-3 pb-4 last:pb-0">
-                {i < STAGES.length - 1 ? <span aria-hidden className="absolute left-[0.95rem] top-8 bottom-0 w-px bg-line-strong" /> : null}
-                <span className="relative z-10 flex h-8 w-8 items-center justify-center rounded-full border border-teal/40 bg-teal-tint text-small font-bold text-teal-deep">{s.n}</span>
-                <div className="min-w-0 pt-0.5">
-                  <p className="font-semibold text-ink">
-                    {s.title} <span className="font-normal text-graphite">· {s.who}</span>
-                  </p>
-                  <p className="text-small text-graphite">{s.what}</p>
-                </div>
-                <Link href={s.href} className="self-start rounded px-1 pt-1 text-small font-semibold text-teal-deep underline-offset-2 hover:underline">
-                  {s.screen}
-                </Link>
-              </li>
-            ))}
-          </ol>
-        </figure>
+        <ul className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
+          <li className="border-l-[3px] border-hema pl-3">
+            <p className="font-bold text-ink">Experiments</p>
+            <p className="mt-0.5 text-small text-graphite">
+              A reproducible run with denominators, patient-cluster intervals and the error list, under the banner &ldquo;PIPELINE TEST — NOT PATHOLOGY
+              VALIDATION&rdquo;.
+            </p>
+            <Link href="/experiments" className="mt-1.5 inline-flex text-small font-semibold text-teal-deep underline underline-offset-4">
+              Open Experiments
+            </Link>
+          </li>
+          <li className="border-l-[3px] border-amber pl-3">
+            <p className="font-bold text-ink">Impact</p>
+            <p className="mt-0.5 text-small text-graphite">Adjustable fictional assumptions, including the result when the pilot does not pay.</p>
+            <Link href="/impact" className="mt-1.5 inline-flex text-small font-semibold text-teal-deep underline underline-offset-4">
+              Open Impact
+            </Link>
+          </li>
+        </ul>
       </section>
 
       <section aria-labelledby="commitment" className="mt-16 border-t border-line pt-10">
@@ -181,16 +174,41 @@ export default function OverviewPage() {
         </ol>
       </section>
 
-      <section aria-labelledby="start" className="mt-16 flex flex-wrap items-center justify-between gap-4 rounded-[var(--radius-panel)] border border-line bg-surface px-5 py-4">
+      <section aria-labelledby="start" className="mt-16 grid gap-8 rounded-[var(--radius-panel)] border border-line bg-surface p-5 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:p-8">
         <div>
-          <h2 id="start" className="font-bold text-ink">
+          <h2 id="start" className="text-title font-bold text-ink">
             Start the walkthrough
           </h2>
-          <p className="text-small text-graphite">Choose the histology assistant role, open case DEMO-S26-0003 and follow the six steps above.</p>
+          <p className="mt-2 max-w-[44ch] text-graphite">
+            Choose the histology assistant role, open case DEMO-S26-0003 and follow the six steps. Each step names the role that does it.
+          </p>
+          <Link href="/worklist" className="mt-5 inline-flex h-10 items-center rounded-[var(--radius-control)] bg-teal px-4 font-semibold text-white hover:bg-teal-deep">
+            Open the worklist
+          </Link>
         </div>
-        <Link href="/worklist" className="inline-flex h-10 items-center rounded-[var(--radius-control)] bg-teal px-4 font-semibold text-white hover:bg-teal-deep">
-          Open the worklist
-        </Link>
+        <figure aria-labelledby="walkthrough-caption">
+          <figcaption id="walkthrough-caption">
+            <span className="block font-bold text-ink">The five-minute walkthrough</span>
+            <span className="block text-small text-graphite">One fictional case, end to end</span>
+          </figcaption>
+          <ol className="mt-4">
+            {STAGES.map((s, i) => (
+              <li key={s.n} className="relative grid grid-cols-[2rem_minmax(0,1fr)_auto] gap-x-3 pb-4 last:pb-0">
+                {i < STAGES.length - 1 ? <span aria-hidden className="absolute bottom-0 left-[0.95rem] top-8 w-px bg-line-strong" /> : null}
+                <span className="relative z-10 flex h-8 w-8 items-center justify-center rounded-full border border-teal/40 bg-teal-tint text-small font-bold text-teal-deep">{s.n}</span>
+                <div className="min-w-0 pt-0.5">
+                  <p className="font-semibold text-ink">{s.title}</p>
+                  <p className="text-small text-graphite">
+                    {s.who}. {s.what}
+                  </p>
+                </div>
+                <Link href={s.href} className="self-start rounded px-1 pt-1 text-small font-semibold text-teal-deep underline-offset-2 hover:underline">
+                  {s.screen}
+                </Link>
+              </li>
+            ))}
+          </ol>
+        </figure>
       </section>
     </div>
   );

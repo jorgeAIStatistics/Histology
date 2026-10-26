@@ -13,7 +13,8 @@ from .. import datasets as ds
 from ..auth import Scope, authorize, entity_scope, project_scope
 from ..db import get_db
 from ..errors import conflict, unprocessable
-from ..models import DatasetItem, DatasetVersion
+from ..hierarchy import slide_lineage
+from ..models import DatasetItem, DatasetVersion, Slide
 from ..schemas import DatasetIn, DatasetOut, FreezeIn, NewVersionIn, SplitIn
 from ..vocab import ITEM_PURPOSES
 
@@ -80,6 +81,23 @@ def splits(body: SplitIn, scope: Scope = Depends(entity_scope("dataset.write", D
     db.commit()
     return {"dataset_version_id": dv.id, "split": dv.config_json["split"], "diagnostics": diag,
             "guarantee": "every slide of a coded patient is in exactly one split"}
+
+
+@router.get("/datasets/{id}/freeze-check")
+def freeze_check(scope: Scope = Depends(entity_scope("dataset.read", DatasetVersion)), db: Session = Depends(get_db)):
+    """What freezing this draft would lock in that a person should look at first (read-only; freeze enforces it)."""
+    w = ds.freeze_warnings(db, scope.obj)
+    ids = {x["slide_id"] for x in w["open_qc_issues"]}
+    ids |= {c[k] for c in w["unreviewed_near_duplicates"] for k in ("slide_a", "slide_b")}
+    slides = {}
+    for sid in sorted(ids):
+        slide = db.get(Slide, sid)
+        if slide is not None:
+            lin = slide_lineage(db, slide)
+            slides[sid] = {"accession_code": lin["accession_code"], "part": lin["part"], "block": lin["block"],
+                           "level_index": slide.level_index, "stain": slide.stain}
+    return {**w, "slides": slides,
+            "requires_acknowledgement": bool(w["open_qc_issues"] or w["unreviewed_near_duplicates"])}
 
 
 @router.post("/datasets/{id}/freeze", response_model=DatasetOut)

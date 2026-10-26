@@ -196,7 +196,7 @@ export function SummaryPanel({ dv, s, onChanged }: { dv: DatasetVersion; s: Data
         {s.qc_warnings.length ? (
           <p className="mt-3 text-small text-amber-ink">
             {s.qc_warnings.length} included slide{s.qc_warnings.length === 1 ? " has" : "s have"} open QC issues ({s.qc_warnings.flatMap((w) => w.open_issues.map((i) => humanize(i.category))).join(", ")}). Resolve
-            them before freezing.
+            them first, or record them with a reason when you freeze: freezing asks.
           </p>
         ) : null}
       </Block>

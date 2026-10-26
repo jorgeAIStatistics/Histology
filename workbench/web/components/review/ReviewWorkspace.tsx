@@ -31,7 +31,7 @@ import { ProvenanceChip, ReviewStateBadge } from "@/components/ui/Badges";
 import { SlideGlyph } from "@/components/ui/SlideGlyph";
 import { Tabs, TabPanel } from "@/components/ui/Tabs";
 import { Dialog } from "@/components/ui/Dialog";
-import { useToast } from "@/components/ui/Toaster";
+import { useToast, useToastZone } from "@/components/ui/Toaster";
 import { cn } from "@/components/ui/cn";
 import { SlideViewer, type DraftMeta, type Tool, type ViewerHandle, type ViewerMetrics } from "./SlideViewer";
 import { LabelsPanel } from "./LabelsPanel";
@@ -93,6 +93,7 @@ export function ReviewWorkspace({ slideId }: { slideId: string }) {
   const router = useRouter();
   const search = useSearchParams();
   const toast = useToast();
+  const toastZone = useToastZone();
   const narrow = useIsNarrow();
   const slide = useApi<Slide>(`/slides/${slideId}`);
   const pid = slide.data?.project_id ?? projectId;
@@ -124,12 +125,20 @@ export function ReviewWorkspace({ slideId }: { slideId: string }) {
   }, []);
   const [openedAt, setOpenedAt] = useState(() => Date.now());
 
-  // Keep the project switcher in step with a deep-linked slide.
+  // Align the header's project with a deep-linked slide once per slide. Re-aligning on every change snapped the
+  // switcher back when someone chose another project here; that choice now opens the chosen project's slides.
+  const projectSynced = useRef<string | null>(null);
+  // Only the record for the slide in the URL counts (the workspace stays mounted while J/K changes slides).
+  const slideProject = slide.data?.id === slideId ? slide.data.project_id : null;
   useEffect(() => {
-    if (slide.data && projectId && slide.data.project_id !== projectId && me?.memberships.some((m) => m.project_id === slide.data!.project_id)) {
-      setProjectId(slide.data.project_id);
+    if (!slideProject || !projectId) return;
+    if (projectSynced.current !== slideId) {
+      projectSynced.current = slideId;
+      if (slideProject !== projectId && me?.memberships.some((m) => m.project_id === slideProject)) setProjectId(slideProject);
+      return;
     }
-  }, [slide.data, projectId, me, setProjectId]);
+    if (slideProject !== projectId) router.push("/review");
+  }, [slideProject, projectId, me, setProjectId, slideId, router]);
 
   useEffect(() => {
     setOpenedAt(Date.now());
@@ -407,7 +416,7 @@ export function ReviewWorkspace({ slideId }: { slideId: string }) {
 
         {/* -------------------------------------------------------------- stage */}
         <section aria-label="Slide viewer" className="relative flex min-w-0 flex-1 flex-col bg-stage">
-          <div className="relative min-h-0 flex-1" tabIndex={0} aria-label="Slide image. Use the keyboard shortcuts listed below to zoom, rotate and draw." data-testid="viewer-focus">
+          <div ref={toastZone} className="relative min-h-0 flex-1" tabIndex={0} aria-label="Slide image. Use the keyboard shortcuts listed below to zoom, rotate and draw." data-testid="viewer-focus">
             {isSpecOnlySlide(s) ? (
               <div className="flex h-full items-center justify-center p-6" data-testid="spec-only">
                 <div className="max-w-lg rounded-[var(--radius-panel)] border border-hema/50 bg-surface p-5">
