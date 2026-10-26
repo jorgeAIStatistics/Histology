@@ -56,6 +56,8 @@ def slide_dict(db: Session, slide: Slide, *, include_qc: bool = True) -> dict:
         "identifier_notice": IDENTIFIER_NOTICE,
         "associated_images_present_not_served": slide.associated_images_json or [],
         "has_thumbnail": bool(slide.thumbnail_key),
+        "image_available": image_available(slide),
+        "image_unavailable_reason": image_unavailable_reason(slide),
         "created_at": slide.created_at.isoformat(),
         "ingested_at": slide.ingested_at.isoformat() if slide.ingested_at else None,
         "lineage": slide_lineage(db, slide),
@@ -63,3 +65,19 @@ def slide_dict(db: Session, slide: Slide, *, include_qc: bool = True) -> dict:
     if include_qc:
         d["qc_summary"] = slide_qc_summary(db, slide.id)
     return d
+
+# Slide records of the pipeline-test cohort are generator specs that were never ingested: they have metadata, but no
+# image to view. The flag is explicit so a client never has to infer it from other fields.
+_NO_IMAGE_PREFIX = "pipeline-test-cohort/"
+
+
+def image_available(slide) -> bool:
+    return slide.ingest_status == "succeeded" and not (slide.processing_version or "").startswith(_NO_IMAGE_PREFIX)
+
+
+def image_unavailable_reason(slide) -> str | None:
+    if image_available(slide):
+        return None
+    if (slide.processing_version or "").startswith(_NO_IMAGE_PREFIX):
+        return "Pipeline-test cohort record: metadata only, no image (never ingested)."
+    return f"Not viewable: ingest status is {slide.ingest_status}."

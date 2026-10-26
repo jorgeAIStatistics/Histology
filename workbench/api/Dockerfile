@@ -18,8 +18,10 @@ WORKDIR /srv/workbench/api
 COPY api/requirements.txt ./requirements.txt
 # numpy matches the locally tested version; psycopg for PostgreSQL; boto3 for the S3/MinIO store.
 # These extra pins are UNVERIFIED in this image (only numpy 2.4.2 is tested locally).
+# requirements.txt already pins numpy, scipy, scikit-learn and torch; the PostgreSQL driver and boto3 are
+# needed only for the compose stack (PostgreSQL + S3-compatible storage) and are not used in local development.
 RUN pip install --no-cache-dir -r requirements.txt \
-        numpy==2.4.2 "psycopg[binary]==3.2.3" boto3==1.35.0
+        "psycopg[binary]==3.2.3" boto3==1.35.0
 
 COPY api/dermpath ./dermpath
 # Only the small CC0 fixture (with its README); large fixtures are fetched separately.

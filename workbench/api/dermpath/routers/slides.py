@@ -30,7 +30,7 @@ from ..signing import TokenError
 from ..slides.reader import open_slide_record
 from ..slides.tiles import get_tile_service
 from ..storage import get_store, issue_access_token, verify_access_token
-from .common import slide_dict
+from .common import image_available, image_unavailable_reason, slide_dict
 
 router = APIRouter(tags=["slides"])
 _TILE_RE = re.compile(r"^(\d{1,6})_(\d{1,6})\.jpeg$")
@@ -110,6 +110,8 @@ def viewer_token(scope: Scope = Depends(entity_scope("slide.view_pixels", Slide)
     if slide.ingest_status != "succeeded":
         raise conflict("slide_not_ready", "The slide has not been ingested successfully",
                        ingest_status=slide.ingest_status, ingest_error=slide.ingest_error)
+    if not image_available(slide):
+        raise conflict("image_unavailable", image_unavailable_reason(slide) or "No image for this slide record")
     token, exp = issue_access_token(slide.id, scope.actor.id)
     offset = get_tile_service().bounds_offset(slide.id, _opener(slide), serialize=slide.image_kind == "field_image")
     base = f"/api/v1/tiles/{token}"
@@ -152,6 +154,8 @@ def slide_for_token(token: str, request: Request, db: Session, expected_slide_id
     authorize(db, Actor(user.id, user.role, user.display_name), slide.project_id, "slide.view_pixels")
     if slide.ingest_status != "succeeded":
         raise conflict("slide_not_ready", "The slide is not ingested")
+    if not image_available(slide):
+        raise conflict("image_unavailable", image_unavailable_reason(slide) or "No image for this slide record")
     return slide
 
 

@@ -1,1 +1,142 @@
 @import "tailwindcss";
+
+/*
+  DermPath Research Workbench design tokens.
+  Warm-neutral workspace (paraffin), charcoal ink, teal for actions, amber for review states.
+  State hues borrow from the stains themselves: hematoxylin violet marks synthetic/model material,
+  eosin berry marks disagreement. Every text/background pair below is >= 4.5:1 (WCAG AA).
+*/
+@theme {
+  --font-sans: var(--font-atkinson), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-atkinson-mono), ui-monospace, "SF Mono", Menlo, monospace;
+
+  --color-paraffin: #eceae4;
+  --color-surface: #f8f7f3;
+  --color-sheet: #ffffff;
+  --color-line: #d8d4cb;
+  --color-line-strong: #bab5aa;
+  --color-ink: #1e2327;
+  --color-graphite: #545b61;
+  --color-stage: #26292b;
+  --color-stage-ink: #e8e6e1;
+
+  --color-teal: #0b6766;
+  --color-teal-deep: #084e4d;
+  --color-teal-tint: #d8ecea;
+
+  --color-amber: #b9770e;
+  --color-amber-ink: #7a4600;
+  --color-amber-tint: #f7e4be;
+
+  --color-approved: #2b6440;
+  --color-approved-tint: #dceedf;
+  --color-berry: #8a3553;
+  --color-berry-tint: #f4dee6;
+  --color-hema: #463c78;
+  --color-hema-tint: #e7e3f2;
+  --color-slate: #2b5676;
+  --color-slate-tint: #dde8f1;
+  --color-rust: #9a3412;
+  --color-rust-tint: #f8e2d8;
+  --color-excluded-tint: #e4e2dd;
+
+  --text-micro: 0.75rem;
+  --text-micro--line-height: 1.1rem;
+  --text-small: 0.8125rem;
+  --text-small--line-height: 1.25rem;
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.45rem;
+  --text-lead: 1.125rem;
+  --text-lead--line-height: 1.7rem;
+  --text-title: 1.375rem;
+  --text-title--line-height: 1.8rem;
+  --text-display: 2.125rem;
+  --text-display--line-height: 2.55rem;
+
+  --radius-chip: 4px;
+  --radius-control: 6px;
+  --radius-panel: 10px;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    background: var(--color-paraffin);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    font-feature-settings: "tnum" 0;
+  }
+  :focus-visible {
+    outline: 3px solid var(--color-teal);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+  .stage :focus-visible {
+    outline-color: #7fd3cf;
+  }
+  ::selection {
+    background: var(--color-teal-tint);
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  table {
+    border-collapse: collapse;
+  }
+}
+
+@layer utilities {
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  .hatch-synthetic {
+    background-image: repeating-linear-gradient(
+      135deg,
+      rgba(70, 60, 120, 0.22) 0 2px,
+      transparent 2px 6px
+    );
+  }
+  .sr-only-focusable:not(:focus) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* OpenSeadragon: keep the navigator legible on the dark stage. */
+.wb-viewer .navigator {
+  border: 1px solid rgba(232, 230, 225, 0.55) !important;
+  background: rgba(38, 41, 43, 0.85) !important;
+  border-radius: 6px;
+}
+.wb-viewer .displayregion {
+  border: 2px solid #7fd3cf !important;
+}

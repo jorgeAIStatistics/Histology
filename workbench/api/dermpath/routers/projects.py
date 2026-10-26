@@ -51,7 +51,7 @@ from ..schemas import (
     ProjectSettingsIn,
 )
 from ..vocab import PROVENANCE_DISPLAY, REVIEW_STATES
-from .common import slide_dict
+from .common import image_available, image_unavailable_reason, slide_dict
 
 router = APIRouter(tags=["projects"])
 
@@ -175,7 +175,7 @@ def worklist(review_state: str | None = Query(None), ingest_status: str | None =
         open_qc = db.scalar(select(func.count(QCIssue.id)).where(QCIssue.slide_id == s.id,
                                                                  QCIssue.status != "resolved"))
         items.append({
-            "slide_id": s.id, "patient_code": lin["patient_code"], "accession_code": lin["accession_code"],
+            "slide_id": s.id, "case_id": lin["case_id"], "patient_code": lin["patient_code"], "accession_code": lin["accession_code"],
             "part": lin["part"], "block": lin["block"], "level_index": s.level_index, "stain": s.stain,
             "scanner_id": s.scanner_id, "site_id": lin["site_id"], "image_kind": s.image_kind,
             "provenance": s.provenance, "provenance_display": PROVENANCE_DISPLAY.get(s.provenance),
@@ -185,6 +185,7 @@ def worklist(review_state: str | None = Query(None), ingest_status: str | None =
             "slide_label_status": ref_status,
             "model_suggestions": None if hidden else n_sugg, "suggestions_hidden": hidden,
             "identifier_risk_flags": len(s.identifier_risk_json or []), "has_thumbnail": bool(s.thumbnail_key),
+            "image_available": image_available(s), "image_unavailable_reason": image_unavailable_reason(s),
             "unassigned": s.block_id is None,
         })
     items.sort(key=lambda r: (r["accession_code"] or "~", r["part"] or "", r["block"] or "",

@@ -21,7 +21,7 @@ x-backend-env: &backend-env
   WB_S3_ACCESS_KEY: dermpath
   WB_S3_SECRET_KEY: dermpath-demo-secret
   WB_VAR_DIR: /var/lib/dermpath
-  WB_CORS_ORIGINS: http://localhost:3000
+  WB_CORS_ORIGINS: http://localhost:3600,http://127.0.0.1:3600
   WB_AUTO_SEED: "1"
 
 services:
@@ -92,14 +92,15 @@ services:
         condition: service_healthy
 
   web:
-    # The web image is built from workbench/web (owned by the frontend). UNVERIFIED.
+    # Built from workbench/web/Dockerfile. UNVERIFIED (no Docker daemon when written).
+    # The browser talks only to the web app; /api/v1/* is proxied to the API inside the network,
+    # so WB_API_URL is the API's in-network address, baked in at build time.
     build:
       context: ./web
-    environment:
-      NEXT_PUBLIC_API_BASE: http://localhost:8000
-      API_INTERNAL_BASE: http://api:8000
+      args:
+        WB_API_URL: http://api:8000
     ports:
-      - "3000:3000"
+      - "3600:3600"
     depends_on:
       api:
         condition: service_healthy

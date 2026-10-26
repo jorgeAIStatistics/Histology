@@ -303,3 +303,22 @@ def test_demo_reset_is_admin_only(clients):
     assert r.status_code == 200 and r.json()["seed"]["project_id"] == PID
     lead = clients("user-research-lead")
     assert lead.get(f"/api/v1/projects/{PID}/workflow-stats").json()["slides"] == 17
+
+
+
+def test_imageless_cohort_records_are_marked_and_not_viewable(clients):
+    """Pipeline-test cohort slide records carry metadata only: image_available is false and the viewer refuses."""
+    lead = clients("user-research-lead")
+    cohort_items = lead.get("/api/v1/projects/proj-synthetic-cohort/worklist")
+    if cohort_items.status_code != 200 or not cohort_items.json()["items"]:
+        import pytest
+        pytest.skip("synthetic cohort not seeded in this test database")
+    cohort_id = cohort_items.json()["items"][0]["slide_id"]
+    s = lead.get(f"/api/v1/slides/{cohort_id}").json()
+    assert s["image_available"] is False and "metadata only" in s["image_unavailable_reason"]
+    v = lead.get(f"/api/v1/slides/{cohort_id}/viewer-token")
+    assert v.status_code == 409 and v.json()["error"]["code"] == "image_unavailable"
+    items = lead.get("/api/v1/projects/proj-bcc-demo/worklist").json()["items"]
+    assert all("case_id" in i and "image_available" in i for i in items)
+    viewable = [i for i in items if i["image_kind"] == "synthetic_tiles" and i["ingest_status"] == "succeeded"]
+    assert viewable and all(i["image_available"] for i in viewable)
