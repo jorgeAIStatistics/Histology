@@ -270,7 +270,17 @@ def seed(*, verbose: bool = False) -> dict:
     return {"project_id": PROJECT_ID, "restricted_project_id": RESTRICTED_PROJECT_ID,
             "users": [u[0] for u in USERS], "slides": {k: v for k, v in S.items() if not k.startswith("case_")},
             "cases": {k: v for k, v in S.items() if k.startswith("case_")},
-            "jobs": [{"type": o.type, "status": o.status} for o in outcomes]}
+            "jobs": [{"type": o.type, "status": o.status} for o in outcomes],
+            "ml_demo": _seed_ml_demo()}
+
+
+def _seed_ml_demo() -> dict:
+    """ML pass hook: synthetic PIPELINE-TEST experiments (dermpath/ml/seed_demo.py). Never raises."""
+    try:
+        from .ml.seed_demo import seed_ml_demo
+    except ModuleNotFoundError:
+        return {"status": "not_present"}
+    return seed_ml_demo()
 
 
 def _seed_workflow(S: dict[str, str], A: dict[str, Actor]) -> None:

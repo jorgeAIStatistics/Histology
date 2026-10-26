@@ -16,7 +16,7 @@
 
 **Status legend.**
 - **USED**: pinned in `api/requirements.txt` or `web/package.json` and part of the running prototype.
-- **USED (system)**: reused from the system Python through a venv created with `--system-site-packages` (see implementation-plan.md section 2).
+- **USED (pinned)**: installed into the isolated venv from `workbench/api/requirements.txt` (the earlier `--system-site-packages` arrangement was removed on 2026-10-26).
 - **DEV/TEST**: used only to build or test.
 - **CONFIGURED, UNVERIFIED**: written into `docker-compose.yml` or an optional code path; not run yet.
 - **REFERENCED**: studied or cited; **not installed, vendored or downloaded**.
@@ -42,7 +42,7 @@
 | pytest 9.1.1 | MIT | PyPI JSON; system METADATA | Tests | DEV/TEST | Permissive. |
 | httpx 0.28.1 | BSD-3-Clause | PyPI JSON (`license` field); system METADATA | Test client | DEV/TEST | Permissive. |
 
-**Watch item: shared system interpreter.** The API venv uses `--system-site-packages`, so everything installed in the system Python is importable. That includes **scikit-survival 0.28.0, licensed GPL-3.0-or-later** (system METADATA), which the workbench does not need. Workbench code must not import it. Any distributable build should use an isolated environment with only the pinned dependencies. [to confirm by engineering: no import of scikit-survival]
+**Resolved 2026-10-26: isolated interpreter.** The API venv was rebuilt **without** `--system-site-packages`. numpy 2.4.2, scipy 1.17.0, scikit-learn 1.9.0, joblib 1.5.3, threadpoolctl 3.6.0 and torch 2.14.1 are now pinned in `workbench/api/requirements.txt` and installed into the venv. The system Python's scikit-survival (GPL-3.0-or-later) is **not importable** from the venv (checked: `ModuleNotFoundError`). The 105 backend tests pass in the isolated venv.
 
 At the time of writing, the API environment was still being installed. Re-run the check below once the install completes and update this table if anything new appears:
 

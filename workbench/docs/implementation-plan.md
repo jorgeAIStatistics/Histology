@@ -30,7 +30,7 @@
 | OpenSlide tile service | OpenSlide `DeepZoomGenerator` behind FastAPI tile routes, with an LRU slide-handle cache | As preferred |
 | Containers | `workbench/docker-compose.yml` (postgres, minio, api, worker, web) | **Written, not verified** until a Docker daemon runs |
 
-Pinned versions, each at least two weeks old at build time unless already installed: fastapi 0.143.0, uvicorn 0.54.0, sqlalchemy 2.1.4, pydantic 2.14.1, python-multipart 0.0.32, pillow 12.3.0, openslide-python 1.4.6, openslide-bin 4.0.1.2, pytest 9.1.1, httpx 0.28.1. The global numpy, scikit-learn and torch are reused through a venv with `--system-site-packages`, recorded in the license ledger.
+Pinned versions, each at least two weeks old at build time unless already installed: fastapi 0.143.0, uvicorn 0.54.0, sqlalchemy 2.1.4, pydantic 2.14.1, python-multipart 0.0.32, pillow 12.3.0, openslide-python 1.4.6, openslide-bin 4.0.1.2, pytest 9.1.1, httpx 0.28.1. numpy 2.4.2, scipy 1.17.0, scikit-learn 1.9.0 and torch 2.14.1 are pinned in the same isolated venv (no `--system-site-packages`, so no system-installed package such as a GPL library can be imported by accident).
 
 ## 3. Directory layout
 ```
