@@ -410,7 +410,18 @@ export interface DatasetVersion {
     eligible_review_states: string[];
     label_values: LabelValue[];
     include_provenance: Provenance[];
-    split: null | { partition: string; seed: number; ratios: Record<string, number>; test_cutoff?: string; val_cutoff?: string; test_sites?: string[] };
+    /** Normalised by the API (dermpath/splits.py): temporal stores no seed or ratios. */
+    split: null | {
+      partition: string;
+      seed?: number;
+      ratios?: Record<string, number>;
+      test_cutoff?: string;
+      val_cutoff?: string;
+      test_sites?: string[];
+      patient_label_rule?: "any_positive" | "majority";
+      algorithm?: string;
+    };
+    split_diagnostics?: Record<string, unknown>;
     task_template?: Record<string, unknown>;
   };
   manifest_sha256: string | null;
@@ -510,15 +521,40 @@ export interface ManifestItem {
   partition: string | null;
 }
 
+/** A near-duplicate pair in a freeze warning. dhash_distance is null for a pair a reviewer recorded that the screen did not flag. */
+export type FreezeNearDuplicate = Omit<DatasetSummary["duplicates"]["near_duplicate_candidates"][number], "dhash_distance"> & {
+  dhash_distance: number | null;
+};
+
+/** A split the configuration populates that has no patient of a class (slides: bags of that class there, if any). */
+export interface ClassAbsent {
+  split: string;
+  class: string;
+  patients: number;
+  slides: number;
+}
+
 export interface FreezeWarnings {
   open_qc_issues: { slide_id: string; open_issues: { id: string; category: string; status: string }[] }[];
-  unreviewed_near_duplicates: DatasetSummary["duplicates"]["near_duplicate_candidates"];
+  unreviewed_near_duplicates: FreezeNearDuplicate[];
+  /** Pairs in different splits a person marked "unsure": they keep blocking like unreviewed pairs. Only "distinct" clears. */
+  unsure_near_duplicates?: FreezeNearDuplicate[];
+  /** Pairs marked "duplicate" that are still in different splits (the grouping could not keep them together). */
+  duplicates_across_splits?: FreezeNearDuplicate[];
+  class_absent?: ClassAbsent[];
+  /** Real-image items without mpp; supervised use needs calibration. */
+  uncalibrated_items?: { slide_id: string; missing: string[] }[];
+  /** Informational: patients whose bags carry different labels. Does not need acknowledgement. */
+  mixed_label_patients?: { count: number; patient_codes: string[] };
 }
 
 /** GET /datasets/{id}/freeze-check: what freezing would lock in that a person should look at first. */
 export interface FreezeCheck extends FreezeWarnings {
   slides: Record<string, { accession_code: string | null; part: string | null; block: string | null; level_index: number | null; stain: string | null }>;
   requires_acknowledgement: boolean;
+  /** Conditions that refuse the freeze outright (stale draft, mixed synthetic and real data, missing splits). */
+  blockers?: { code: string; message: string }[];
+  data_mode?: "synthetic" | "real" | "mixed" | null;
 }
 
 export interface Manifest {
@@ -551,10 +587,15 @@ export interface Manifest {
 export interface Encoder {
   id: string;
   name: string;
-  kind: "synthetic" | "pathology_foundation" | "generic_imagenet";
+  kind: "synthetic" | "handcrafted" | "pathology_foundation" | "generic_imagenet";
   license: { name: string; url: string | null; commercial_use: "no" | "yes" | "unknown"; notes: string | null };
-  status: "available" | "missing_weights" | "missing_dependency";
+  status: "available" | "missing_weights" | "missing_dependency" | "weights_mismatch";
   status_detail: string | null;
+  /** EncoderSpec fields (dermpath/ml/encoders.py, design §3); optional for older APIs. */
+  adapter_version?: string;
+  input_size?: number;
+  pooling?: string;
+  spec_sha256?: string;
   weights_sha256: string | null;
   embedding_dim: number | null;
   preprocessing_version: string | null;

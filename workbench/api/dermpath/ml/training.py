@@ -34,6 +34,7 @@ from ..storage import get_store
 from .artifacts import code_revision, dependency_versions, sha256_hex
 from .encoders import EncoderUnavailable, get_encoder
 from .features import FeatureError, extract_slide_features, load_features
+from .fixture import SyntheticSignalForbidden
 from .heads import HEAD_FITTERS, Bag, LoadedModel, checkpoint_bytes, load_checkpoint
 from .metrics import select_threshold
 from .models import FeatureArtifact, Prediction, TrainingRun
@@ -254,6 +255,12 @@ def _run_training(run_id: str, ctx) -> dict:
         artifacts, feat_summary = extract_for_items(train_items + val_items, encoder_id=encoder_id, params=params,
                                                     seed=seed, positive_class=positive, ctx=ctx, job_id=job_id,
                                                     base=0.02, span=0.48)
+    except EncoderUnavailable as exc:
+        # Includes EncoderIdentityMismatch / EncoderLoadError raised while loading weights:
+        # retrying would re-read the same (wrong) weights, so it is permanent.
+        raise PermanentJobError(f"encoder_unavailable: {exc}") from exc
+    except SyntheticSignalForbidden as exc:
+        raise PermanentJobError(f"synthetic_signal_forbidden: {exc}") from exc
     except (FeatureError, ValueError) as exc:
         raise PermanentJobError(f"feature extraction failed: {exc}") from exc
     extraction_seconds = time.perf_counter() - t0
@@ -307,9 +314,17 @@ def _run_training(run_id: str, ctx) -> dict:
     from .evaluation import build_evaluation, store_evaluation  # local: evaluation imports this module
 
     with session_scope() as db:
+        if ctx is not None:
+            # Fence the domain commit: an attempt that lost its job lease must not record success.
+            ctx.assert_lease(db)
         run = db.get(TrainingRun, run_id)
         if run.status == "succeeded":  # another attempt finished first
             return {"run_id": run_id, "status": "succeeded", "idempotent_replay": True}
+        if run.weights_sha256 is not None and run.weights_sha256 != weights_marker:
+            # weights_sha256 is set-once (ml/models.py RUN_SET_ONCE); a pinned value that no
+            # longer matches means the encoder changed under the run.
+            raise PermanentJobError(f"run_identity_changed: weights_sha256 pinned {run.weights_sha256}, "
+                                    f"now {weights_marker}")
         preds = (prediction_rows(run, "train", train_bags, model, thr["value"], qc)
                  + prediction_rows(run, "val", val_bags, model, thr["value"], qc))
         for p in preds:
@@ -320,7 +335,8 @@ def _run_training(run_id: str, ctx) -> dict:
         run.threshold_frozen_at = frozen_at
         run.threshold_json = thr
         run.checkpoint_key, run.checkpoint_sha256, run.checkpoint_bytes = ck_key, ck_sha, len(data)
-        run.weights_sha256 = weights_marker
+        if run.weights_sha256 is None:
+            run.weights_sha256 = weights_marker
         run.split_counts_json = split_counts(manifest, label_scope)
         val_rows = [p for p in preds if p.split == "val"]
         ev_body = build_evaluation(run, "val", val_rows)

@@ -13,6 +13,12 @@ be retried, which re-queues the same row).
 * Retryable failures are re-queued with exponential backoff (``not_before``).
 * Cancellation is cooperative: queued jobs cancel immediately; running jobs get
   ``cancel_requested`` and stop at their next progress report.
+* Every transition to ``failed`` or ``canceled`` made here (lease recovery, exhausted
+  retries, permanent errors, cancel) runs the job type's settle hooks in the same
+  transaction, so domain rows (``TrainingRun.status``, ``feature_set.status``) follow the
+  job (:func:`dermpath.jobs.registry.register_settle_hook`).
+* :func:`fence_lease` is the fencing primitive behind
+  :func:`dermpath.jobs.registry.assert_lease` for domain commits.
 """
 
 from __future__ import annotations
@@ -27,6 +33,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..db import session_scope, utcnow
 from ..models import Job
+from .registry import run_settle_hooks
 
 TERMINAL = ("succeeded", "failed", "canceled")
 
@@ -85,31 +92,22 @@ def recover_expired(db: Session, now=None) -> dict[str, int]:
     ).all()
     for job in rows:
         if job.cancel_requested:
-            res = db.execute(
-                update(Job)
-                .where(Job.id == job.id, Job.status == "running", Job.lease_until < now)
-                .values(status="canceled", finished_at=now, lease_owner=None, lease_until=None,
-                        error="canceled (lease expired after cancel was requested)")
-                .execution_options(synchronize_session=False)
-            )
-            stats["canceled"] += res.rowcount
+            status, error = "canceled", "canceled (lease expired after cancel was requested)"
         elif job.attempts >= job.max_attempts:
-            res = db.execute(
-                update(Job)
-                .where(Job.id == job.id, Job.status == "running", Job.lease_until < now)
-                .values(
-                    status="failed",
-                    finished_at=now,
-                    lease_owner=None,
-                    lease_until=None,
-                    error=(
-                        f"lease expired on attempt {job.attempts} of {job.max_attempts} "
-                        "(worker crashed or was restarted); no attempts left. Use retry."
-                    ),
-                )
-                .execution_options(synchronize_session=False)
-            )
-            stats["failed"] += res.rowcount
+            status, error = "failed", (f"lease expired on attempt {job.attempts} of {job.max_attempts} "
+                                       "(worker crashed or was restarted); no attempts left. Use retry.")
+        else:
+            continue
+        res = db.execute(
+            update(Job)
+            .where(Job.id == job.id, Job.status == "running", Job.lease_until < now)
+            .values(status=status, finished_at=now, lease_owner=None, lease_until=None, error=error)
+            .execution_options(synchronize_session=False)
+        )
+        stats[status] += res.rowcount
+        if res.rowcount == 1:
+            db.refresh(job)
+            run_settle_hooks(db, job, status, error)
     return stats
 
 
@@ -170,6 +168,27 @@ def heartbeat(job_id: str, worker_id: str, *, progress: float | None = None,
         return owner, cancel
 
 
+def fence_lease(db: Session, job_id: str, worker_id: str, *, attempt: int, retry_count: int | None = None,
+                lease_seconds: int | None = None) -> bool:
+    """Renew the lease only if this attempt still owns the job; ``True`` when it does.
+
+    A conditional UPDATE (owner, attempt, retry count, status ``running``) in the caller's
+    transaction: it takes the row's write lock until that transaction ends, so a reclaim
+    by another worker cannot interleave with the caller's domain commit.
+    """
+    lease = lease_seconds if lease_seconds is not None else get_settings().job_lease_seconds
+    now = utcnow()
+    conds = [Job.id == job_id, Job.lease_owner == worker_id, Job.status == "running", Job.attempts == attempt]
+    if retry_count is not None:
+        conds.append(Job.retry_count == retry_count)
+    res = db.execute(
+        update(Job).where(*conds)
+        .values(heartbeat_at=now, lease_until=now + timedelta(seconds=lease))
+        .execution_options(synchronize_session=False)
+    )
+    return res.rowcount == 1
+
+
 def finish(job_id: str, worker_id: str, *, status: str, result: dict | None = None,
            error: str | None = None) -> bool:
     """Terminal transition, only if this worker still holds the lease."""
@@ -192,6 +211,10 @@ def finish(job_id: str, worker_id: str, *, status: str, result: dict | None = No
             .values(**values)
             .execution_options(synchronize_session=False)
         )
+        if res.rowcount == 1 and status != "succeeded":
+            job = db.get(Job, job_id)
+            if job is not None:
+                run_settle_hooks(db, job, status, values["error"])
         return res.rowcount == 1
 
 
@@ -214,10 +237,13 @@ def requeue_with_backoff(job_id: str, worker_id: str, *, error: str) -> str:
             values = {"status": "queued", "not_before": now + timedelta(seconds=delay),
                       "error": f"{error[:3500]} (attempt {job.attempts}/{job.max_attempts}; retrying in {delay:.0f}s)"}
         values.update({"lease_owner": None, "lease_until": None})
-        db.execute(
+        res = db.execute(
             update(Job).where(Job.id == job_id, Job.lease_owner == worker_id)
             .values(**values).execution_options(synchronize_session=False)
         )
+        if status == "failed" and res.rowcount == 1:
+            db.refresh(job)
+            run_settle_hooks(db, job, "failed", values["error"])
         return status
 
 
@@ -227,6 +253,7 @@ def request_cancel(db: Session, job: Job) -> str:
         job.status = "canceled"
         job.finished_at = utcnow()
         job.cancel_requested = True
+        run_settle_hooks(db, job, "canceled", "canceled before start")
         return "canceled"
     if job.status == "running":
         job.cancel_requested = True

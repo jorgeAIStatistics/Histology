@@ -3,12 +3,19 @@
 A seeded template var directory (SQLite DB + private object store) is built once per test
 session; every test gets its own copy, so tests are isolated and fast. All data is the
 fictional demo seed plus the public CC0 fixture.
+
+Environment isolation: every ``WB_ML_*``, ``WB_UNI_*``, ``WB_RESNET18_*``, ``WB_HIBOU_*``
+and ``WB_MIDNIGHT_*`` variable and ``WB_CODE_REVISION`` is removed for the whole session
+(at import, before any ``dermpath`` module reads it, and again by an autouse session
+fixture that restores the developer's values at the end). Tests opt in explicitly with
+``monkeypatch.setenv``.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import sys
 from dataclasses import replace
@@ -16,6 +23,18 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+
+ISOLATED_ENV_PREFIXES = ("WB_ML_", "WB_UNI_", "WB_RESNET18_", "WB_HIBOU_", "WB_MIDNIGHT_")
+ISOLATED_ENV_NAMES = ("WB_CODE_REVISION",)
+
+
+def isolated_env_names(environ=None) -> list[str]:
+    environ = os.environ if environ is None else environ
+    return sorted(k for k in environ if k.startswith(ISOLATED_ENV_PREFIXES) or k in ISOLATED_ENV_NAMES)
+
+
+# Cleared at import: dermpath.ml.artifacts captures WB_CODE_REVISION when it is imported.
+_DEVELOPER_ENV = {k: os.environ.pop(k) for k in isolated_env_names()}
 
 API_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(API_DIR))
@@ -43,8 +62,18 @@ def make_settings(var_dir: Path, **overrides) -> Settings:
     return replace(base, **overrides)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _isolated_wb_env():
+    """Session-wide: no developer encoder/ML/code-revision variable reaches any test."""
+    with pytest.MonkeyPatch.context() as mp:
+        for name in isolated_env_names():
+            mp.delenv(name, raising=False)
+        yield
+    os.environ.update(_DEVELOPER_ENV)
+
+
 @pytest.fixture(scope="session")
-def template_dir(tmp_path_factory) -> Path:
+def template_dir(tmp_path_factory, _isolated_wb_env) -> Path:
     from dermpath.seed import seed
 
     d = tmp_path_factory.mktemp("template-var")

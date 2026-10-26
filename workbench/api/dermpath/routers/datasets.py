@@ -1,4 +1,4 @@
-"""Dataset routes: drafts, summary, splits, freeze, manifest, export, new versions, test lock."""
+"""Dataset routes: drafts, summary, splits, freeze, manifest, export, new versions, audit, test lock."""
 
 from __future__ import annotations
 
@@ -85,10 +85,14 @@ def splits(body: SplitIn, scope: Scope = Depends(entity_scope("dataset.write", D
 
 @router.get("/datasets/{id}/freeze-check")
 def freeze_check(scope: Scope = Depends(entity_scope("dataset.read", DatasetVersion)), db: Session = Depends(get_db)):
-    """What freezing this draft would lock in that a person should look at first (read-only; freeze enforces it)."""
-    w = ds.freeze_warnings(db, scope.obj)
+    """What freezing this draft would lock in that a person should look at first (read-only; freeze enforces it):
+    ``blockers`` refuse the freeze outright; the warning lists in ``acknowledgeable`` need an acknowledgement with
+    a reason; ``mixed_label_patients`` is informational."""
+    w = ds.freeze_check(db, scope.obj)
     ids = {x["slide_id"] for x in w["open_qc_issues"]}
-    ids |= {c[k] for c in w["unreviewed_near_duplicates"] for k in ("slide_a", "slide_b")}
+    for key in ("unreviewed_near_duplicates", "unsure_near_duplicates", "duplicates_across_splits"):
+        ids |= {c[k] for c in w[key] for k in ("slide_a", "slide_b")}
+    ids |= {x["slide_id"] for x in w["uncalibrated_items"][:20]}
     slides = {}
     for sid in sorted(ids):
         slide = db.get(Slide, sid)
@@ -96,8 +100,7 @@ def freeze_check(scope: Scope = Depends(entity_scope("dataset.read", DatasetVers
             lin = slide_lineage(db, slide)
             slides[sid] = {"accession_code": lin["accession_code"], "part": lin["part"], "block": lin["block"],
                            "level_index": slide.level_index, "stain": slide.stain}
-    return {**w, "slides": slides,
-            "requires_acknowledgement": bool(w["open_qc_issues"] or w["unreviewed_near_duplicates"])}
+    return {**w, "slides": slides}
 
 
 @router.post("/datasets/{id}/freeze", response_model=DatasetOut)
@@ -114,10 +117,25 @@ def freeze(body: FreezeIn | None = None, scope: Scope = Depends(entity_scope("da
 @router.post("/datasets/{id}/new-version", response_model=DatasetOut, status_code=201)
 def new_version(body: NewVersionIn, scope: Scope = Depends(entity_scope("dataset.write", DatasetVersion)),
                 db: Session = Depends(get_db)):
-    """A child draft of a frozen version (``parent_version_id``), re-materialised from current labels."""
-    child = ds.new_version(db, scope.actor, scope.obj, reason=body.reason, name=body.name)
+    """A child draft of a frozen version (``parent_version_id``), re-materialised from current labels. It inherits
+    the lineage's split family; ``new_lineage`` (with ``split``) starts a new family instead."""
+    child = ds.new_version(db, scope.actor, scope.obj, reason=body.reason, name=body.name,
+                           new_lineage=body.new_lineage,
+                           split=body.split.model_dump(mode="json", exclude_none=True) if body.split else None)
     db.commit()
     return ds.dataset_dict(child, _count(db, child))
+
+
+@router.get("/datasets/{id}/audit")
+def dataset_audit(scope: Scope = Depends(entity_scope("dataset.read", DatasetVersion)), db: Session = Depends(get_db)):
+    """Dataset audit (design §9): patient independence, duplicates, label scope, missing metadata, class balance,
+    confounding (Cramér's V, Fisher / χ² on patients) and mixed-label patients. Read-only and descriptive.
+    A frozen version also carries the audit taken at freeze in its manifest (``manifest.audit``)."""
+    dv = scope.obj
+    out = ds.audit(db, dv)
+    if dv.status == "frozen" and dv.manifest_json:
+        out["at_freeze"] = dv.manifest_json.get("audit")
+    return out
 
 
 @router.get("/datasets/{id}/staleness")

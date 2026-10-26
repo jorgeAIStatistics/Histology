@@ -28,6 +28,7 @@ from ..slides.reader import open_slide_record
 from ..storage import get_store
 from .artifacts import canonical_json, load_npz, npz_bytes, sha256_hex
 from .encoders import EmbedContext, EncoderAdapter, get_encoder
+from .fixture import SYNTHETIC_PIPELINE_TEST, fixture_context
 from .models import FeatureArtifact
 from .patching import (
     PATCHING_VERSION,
@@ -146,6 +147,12 @@ def extract_slide_features(slide_id: str, *, encoder_id: str, params: dict, seed
         info = {"excluded": excluded_regions(db, slide_id), "mask_key": mask_key, "mask_ds": mask_ds,
                 "qc_review_id": qc_id}
         db.expunge(slide)
+    if encoder.synthetic and fixture_label is not None:
+        # Design §1 invariant 3: a label-derived fixture signal only ever reaches demo_synthetic
+        # synthetic_tiles. This legacy path has no execution mode; a labelled synthetic
+        # extraction is by definition a synthetic pipeline test, so fixture.py's rule applies
+        # (raises SyntheticSignalForbidden for real or public slides, before any cache lookup).
+        fixture_context(slide.provenance, slide.image_kind, SYNTHETIC_PIPELINE_TEST, fixture_label)
     project_id = slide.project_id
     osr = None
     try:

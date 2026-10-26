@@ -23,9 +23,22 @@ from sqlalchemy.types import TypeDecorator
 
 from .config import ensure_var_dirs, get_settings
 
-#: Bump when models change incompatibly. v1: backend core. The ML pass adds tables
-#: (registered on the same Base) and bumps this to 2 when it lands.
-SCHEMA_VERSION = 1
+#: Bump when models change incompatibly (``create_all`` adds new tables but never new
+#: columns, so any column change needs a bump and a reset).
+#: v1: backend core plus the first ML tables.
+#: v2: ML engine upgrade (docs/ml-engine-design.md): engine tables in
+#: ``dermpath/ml/engine_models.py`` (feature_set, feature_set_item, feature_set_validation,
+#: comparison_family, comparison_family_member, test_release, run_attempt, inference_bundle,
+#: inference_prediction, al_proposal); new columns on training_run (identity, execution
+#: mode, feature set, protocol, calibration, abstention, family, bundle), feature_artifact
+#: (engine cache-key shas, write-once object keys, device, precision, coverage, generation)
+#: and prediction (failure categories); stricter immutability triggers. In
+#: ``dermpath/models.py``: dataset_item lineage snapshot columns (patient_code,
+#: accession_code, part, block_id, block, level_index, site_id, collected_on, scanner_id,
+#: stain, mpp_x, mpp_y, image_kind, provenance, label_source) and the split_family /
+#: split_family_assignment tables. Reset existing databases with
+#: ``python -m dermpath.seed --reset``.
+SCHEMA_VERSION = 2
 
 
 def utcnow() -> datetime:
@@ -149,15 +162,17 @@ def import_all_models() -> None:
     """Import every module that registers tables on :class:`Base`.
 
     ML TABLES (FeatureArtifact, TrainingRun, Prediction, Evaluation, ModelVersion) are
-    defined by the ML pass in ``dermpath/ml/models.py`` on this same ``Base``; they are
-    picked up here automatically once that module exists.
+    defined in ``dermpath/ml/models.py`` and the engine tables (feature sets, comparison
+    families, test releases, run attempts, inference bundles and predictions, active-learning
+    proposals) in ``dermpath/ml/engine_models.py``, all on this same ``Base``.
     """
     from . import models  # noqa: F401
 
     try:
+        from .ml import engine_models as _engine_models  # noqa: F401
         from .ml import models as _ml_models  # noqa: F401
-    except ModuleNotFoundError as exc:  # ML pass not installed yet
-        if exc.name not in ("dermpath.ml", "dermpath.ml.models"):
+    except ModuleNotFoundError as exc:  # ML package not installed
+        if exc.name not in ("dermpath.ml", "dermpath.ml.models", "dermpath.ml.engine_models"):
             raise
 
 

@@ -72,7 +72,8 @@ class ExperimentParams(BaseModel):
     target_mpp: float | None = Field(None, gt=0.05, le=8.0)
     fallback_downsample: float | None = Field(None, ge=1.0, le=256.0)
     max_patches_per_slide: int | None = Field(None, ge=1, le=4096)
-    min_tissue_fraction: float | None = Field(None, ge=0.0, le=1.0)
+    # > 0 (as PatchPolicy requires): 0 would accept every grid cell, pure background included.
+    min_tissue_fraction: float | None = Field(None, gt=0.0, le=1.0)
     pixel_mode: Literal["read", "none"] = "read"
     # synthetic encoder fixture controls (pipeline tests only)
     synthetic_dim: int = Field(64, ge=8, le=1024)

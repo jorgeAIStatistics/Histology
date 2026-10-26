@@ -2,6 +2,13 @@
 
 Run as a process with ``python -m dermpath.worker``. Tests and the seed use
 :meth:`Worker.run_until_idle` in-process; it executes exactly the same code path.
+
+The heartbeat thread renews the lease every ``lease/3`` seconds. A failed renewal (for
+example ``database is locked`` or a dropped PostgreSQL connection) is logged and retried
+with exponential backoff (never slower than the normal interval); the thread stops only
+when a renewal reports that the lease belongs to someone else. Progress reports are
+best-effort in the same way. Domain commits are fenced with
+:func:`dermpath.jobs.registry.assert_lease`.
 """
 
 from __future__ import annotations
@@ -41,6 +48,10 @@ def _short_error(exc: BaseException) -> str:
 
 
 class Worker:
+    #: First retry delay after a failed lease renewal (doubles per consecutive failure,
+    #: capped at the normal heartbeat interval).
+    heartbeat_retry_seconds = 0.2
+
     def __init__(self, worker_id: str | None = None, *, lease_seconds: int | None = None,
                  types: list[str] | None = None, record_heartbeat: bool = True) -> None:
         self.worker_id = worker_id or f"worker-{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
@@ -48,6 +59,7 @@ class Worker:
         self.types = types
         self.processed = 0
         self._last_beat = 0.0
+        self.last_lease_state: dict = {}  # heartbeat counters of the latest job (diagnostics, tests)
         # In-process runs (seed) must not make /health claim that a worker process is alive.
         self.record_heartbeat = record_heartbeat
         load_handlers()
@@ -97,19 +109,39 @@ class Worker:
             queue.finish(job.id, self.worker_id, status="canceled", error="canceled before start")
             return Outcome(job.id, job.type, "canceled")
 
-        state = {"lost": False, "cancel": False}
+        state = {"lost": False, "cancel": False, "renewals": 0, "renewal_failures": 0}
         stop = threading.Event()
 
         def hb_loop():
             interval = max(0.5, self.lease_seconds / 3.0)
-            while not stop.wait(interval):
-                owner, cancel = queue.heartbeat(job.id, self.worker_id, lease_seconds=self.lease_seconds)
-                state["lost"] = state["lost"] or not owner
+            delay, failures = interval, 0
+            while not stop.wait(delay):
+                try:
+                    owner, cancel = queue.heartbeat(job.id, self.worker_id, lease_seconds=self.lease_seconds)
+                except Exception as exc:  # transient DB error: keep the lease alive, retry sooner
+                    failures += 1
+                    state["renewal_failures"] += 1
+                    delay = min(interval, self.heartbeat_retry_seconds * (2 ** (failures - 1)))
+                    log.warning("lease renewal for job %s failed (%s); retry %d in %.2fs", job.id,
+                                _short_error(exc), failures, delay)
+                    continue
+                failures, delay = 0, interval
+                state["renewals"] += 1
+                if not owner:
+                    state["lost"] = True
+                    log.warning("job %s: lease lost (another worker reclaimed it); heartbeat stops", job.id)
+                    return
                 state["cancel"] = state["cancel"] or cancel
 
         def progress_cb(fraction, message) -> bool:
-            owner, cancel = queue.heartbeat(job.id, self.worker_id, progress=fraction, message=message,
-                                            lease_seconds=self.lease_seconds)
+            if state["lost"]:
+                raise LeaseLost("lease lost (another worker reclaimed this job)")
+            try:
+                owner, cancel = queue.heartbeat(job.id, self.worker_id, progress=fraction, message=message,
+                                                lease_seconds=self.lease_seconds)
+            except Exception as exc:  # progress is best-effort; the heartbeat thread keeps the lease
+                log.warning("progress report for job %s failed (%s)", job.id, _short_error(exc))
+                return state["cancel"]
             if not owner:
                 state["lost"] = True
                 raise LeaseLost("lease lost (another worker reclaimed this job)")
@@ -119,8 +151,9 @@ class Worker:
         ctx = JobContext(
             job_id=job.id, type=job.type, project_id=job.project_id, payload=dict(job.payload_json or {}),
             attempt=job.attempts, worker_id=self.worker_id, created_by=job.created_by,
-            _progress_cb=progress_cb,
+            _progress_cb=progress_cb, retry_count=job.retry_count or 0, _lease_lost=lambda: state["lost"],
         )
+        self.last_lease_state = state
         hb = threading.Thread(target=hb_loop, name=f"hb-{job.id[:8]}", daemon=True)
         hb.start()
         try:

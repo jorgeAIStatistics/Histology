@@ -17,10 +17,16 @@ PID = "proj-bcc-demo"
 
 
 def test_health_reports_components_and_worker_heartbeat(clients):
+    """Health reports every component. The schema version is compared with the code constant
+    (it became 2 with the ML engine upgrade, docs/ml-engine-design.md §10) rather than a literal,
+    so the check keeps asserting "database matches code" across deliberate bumps."""
+    from dermpath.db import SCHEMA_VERSION
+
     anon = clients.anon()
     h = anon.get("/api/v1/health").json()
     assert h["mode"] == "demo" and set(h["checks"]) >= {"database", "object_store", "worker", "tile_service"}
-    assert h["checks"]["database"]["status"] == "ok" and h["checks"]["database"]["schema_version"] == 1
+    assert SCHEMA_VERSION == 2
+    assert h["checks"]["database"]["status"] == "ok" and h["checks"]["database"]["schema_version"] == SCHEMA_VERSION
     assert h["checks"]["object_store"] == {"status": "ok", "backend": "local", "root_is_private": True}
     assert h["checks"]["tile_service"]["status"] == "ok" and h["checks"]["tile_service"]["tested_wsi_formats"] == [".svs"]
     assert "ingest" in h["checks"]["job_handlers"]["types"]

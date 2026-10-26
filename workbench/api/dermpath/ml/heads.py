@@ -14,7 +14,6 @@ time come from the same :class:`LoadedModel` code path built from the checkpoint
 from __future__ import annotations
 
 import copy
-import threading
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -22,9 +21,13 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .artifacts import load_npz, npz_bytes
+from .devices import TORCH_STATE_LOCK
 
 CHECKPOINT_SCHEMA = "dermpath.checkpoint/1"
-_TORCH_LOCK = threading.RLock()
+# Shared with devices.inference_context: both mutate process-global torch state (thread
+# count, deterministic algorithms), so they must serialise on one lock or they can
+# interleave and restore each other's values.
+_TORCH_LOCK = TORCH_STATE_LOCK
 
 
 @dataclass

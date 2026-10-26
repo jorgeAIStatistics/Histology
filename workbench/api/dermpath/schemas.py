@@ -299,12 +299,17 @@ class LabelOut(Out):
 # --------------------------------------------------------------------------- datasets
 
 class SplitIn(Req):
+    """Patient-grouped split request (validated in ``dermpath.splits.normalise_split``). ``seed`` and ``ratios`` are
+    for ``random`` and ``external_site`` (ratios for train/val only there); ``temporal`` rejects them."""
+
     partition: Literal["random", "temporal", "external_site"] = "random"
-    seed: int = 0
+    seed: int | None = Field(None, description="0 when omitted; rejected for temporal partitions")
     ratios: dict[str, float] | None = Field(None, examples=[{"train": 0.6, "val": 0.2, "test": 0.2}])
     test_cutoff: date | None = None
     val_cutoff: date | None = None
     test_sites: list[str] | None = None
+    patient_label_rule: Literal["any_positive", "majority"] | None = Field(
+        None, description="patient label used for stratification only (default any_positive)")
 
 
 class DatasetConfigIn(Req):
@@ -323,12 +328,17 @@ class DatasetIn(Req):
 class NewVersionIn(Req):
     reason: str = Field(..., min_length=1)
     name: str | None = None
+    # Children inherit the lineage's split family. Another partition or seed needs a new lineage (and a new family);
+    # test patients sealed by a test release stay test either way.
+    new_lineage: bool = False
+    split: SplitIn | None = None
 
 
 class FreezeIn(Req):
     reason: str | None = None
-    # Set to freeze despite open QC issues or unreviewed cross-split near-duplicates; a reason is then required
-    # and the acknowledged warnings are written into the immutable manifest.
+    # Set to freeze despite the warnings freeze-check lists (open QC issues, unresolved cross-split near-duplicates,
+    # splits missing a class, uncalibrated real items); a reason is then required and the acknowledged warnings are
+    # written into the immutable manifest.
     acknowledge_warnings: bool = False
 
 

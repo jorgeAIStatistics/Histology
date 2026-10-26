@@ -7,6 +7,7 @@ from __future__ import annotations
 import csv
 import io
 import random
+from collections import Counter
 from dataclasses import replace
 from datetime import date, timedelta
 
@@ -340,6 +341,9 @@ def test_frozen_manifest_is_immutable_and_label_change_forces_new_version(client
 
 
 def test_export_and_summary(clients, ids):
+    """Export and summary. Changed by design (docs/ml-engine-design.md §2): the manifest schema is now
+    ``dermpath.dataset_manifest/2`` (data_mode, patient_label_rule, split family and fingerprint, split diagnostics,
+    near-duplicate decisions, per-item QC inputs, audit block, python_version)."""
     lead = clients("user-research-lead")
     ds = _create(lead, "export", split={"partition": "random", "seed": 4})
     assert lead.get(f"/api/v1/datasets/{ds['id']}/export").status_code == 409  # draft
@@ -347,7 +351,7 @@ def test_export_and_summary(clients, ids):
     j = lead.get(f"/api/v1/datasets/{ds['id']}/export?format=json")
     assert j.status_code == 200 and "attachment" in j.headers["content-disposition"]
     body = j.json()
-    assert body["manifest"]["schema"] == "dermpath.dataset_manifest/1" and len(body["manifest_sha256"]) == 64
+    assert body["manifest"]["schema"] == "dermpath.dataset_manifest/2" and len(body["manifest_sha256"]) == 64
     c = lead.get(f"/api/v1/datasets/{ds['id']}/export?format=csv")
     lines = [ln for ln in c.text.splitlines() if not ln.startswith("#")]
     rows = list(csv.DictReader(io.StringIO("\n".join(lines))))
@@ -409,3 +413,443 @@ def test_freeze_with_open_qc_issue_requires_acknowledgement_recorded_in_manifest
     ack = _manifest(lead, ds["id"])["manifest"]["acknowledged_warnings"]
     assert ack["reason"] == "fold is outside the tissue used for this study"
     assert any(w["slide_id"] == sid for w in ack["open_qc_issues"])
+
+
+# --------------------------------------------------------------------------- design §2: families, staleness, data mode
+
+COHORT = "proj-synthetic-cohort"
+PATHOLOGIST = ("user-pathologist", "pathologist", "Dr. Imani Castell")
+LEAD_ACTOR = ("user-research-lead", "research_lead", "Priya Navarro")
+
+
+def _actor(t):
+    from dermpath.auth import Actor
+
+    return Actor(*t)
+
+
+def _add_patient(db, project_id: str, code: str, labels: list[str], *, site: str = "site-north",
+                 collected: date = date(2026, 6, 1), provenance: str = "demo_synthetic",
+                 image_kind: str = "synthetic_tiles") -> str:
+    """A coded patient with one case, one block and one approved, expert-labelled slide per label (fixture)."""
+    import hashlib
+
+    from dermpath.labels import create_expert_label
+    from dermpath.models import Block, Case, CodedPatient, Slide, SpecimenPart
+    from dermpath.review import set_review_state
+
+    patient = CodedPatient(project_id=project_id, code=code, created_by="test")
+    db.add(patient)
+    db.flush()
+    case = Case(project_id=project_id, coded_patient_id=patient.id, accession_code=f"ACC-{code}", collected_on=collected,
+                site_id=site, provenance=provenance)
+    db.add(case)
+    db.flush()
+    part = SpecimenPart(project_id=project_id, case_id=case.id, designation="A")
+    db.add(part)
+    db.flush()
+    block = Block(project_id=project_id, part_id=part.id, designation="A1")
+    db.add(block)
+    db.flush()
+    for i, value in enumerate(labels):
+        slide = Slide(project_id=project_id, block_id=block.id, level_index=i + 1, stain="H&E", scanner_id="scanner-a",
+                      provenance=provenance, image_kind=image_kind, object_key=f"test/{code}/{i}",
+                      sha256=hashlib.sha256(f"{project_id}|{code}|{i}".encode()).hexdigest(), ingest_status="succeeded")
+        db.add(slide)
+        db.flush()
+        create_expert_label(db, _actor(PATHOLOGIST), slide, scope="slide", target_id=None, value=value,
+                            reason="test fixture label (fictional)")
+        set_review_state(db, None, slide, "approved", reason=None, system=True)
+    return patient.id
+
+
+def _split_by_code(manifest: dict) -> dict[str, str]:
+    return {s["patient_code"]: s["split"] for s in manifest["splits"]}
+
+
+def test_child_version_inherits_splits_after_label_changes_and_new_patients(clients, ids):
+    """Split family (design §2): a child version keeps every existing patient's split whatever their labels are now;
+    only new patients are allocated. Re-seeding the child is refused (409 family_split_locked); a new lineage with
+    a reason may re-split."""
+    from dermpath.db import session_scope
+    from dermpath.splits import split_fingerprint
+
+    lead, path = clients("user-research-lead"), clients("user-pathologist")
+    v1 = ids["ml_demo"]["cohort"]["dataset_version_id"]
+    m1 = _manifest(lead, v1)["manifest"]
+    split1 = _split_by_code(m1)
+    assert len(split1) == 60 and m1["split_family_id"] and m1["data_mode"] == "synthetic"
+    assert m1["split_fingerprint"] == split_fingerprint(split1.items())
+    # Both classes in val and test (the old allocator gave a label-blind cut).
+    per = m1["split_diagnostics"]["per_split_class"]
+    assert all(per[sp][c]["patients"] >= 1 for sp in ("val", "test") for c in ("bcc_present", "bcc_absent_not_benign"))
+    assert m1["split_diagnostics"]["mixed_label_patients"]["count"] == 13
+
+    # Labels change on several slides, and nine new patients arrive (three positive).
+    flipped = 0
+    for it in m1["items"][:12:3]:
+        new = "bcc_absent_not_benign" if it["label_value"] == "bcc_present" else "bcc_present"
+        r = path.post(f"/api/v1/slides/{it['slide_id']}/labels", json={"value": new, "reason": "re-read (fictional)"})
+        assert r.status_code == 201, r.text
+        flipped += 1
+    with session_scope() as db:
+        for i in range(9):
+            _add_patient(db, COHORT, f"NEW-{i:02d}", ["bcc_present" if i % 3 == 0 else "bcc_absent_not_benign"],
+                         site="site-east")
+
+    child = lead.post(f"/api/v1/datasets/{v1}/new-version", json={"reason": "labels corrected; new patients"})
+    assert child.status_code == 201, child.text
+    c = child.json()
+    fam = c["config"]["split_diagnostics"]["family"]
+    assert fam["inherited"] == 60 and fam["new"] == 9 and fam["locked"] is True
+    assert fam["split_family_id"] == m1["split_family_id"]
+
+    # Re-seeding or re-partitioning the child is refused; the same configuration is accepted.
+    same = {k: v for k, v in c["config"]["split"].items() if k not in ("algorithm",)}
+    for bad in ({**same, "seed": 12}, {"partition": "temporal", "test_cutoff": "2026-06-01"}):
+        r = lead.post(f"/api/v1/datasets/{c['id']}/splits", json=bad)
+        assert r.status_code == 409 and r.json()["error"]["code"] == "family_split_locked", r.text
+    assert lead.post(f"/api/v1/datasets/{c['id']}/splits", json=same).status_code == 200
+
+    _freeze(lead, c["id"])
+    m2 = _manifest(lead, c["id"])["manifest"]
+    split2 = _split_by_code(m2)
+    assert all(split2[code] == sp for code, sp in split1.items())  # nobody moved
+    assert m2["split_family_id"] == m1["split_family_id"]
+    assert m2["split_family_counts"] == {"inherited": 60, "new": 9, "dropped": 0}
+    new_splits = Counter(split2[f"NEW-{i:02d}"] for i in range(9))
+    assert sum(new_splits.values()) == 9 and set(new_splits) <= {"train", "val", "test"}
+    assert sum(m2["split_diagnostics"]["per_split_class"][sp][c]["patients"]
+               for sp in ("train", "val", "test") for c in ("bcc_present", "bcc_absent_not_benign")) == 69
+    assert m2["split_fingerprint"] == split_fingerprint(split2.items()) != m1["split_fingerprint"]
+
+    # A different split needs a new lineage (and a reason).
+    r = lead.post(f"/api/v1/datasets/{c['id']}/new-version", json={"reason": "x", "split": {"partition": "random", "seed": 5}})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "family_split_locked"
+    r = lead.post(f"/api/v1/datasets/{c['id']}/new-version",
+                  json={"reason": "re-split for a separate study", "new_lineage": True,
+                        "split": {"partition": "random", "seed": 5}})
+    assert r.status_code == 201, r.text
+    nl = r.json()
+    assert nl["lineage_id"] != c["lineage_id"] and nl["version"] == 1 and nl["parent_version_id"] == c["id"]
+    assert nl["config"]["split"]["seed"] == 5 and nl["config"]["split_diagnostics"]["family"]["locked"] is False
+
+
+def test_sealed_test_patients_never_move(clients, ids):
+    """A test release seals the family's test patients: they stay test in every later version, also in a new
+    lineage started from the sealed one; freeze verifies it and the rows cannot be changed or deleted."""
+    from sqlalchemy.exc import DatabaseError
+
+    from dermpath.datasets import _family_freeze_check, freeze, seal_test_patients
+    from dermpath.db import session_scope
+    from dermpath.errors import ApiError
+    from dermpath.models import DatasetVersion, ImmutableRecordError, SplitAssignment, SplitFamilyAssignment
+
+    lead = clients("user-research-lead")
+    v1 = ids["ml_demo"]["cohort"]["dataset_version_id"]
+    split1 = _split_by_code(_manifest(lead, v1)["manifest"])
+    test_codes = sorted(c for c, s in split1.items() if s == "test")
+    with session_scope() as db:
+        dv = db.get(DatasetVersion, v1)
+        with pytest.raises(ApiError) as exc:
+            seal_test_patients(db, dv, "  ")
+        assert exc.value.code == "reason_required"
+        out = seal_test_patients(db, dv, "test release #1 (fictional)", actor=_actor(LEAD_ACTOR))
+        assert out["sealed"] == len(test_codes) == 12 and out["patient_codes"] == test_codes
+    with session_scope() as db:
+        again = seal_test_patients(db, db.get(DatasetVersion, v1), "second call")
+        assert again["sealed"] == 0 and again["already_sealed"] == 12
+
+    # A new lineage with another seed still keeps every sealed patient in test.
+    r = lead.post(f"/api/v1/datasets/{v1}/new-version",
+                  json={"reason": "new study on the same cohort", "new_lineage": True,
+                        "split": {"partition": "random", "seed": 77}})
+    assert r.status_code == 201, r.text
+    nl = r.json()
+    assert nl["config"]["split_diagnostics"]["family"]["sealed_patients_pinned"] == 12
+    with session_scope() as db:
+        from dermpath.datasets import item_rows
+
+        rows = item_rows(db, db.get(DatasetVersion, nl["id"]))
+        assert {r["patient_code"] for r in rows if r["split"] == "test"} >= set(test_codes)
+        # Moving a sealed patient by hand: freeze refuses.
+        sealed_pid = next(r["coded_patient_id"] for r in rows if r["patient_code"] == test_codes[0])
+        sa = db.query(SplitAssignment).filter_by(dataset_version_id=nl["id"], coded_patient_id=sealed_pid).one()
+        sa.split = "train"
+        db.flush()
+        dv = db.get(DatasetVersion, nl["id"])
+        with pytest.raises(ApiError) as exc:
+            _family_freeze_check(db, dv)
+        assert exc.value.code == "sealed_patient_moved"
+        with pytest.raises(ApiError) as exc:
+            freeze(db, _actor(LEAD_ACTOR), dv, reason="x", acknowledge_warnings=True)
+        assert exc.value.status == 409 and exc.value.code in ("draft_stale", "sealed_patient_moved")
+        db.rollback()
+
+    # Family rows are immutable: split never changes, sealing happens once, nothing is deleted.
+    with session_scope() as db:
+        a = db.query(SplitFamilyAssignment).filter(SplitFamilyAssignment.sealed_at.is_not(None)).first()
+        a.split = "train"
+        with pytest.raises(ImmutableRecordError):
+            db.flush()
+        db.rollback()
+    with session_scope() as db:
+        a = db.query(SplitFamilyAssignment).filter(SplitFamilyAssignment.sealed_at.is_not(None)).first()
+        a.sealed_reason = "rewritten"
+        with pytest.raises(ImmutableRecordError):
+            db.flush()
+        db.rollback()
+    with session_scope() as db:
+        a = db.query(SplitFamilyAssignment).first()
+        db.delete(a)
+        with pytest.raises(ImmutableRecordError):
+            db.flush()
+        db.rollback()
+    with session_scope() as db:
+        with pytest.raises(DatabaseError):
+            db.execute(text("UPDATE split_family_assignment SET split='train' WHERE split='test'"))
+        db.rollback()
+    with session_scope() as db:
+        with pytest.raises(DatabaseError):
+            db.execute(text("UPDATE split_family SET partition_json='{}'"))
+        db.rollback()
+    with session_scope() as db:
+        with pytest.raises(DatabaseError):
+            db.execute(text("DELETE FROM split_family"))
+        db.rollback()
+
+
+def test_root_draft_may_be_reseeded_until_the_lineage_is_frozen(clients):
+    from dermpath.db import session_scope
+    from dermpath.models import SplitFamily
+
+    lead = clients("user-research-lead")
+    ds = _create(lead, "reseed", split={"partition": "random", "seed": 1})
+    fam_id = ds["config"]["split_diagnostics"]["family"]["split_family_id"]
+    r = lead.post(f"/api/v1/datasets/{ds['id']}/splits", json={"partition": "random", "seed": 2})
+    assert r.status_code == 200 and r.json()["diagnostics"]["family"]["split_family_id"] == fam_id
+    with session_scope() as db:
+        assert db.get(SplitFamily, fam_id).partition_json["seed"] == 2
+
+
+def test_diagnostics_are_persisted_on_every_path(clients):
+    """Split diagnostics are stored in the config on create, refresh and POST splits (new_version: see the family
+    test), and in the manifest; audit events carry a summary."""
+    lead = clients("user-research-lead")
+    ds = _create(lead, "diag", split={"partition": "random", "seed": 3})
+    d = ds["config"]["split_diagnostics"]
+    assert d["algorithm"] == "dermpath.splits/2" and d["patient_label_rule"] == "any_positive"
+    assert {"per_split_class", "class_absent", "mixed_label_patients", "targets", "family"} <= set(d)
+    refreshed = lead.post(f"/api/v1/datasets/{ds['id']}/refresh").json()
+    assert refreshed["config"]["split_diagnostics"]["patients_per_split"] == d["patients_per_split"]
+    assert refreshed["refresh"]["data_mode"]["mode"] == "synthetic"
+    r = lead.post(f"/api/v1/datasets/{ds['id']}/splits", json={"partition": "random", "seed": 3,
+                                                               "patient_label_rule": "majority"}).json()
+    assert r["diagnostics"]["patient_label_rule"] == "majority"
+    assert lead.get(f"/api/v1/datasets/{ds['id']}").json()["config"]["split_diagnostics"]["patient_label_rule"] == "majority"
+    _freeze(lead, ds["id"])
+    m = _manifest(lead, ds["id"])["manifest"]
+    assert m["split_diagnostics"]["patient_label_rule"] == "majority" and m["patient_label_rule"] == "majority"
+    assert "split_diagnostics" not in m["config"]
+    events = lead.get(f"/api/v1/projects/{PID}/audit?entity_type=dataset_version").json()["items"]
+    created = [e for e in events if e["action"] == "dataset.draft_created" and e["entity_id"] == ds["id"]]
+    assert created and created[0]["after"]["split"]["patients_per_split"] == d["patients_per_split"]
+
+
+def test_split_validation_through_the_api(clients):
+    lead = clients("user-research-lead")
+    r = lead.post(f"/api/v1/projects/{PID}/datasets",
+                  json={"name": "x", "config": {"split": {"partition": "external_site", "test_sites": ["site-South"]}}})
+    assert r.status_code == 422 and r.json()["error"]["code"] == "unknown_site"
+    assert r.json()["error"]["details"]["known"] == ["site-north", "site-south"]
+    ds = _create(lead, "v")
+    for body, code in (({"partition": "temporal", "test_cutoff": "2026-06-01", "seed": 3}, "unused_split_parameter"),
+                       ({"partition": "temporal", "test_cutoff": "2026-06-01", "val_cutoff": "2026-06-01"}, "invalid_cutoff"),
+                       ({"partition": "external_site", "test_sites": ["site-south"],
+                         "ratios": {"train": 0.6, "val": 0.2, "test": 0.2}}, "test_ratio_not_allowed"),
+                       ({"partition": "random", "ratios": {"train": 0.6, "val": 0.2, "test": 0.2, "x": 0}}, "invalid_ratios")):
+        r = lead.post(f"/api/v1/datasets/{ds['id']}/splits", json=body)
+        assert r.status_code == 422 and r.json()["error"]["code"] == code, (body, r.text)
+    r = lead.post(f"/api/v1/datasets/{ds['id']}/splits", json={"partition": "external_site", "test_sites": ["site-south"]})
+    assert r.status_code == 200
+    diag = r.json()["diagnostics"]
+    assert diag["rule"].startswith("a patient with ANY case") and "seed" in diag and "remainder_targets" in diag
+    assert r.json()["split"]["ratios"] == {"train": 0.75, "val": 0.25}
+
+
+def test_freeze_refuses_a_stale_draft_with_the_diff(clients, ids):
+    """freeze() re-materialises in the same transaction: a slide moved to another patient, a label changed or a slide
+    excluded after the draft was materialised gives 409 draft_stale with the diff; after a refresh it freezes and
+    the manifest carries the snapshot (one split per patient, also for the moved slide)."""
+    from dermpath.db import session_scope
+    from dermpath.models import Slide
+
+    lead, path = clients("user-research-lead"), clients("user-pathologist")
+    ds = _create(lead, "stale", split={"partition": "random", "seed": 1})
+    moved = ids["slides"]["p2_a1_l1"]
+    with session_scope() as db:
+        target_block = db.get(Slide, ids["slides"]["p5_a1_l2"]).block_id
+        db.get(Slide, moved).block_id = target_block
+    check = lead.get(f"/api/v1/datasets/{ds['id']}/freeze-check").json()
+    assert [b["code"] for b in check["blockers"]] == ["draft_stale"]
+    r = lead.post(f"/api/v1/datasets/{ds['id']}/freeze", json={"reason": "x", "acknowledge_warnings": True})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "draft_stale", r.text
+    diff = r.json()["error"]["details"]["diff"]
+    changed = {c["slide_id"]: c["fields"] for c in diff["items_changed"]}
+    assert set(changed[moved]) >= {"coded_patient_id", "patient_code", "accession_code", "block_id", "case_id"}
+    assert changed[moved]["patient_code"] == ["P-0002", "P-0005"]
+    assert lead.get(f"/api/v1/datasets/{ds['id']}").json()["status"] == "draft"
+    lead.post(f"/api/v1/datasets/{ds['id']}/refresh")
+    _freeze(lead, ds["id"])
+    m = _manifest(lead, ds["id"])["manifest"]
+    row = next(it for it in m["items"] if it["slide_id"] == moved)
+    assert row["patient_code"] == "P-0005"
+    by_patient: dict[str, set] = {}
+    for it in m["items"]:
+        by_patient.setdefault(it["patient_code"], set()).add(it["split"])
+    assert all(len(s) == 1 for s in by_patient.values())
+
+    # A label change after materialise.
+    ds2 = _create(lead, "stale-label", split={"partition": "random", "seed": 1})
+    sid = ids["slides"]["p1_a1_l2"]
+    assert path.post(f"/api/v1/slides/{sid}/labels", json={"value": "bcc_absent_not_benign",
+                                                           "reason": "re-read (fictional)"}).status_code == 201
+    r = lead.post(f"/api/v1/datasets/{ds2['id']}/freeze", json={"reason": "x", "acknowledge_warnings": True})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "draft_stale"
+    fields = {c["slide_id"]: c["fields"] for c in r.json()["error"]["details"]["diff"]["items_changed"]}[sid]
+    assert fields["label_value"] == ["bcc_present", "bcc_absent_not_benign"] and "label_version_id" in fields
+
+    # An exclusion after materialise.
+    ds3 = _create(lead, "stale-exclusion", split={"partition": "random", "seed": 1})
+    assert path.post(f"/api/v1/slides/{ids['slides']['p4_a1_l1']}/review-state",
+                     json={"state": "excluded", "reason": "tear (fictional)"}).status_code == 200
+    r = lead.post(f"/api/v1/datasets/{ds3['id']}/freeze", json={"reason": "x", "acknowledge_warnings": True})
+    assert r.status_code == 409 and r.json()["error"]["details"]["diff"]["items_removed"] == [ids["slides"]["p4_a1_l1"]]
+
+
+def test_mixed_data_mode_is_refused_and_real_items_need_calibration(clients, ids):
+    """A dataset never mixes demo_synthetic procedural tiles with real images: refused at freeze (409
+    mixed_data_mode) and reported earlier (materialise result, freeze-check). Real items without mpp are a warning
+    that needs acknowledgement."""
+    from dermpath.db import session_scope
+    from dermpath.labels import create_expert_label
+    from dermpath.models import Slide
+    from dermpath.review import set_review_state
+
+    lead = clients("user-research-lead")
+    cmu = ids["slides"]["cmu_cc0"]
+    with session_scope() as db:
+        s = db.get(Slide, cmu)
+        assert s.provenance == "public_cc0" and s.mpp_x
+        if s.review_state != "approved":
+            set_review_state(db, None, s, "approved", reason=None, system=True)
+        create_expert_label(db, _actor(PATHOLOGIST), s, scope="slide", target_id=None, value="bcc_absent_not_benign",
+                            reason="test fixture label on the public slide (fictional)")
+    ds = _create(lead, "mixed", split={"partition": "random", "seed": 0})  # default include_provenance: all three
+    refreshed = lead.post(f"/api/v1/datasets/{ds['id']}/refresh").json()["refresh"]
+    assert refreshed["data_mode"]["mode"] == "mixed" and refreshed["data_mode"]["item_counts"] == {"real": 1, "synthetic": 8}
+    check = lead.get(f"/api/v1/datasets/{ds['id']}/freeze-check").json()
+    assert check["data_mode"] == "mixed" and "mixed_data_mode" in [b["code"] for b in check["blockers"]]
+    r = lead.post(f"/api/v1/datasets/{ds['id']}/freeze", json={"reason": "x", "acknowledge_warnings": True})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "mixed_data_mode"
+
+    synthetic = _create(lead, "synthetic-only", include_provenance=["demo_synthetic"], split={"partition": "random"})
+    assert lead.get(f"/api/v1/datasets/{synthetic['id']}/freeze-check").json()["uncalibrated_items"] == []
+    _freeze(lead, synthetic["id"])
+    assert _manifest(lead, synthetic["id"])["manifest"]["data_mode"] == "synthetic"
+
+    with session_scope() as db:
+        s = db.get(Slide, cmu)
+        s.mpp_x = s.mpp_y = None
+    real = _create(lead, "real-only", include_provenance=["public_cc0"], split={"partition": "random"})
+    check = lead.get(f"/api/v1/datasets/{real['id']}/freeze-check").json()
+    assert check["data_mode"] == "real" and check["blockers"] == []
+    assert check["uncalibrated_items"] == [{"slide_id": cmu, "missing": ["mpp_x", "mpp_y"]}]
+    assert check["requires_acknowledgement"] is True and cmu in check["slides"]
+    r = lead.post(f"/api/v1/datasets/{real['id']}/freeze", json={"reason": "x"})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "freeze_warnings_unacknowledged"
+    _freeze(lead, real["id"])
+    m = _manifest(lead, real["id"])["manifest"]
+    assert m["data_mode"] == "real" and m["synthetic_only"] is False
+    assert m["acknowledged_warnings"]["uncalibrated_items"][0]["slide_id"] == cmu
+
+
+def _cross_split_seed(lead, pair: set[str]) -> int:
+    for seed in range(40):
+        ds = _create(lead, f"probe-{seed}", split={"partition": "random", "seed": seed})
+        check = lead.get(f"/api/v1/datasets/{ds['id']}/freeze-check").json()
+        if any({c["slide_a"], c["slide_b"]} == pair for c in check["unreviewed_near_duplicates"]):
+            return seed
+    raise AssertionError("no seed puts the near-duplicate pair in different splits")
+
+
+def test_near_duplicate_decisions_only_distinct_clears_duplicate_groups(clients, ids):
+    """Near-duplicate semantics (design §2): 'unsure' keeps blocking like an unreviewed pair; only 'distinct'
+    clears the warning; 'duplicate' becomes a grouping constraint (both patients in one split), and a duplicate
+    decision recorded after materialise makes the draft stale until it is refreshed."""
+    lead, path = clients("user-research-lead"), clients("user-pathologist")
+    a, b = ids["slides"]["p1_a1_l1"], ids["slides"]["p5_a1_l1_neardup"]
+    seed = _cross_split_seed(lead, {a, b})
+    ds = _create(lead, "neardup", split={"partition": "random", "seed": seed})
+
+    def decide(decision):
+        r = path.post(f"/api/v1/projects/{PID}/near-duplicates/review",
+                      json={"slide_a_id": a, "slide_b_id": b, "decision": decision, "reason": "test (fictional)"})
+        assert r.status_code == 201
+
+    def pair_in(check, key):
+        return any({c["slide_a"], c["slide_b"]} == {a, b} for c in check[key])
+
+    decide("unsure")
+    check = lead.get(f"/api/v1/datasets/{ds['id']}/freeze-check").json()
+    assert pair_in(check, "unsure_near_duplicates") and not pair_in(check, "unreviewed_near_duplicates")
+    assert check["requires_acknowledgement"] is True
+    decide("distinct")
+    check = lead.get(f"/api/v1/datasets/{ds['id']}/freeze-check").json()
+    assert not any(pair_in(check, k) for k in ("unsure_near_duplicates", "unreviewed_near_duplicates",
+                                               "duplicates_across_splits"))
+    decide("duplicate")
+    check = lead.get(f"/api/v1/datasets/{ds['id']}/freeze-check").json()
+    assert pair_in(check, "duplicates_across_splits")
+    assert "draft_stale" in [x["code"] for x in check["blockers"]]  # the grouping would change the allocation
+    r = lead.post(f"/api/v1/datasets/{ds['id']}/freeze", json={"reason": "x", "acknowledge_warnings": True})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "draft_stale"
+    assert r.json()["error"]["details"]["diff"]["splits_changed"]
+    refreshed = lead.post(f"/api/v1/datasets/{ds['id']}/refresh").json()
+    assert refreshed["refresh"]["split"]["grouping"]["constraints_applied"] == 1
+    check = lead.get(f"/api/v1/datasets/{ds['id']}/freeze-check").json()
+    assert not pair_in(check, "duplicates_across_splits") and check["blockers"] == []
+    _freeze(lead, ds["id"])
+    m = _manifest(lead, ds["id"])["manifest"]
+    items = {it["slide_id"]: it for it in m["items"]}
+    assert items[a]["split"] == items[b]["split"]
+    decisions = [d for d in m["near_duplicate_decisions"] if {d["slide_a"], d["slide_b"]} == {a, b}]
+    assert decisions and decisions[0]["decision"] == "duplicate" and decisions[0]["both_in_dataset"] is True
+
+
+def test_manifest_records_qc_inputs_environment_and_audit(clients, ids, run_worker):
+    import hashlib
+
+    from dermpath.storage import get_store
+
+    lead, asst = clients("user-research-lead"), clients("user-assistant")
+    sid = ids["slides"]["p1_a1_l2"]
+    assert asst.post(f"/api/v1/slides/{sid}/qc/screen").status_code == 202
+    run_worker()
+    ds = _create(lead, "qc-inputs", split={"partition": "random", "seed": 2})
+    _freeze(lead, ds["id"])
+    m = _manifest(lead, ds["id"])["manifest"]
+    items = {it["slide_id"]: it for it in m["items"]}
+    it = items[sid]
+    assert it["qc_review_id"] and it["mask_object_key"]
+    assert it["mask_sha256"] == hashlib.sha256(get_store().get_bytes(it["mask_object_key"])).hexdigest()
+    assert it["excluded_region_issue_ids"] == [] and len(it["excluded_regions_sha256"]) == 64
+    unscreened = items[ids["slides"]["p2_a1_l1"]]
+    assert unscreened["qc_review_id"] is None and unscreened["mask_sha256"] is None
+    assert it["label_source"] in ("single_reader", "agreed", "adjudicated")
+    assert m["python_version"].count(".") == 2 and m["audit"]["schema"] == "dermpath.dataset_audit/1"
+    assert m["data_mode"] == "synthetic" and m["positive_class"] == "bcc_present"
+    assert m["split_family_counts"] == {"inherited": 0, "new": 4, "dropped": 0}
+    # The workflow cohort is tiny: the negative class cannot reach every split, which needed an acknowledgement.
+    assert {a["split"] for a in m["acknowledged_warnings"]["class_absent"]} <= {"val", "test", "train"}
+    assert m["acknowledged_warnings"]["mixed_label_patients"]["count"] == 2

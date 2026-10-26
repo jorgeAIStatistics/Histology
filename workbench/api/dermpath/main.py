@@ -12,8 +12,9 @@ Middleware (pure ASGI, so streamed upload bodies are untouched):
   to SameSite=Lax cookies);
 * security headers.
 
-ML ROUTES: if ``dermpath/ml/router.py`` exists and defines ``router`` (an APIRouter), it
-is mounted under ``/api/v1`` automatically (see :data:`OPTIONAL_ROUTER_MODULES`).
+ML ROUTES: ``dermpath/ml/router.py`` (experiments, models) and
+``dermpath/ml/router_features.py`` (feature sets) each define ``router`` (an APIRouter) and
+are mounted under ``/api/v1`` when present (see :data:`OPTIONAL_ROUTER_MODULES`).
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ from .errors import error_body, install_error_handlers
 log = logging.getLogger("dermpath")
 
 API_PREFIX = "/api/v1"
-OPTIONAL_ROUTER_MODULES = ("dermpath.ml.router",)
+OPTIONAL_ROUTER_MODULES = ("dermpath.ml.router", "dermpath.ml.router_features")
 _UNSAFE = {"POST", "PUT", "PATCH", "DELETE"}
 _SECURITY_HEADERS = [
     (b"x-content-type-options", b"nosniff"),

@@ -10,6 +10,9 @@ triggers created with ``execute_if(dialect="sqlite")``):
 * ``AuditEvent``, ``LabelVersion`` and ``ReviewAssessment`` are append-only.
 * A frozen ``DatasetVersion`` and its ``DatasetItem`` / ``SplitAssignment`` rows reject
   every insert, update and delete.
+* ``SplitFamily`` rows are never deleted; salt and lineage never change, and the partition
+  only while no version of the lineage is frozen. ``SplitFamilyAssignment`` rows are
+  insert-only except for sealing, which is recorded once.
 * ``AnnotationVersion`` rows are never deleted; only ``superseded_by`` may be set once.
 
 ML TABLES ---------------------------------------------------------------------
@@ -41,6 +44,7 @@ from sqlalchemy import (
     UniqueConstraint,
     event,
     inspect,
+    select,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 
@@ -464,6 +468,10 @@ class DatasetVersion(Base):
 
 
 class DatasetItem(Base):
+    """One included slide. Lineage and slide metadata are SNAPSHOTS taken at materialise time (design §2):
+    manifests and split allocation read these columns, never the live hierarchy, so a slide moved or re-described
+    after materialise cannot silently change a version (freeze re-materialises and refuses a stale draft)."""
+
     __tablename__ = "dataset_item"
     __table_args__ = (UniqueConstraint("dataset_version_id", "slide_id"),)
 
@@ -478,6 +486,23 @@ class DatasetItem(Base):
     label_scope: Mapped[str] = mapped_column(String(16), nullable=False)
     case_id: Mapped[str] = mapped_column(ForeignKey("case_record.id"), nullable=False)
     coded_patient_id: Mapped[str] = mapped_column(ForeignKey("coded_patient.id"), nullable=False)
+    # Snapshot at materialise time (nullable: a value may genuinely be unknown, e.g. mpp or site).
+    patient_code: Mapped[str | None] = mapped_column(String(32))
+    accession_code: Mapped[str | None] = mapped_column(String(40))
+    part: Mapped[str | None] = mapped_column(String(4))
+    block_id: Mapped[str | None] = mapped_column(String(32))
+    block: Mapped[str | None] = mapped_column(String(8))
+    level_index: Mapped[int | None] = mapped_column(Integer)
+    site_id: Mapped[str | None] = mapped_column(String(64))
+    collected_on: Mapped[date | None] = mapped_column(Date)
+    scanner_id: Mapped[str | None] = mapped_column(String(64))
+    stain: Mapped[str | None] = mapped_column(String(64))
+    mpp_x: Mapped[float | None] = mapped_column(Float)
+    mpp_y: Mapped[float | None] = mapped_column(Float)
+    image_kind: Mapped[str | None] = mapped_column(String(24))
+    provenance: Mapped[str | None] = mapped_column(String(32))
+    # How the reference label was reached: adjudicated | agreed | single_reader (always an expert label).
+    label_source: Mapped[str | None] = mapped_column(String(24))
 
 
 class SplitAssignment(Base):
@@ -491,6 +516,47 @@ class SplitAssignment(Base):
     coded_patient_id: Mapped[str] = mapped_column(ForeignKey("coded_patient.id"), nullable=False)
     split: Mapped[str] = mapped_column(String(8), nullable=False)
     partition: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
+class SplitFamily(Base):
+    """Patient → split assignments shared by every version of one dataset lineage (design §2, split families).
+
+    Created by the lineage's first split assignment. ``salt`` and the lineage never change; ``partition_json`` may
+    change only while no version of the lineage is frozen (afterwards a different partition or seed needs a new
+    lineage, with a reason). Rows are never deleted.
+    """
+
+    __tablename__ = "split_family"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), nullable=False, index=True)
+    lineage_id: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    salt: Mapped[str] = mapped_column(String(64), nullable=False)
+    partition_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(64))
+
+
+class SplitFamilyAssignment(Base):
+    """A patient's split in a family, written when the first version containing the patient is frozen.
+
+    Insert-only: ``split`` never changes and rows are never deleted. ``sealed_at``/``sealed_reason``/``sealed_by``
+    are set once, when a test release happens on any version of the lineage; sealed patients never change split.
+    """
+
+    __tablename__ = "split_family_assignment"
+    __table_args__ = (UniqueConstraint("family_id", "coded_patient_id"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    family_id: Mapped[str] = mapped_column(ForeignKey("split_family.id"), nullable=False, index=True)
+    coded_patient_id: Mapped[str] = mapped_column(ForeignKey("coded_patient.id"), nullable=False)
+    patient_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    split: Mapped[str] = mapped_column(String(8), nullable=False)
+    first_version_id: Mapped[str] = mapped_column(ForeignKey("dataset_version.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
+    sealed_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
+    sealed_reason: Mapped[str | None] = mapped_column(Text)
+    sealed_by: Mapped[str | None] = mapped_column(String(64))
 
 
 class NearDuplicateReview(Base):
@@ -577,7 +643,9 @@ class AuditEvent(Base):
 # --------------------------------------------------------------------------- immutability guards
 
 _APPEND_ONLY = (AuditEvent, LabelVersion, ReviewAssessment)
-_NO_BULK = (AuditEvent, LabelVersion, ReviewAssessment, DatasetVersion, DatasetItem, SplitAssignment)
+_NO_BULK = (AuditEvent, LabelVersion, ReviewAssessment, DatasetVersion, DatasetItem, SplitAssignment, SplitFamily,
+            SplitFamilyAssignment)
+_SEAL_FIELDS = {"sealed_at", "sealed_reason", "sealed_by"}
 
 
 def _dataset_frozen(session: Session, dataset_version_id: str | None) -> bool:
@@ -592,6 +660,19 @@ def _dataset_frozen(session: Session, dataset_version_id: str | None) -> bool:
         return False
     committed = inspect(dv).committed_state.get("status", dv.status)
     return committed == "frozen"
+
+
+def _lineage_locked(session: Session, lineage_id: str | None) -> bool:
+    """A split family is locked once any version of its lineage is frozen (in the database)."""
+    if not lineage_id:
+        return False
+    with session.no_autoflush:
+        return session.scalars(select(DatasetVersion.id).where(DatasetVersion.lineage_id == lineage_id,
+                                                               DatasetVersion.status == "frozen")).first() is not None
+
+
+def _changed_attrs(obj) -> set[str]:
+    return {a.key for a in inspect(obj).attrs if a.history.has_changes()}
 
 
 @event.listens_for(Session, "before_flush")
@@ -616,8 +697,25 @@ def _guard_immutables(session: Session, flush_context, instances) -> None:
             previous = [v for v in state.attrs.superseded_by.history.deleted if v is not None]
             if previous:
                 raise ImmutableRecordError("annotation version already superseded")
+        if isinstance(obj, SplitFamily):
+            changed = _changed_attrs(obj)
+            if changed - {"partition_json"}:
+                raise ImmutableRecordError("a split family's salt and lineage never change")
+            committed_lineage = inspect(obj).committed_state.get("lineage_id", obj.lineage_id)
+            if changed and _lineage_locked(session, committed_lineage):
+                raise ImmutableRecordError("split family is locked (a version of its lineage is frozen); "
+                                           "start a new lineage to change the partition")
+        if isinstance(obj, SplitFamilyAssignment):
+            state = inspect(obj)
+            changed = _changed_attrs(obj)
+            if changed - _SEAL_FIELDS:
+                raise ImmutableRecordError("split family assignments never change split; only sealing is recorded")
+            hist = state.attrs.sealed_at.history
+            previous = list(hist.deleted) if hist.has_changes() else [obj.sealed_at]
+            if changed and any(v is not None for v in previous):
+                raise ImmutableRecordError("split family assignment is already sealed")
     for obj in list(session.deleted):
-        if isinstance(obj, _APPEND_ONLY) or isinstance(obj, AnnotationVersion):
+        if isinstance(obj, (*_APPEND_ONLY, AnnotationVersion, SplitFamily, SplitFamilyAssignment)):
             raise ImmutableRecordError(f"{type(obj).__name__} rows are never deleted")
         if isinstance(obj, DatasetVersion):
             committed = inspect(obj).committed_state.get("status", obj.status)
@@ -675,6 +773,26 @@ _SQLITE_TRIGGERS = {
         "CREATE TRIGGER IF NOT EXISTS dataset_item_frozen_delete BEFORE DELETE ON dataset_item "
         "WHEN (SELECT status FROM dataset_version WHERE id = OLD.dataset_version_id) = 'frozen' "
         "BEGIN SELECT RAISE(ABORT, 'dataset version is frozen'); END",
+    ],
+    SplitFamily.__table__: [
+        "CREATE TRIGGER IF NOT EXISTS split_family_identity_update BEFORE UPDATE ON split_family "
+        "WHEN NEW.salt IS NOT OLD.salt OR NEW.lineage_id IS NOT OLD.lineage_id OR NEW.project_id IS NOT OLD.project_id "
+        "OR NEW.id IS NOT OLD.id BEGIN SELECT RAISE(ABORT, 'split family identity never changes'); END",
+        "CREATE TRIGGER IF NOT EXISTS split_family_locked_update BEFORE UPDATE ON split_family "
+        "WHEN EXISTS (SELECT 1 FROM dataset_version WHERE lineage_id = OLD.lineage_id AND status = 'frozen') "
+        "BEGIN SELECT RAISE(ABORT, 'split family is locked'); END",
+        "CREATE TRIGGER IF NOT EXISTS split_family_no_delete BEFORE DELETE ON split_family "
+        "BEGIN SELECT RAISE(ABORT, 'split families are never deleted'); END",
+    ],
+    SplitFamilyAssignment.__table__: [
+        "CREATE TRIGGER IF NOT EXISTS split_family_assignment_update BEFORE UPDATE ON split_family_assignment "
+        "WHEN NEW.split IS NOT OLD.split OR NEW.family_id IS NOT OLD.family_id "
+        "OR NEW.coded_patient_id IS NOT OLD.coded_patient_id OR NEW.patient_code IS NOT OLD.patient_code "
+        "OR NEW.first_version_id IS NOT OLD.first_version_id OR NEW.id IS NOT OLD.id "
+        "OR OLD.sealed_at IS NOT NULL "
+        "BEGIN SELECT RAISE(ABORT, 'split family assignments never change; only sealing is recorded, once'); END",
+        "CREATE TRIGGER IF NOT EXISTS split_family_assignment_no_delete BEFORE DELETE ON split_family_assignment "
+        "BEGIN SELECT RAISE(ABORT, 'split family assignments are never deleted'); END",
     ],
     SplitAssignment.__table__: [
         "CREATE TRIGGER IF NOT EXISTS split_frozen_insert BEFORE INSERT ON split_assignment "

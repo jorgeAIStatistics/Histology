@@ -136,8 +136,9 @@ export function SplitsPanel({ dv, s, onChanged }: { dv: DatasetVersion; s: Datas
                 { value: "external_site", label: "External site (held-out site is test)" },
               ]}
             />
-            <TextField label="Seed" type="number" value={seed} onChange={(e) => setSeed(e.target.value)} />
-            {partition !== "external_site" ? (
+            {/* Temporal splits are fully determined by the cutoffs: the API rejects an unused seed or ratios. */}
+            {partition !== "temporal" ? <TextField label="Seed" type="number" value={seed} onChange={(e) => setSeed(e.target.value)} /> : null}
+            {partition === "random" ? (
               <div className="grid grid-cols-3 gap-2">
                 {(["train", "val", "test"] as const).map((k) => (
                   <TextField key={k} label={k === "val" ? "Val" : k[0].toUpperCase() + k.slice(1)} type="number" step="0.05" min="0" max="1" value={ratios[k]} onChange={(e) => setRatios({ ...ratios, [k]: e.target.value })} />
@@ -161,8 +162,9 @@ export function SplitsPanel({ dv, s, onChanged }: { dv: DatasetVersion; s: Datas
               onClick={async () => {
                 setBusy(true);
                 try {
-                  const body: Record<string, unknown> = { partition, seed: Number(seed) || 0 };
-                  if (partition !== "external_site") body.ratios = { train: Number(ratios.train), val: Number(ratios.val), test: Number(ratios.test) };
+                  const body: Record<string, unknown> = { partition };
+                  if (partition !== "temporal") body.seed = Number(seed) || 0;
+                  if (partition === "random") body.ratios = { train: Number(ratios.train), val: Number(ratios.val), test: Number(ratios.test) };
                   if (partition === "temporal") Object.assign(body, { test_cutoff: testCutoff, val_cutoff: valCutoff });
                   if (partition === "external_site") body.test_sites = testSites.split(",").map((x) => x.trim()).filter(Boolean);
                   const r = await api<{ diagnostics: Record<string, unknown> }>(`/datasets/${dv.id}/splits`, { method: "POST", body });
