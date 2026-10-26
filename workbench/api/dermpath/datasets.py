@@ -451,7 +451,27 @@ def build_manifest(db: Session, dv: DatasetVersion, frozen_at, frozen_by: str) -
     }
 
 
-def freeze(db: Session, actor: Actor, dv: DatasetVersion, reason: str | None = None) -> DatasetVersion:
+def freeze_warnings(db: Session, dv: DatasetVersion) -> dict:
+    """What a freeze would lock in that a person should look at first: unresolved QC issues on included slides, and
+    near-duplicate candidates that land in different splits (possible leakage) with no human decision yet."""
+    s = summary(db, dv)
+    leakage = [c for c in s["duplicates"]["near_duplicate_candidates"]
+               if c["cross_split"] and not c.get("human_decision")]
+    # Unconfirmed heuristic suggestions (automated screen, never reviewed) do not block: they are noise until a
+    # person confirms them. Issues a person raised or confirmed do.
+    confirmed = []
+    for w in s["qc_warnings"]:
+        ids = [i["id"] for i in w["open_issues"]]
+        rows = db.scalars(select(QCIssue).where(QCIssue.id.in_(ids))).all()
+        real = [{"id": i.id, "category": i.category, "status": i.status} for i in rows
+                if not (i.is_suggestion and i.status == "open")]
+        if real:
+            confirmed.append({"slide_id": w["slide_id"], "open_issues": real})
+    return {"open_qc_issues": confirmed, "unreviewed_near_duplicates": leakage}
+
+
+def freeze(db: Session, actor: Actor, dv: DatasetVersion, reason: str | None = None,
+           acknowledge_warnings: bool = False) -> DatasetVersion:
     if dv.status != "draft":
         raise conflict("dataset_frozen", "Already frozen")
     rows = item_rows(db, dv)
@@ -462,8 +482,19 @@ def freeze(db: Session, actor: Actor, dv: DatasetVersion, reason: str | None = N
         raise conflict("splits_missing", "Assign patient-grouped splits before freezing (POST /datasets/{id}/splits)",
                        patients_without_split=missing)
     assert_patient_grouping(rows)
+    warnings = freeze_warnings(db, dv)
+    has_warnings = bool(warnings["open_qc_issues"] or warnings["unreviewed_near_duplicates"])
+    if has_warnings and not acknowledge_warnings:
+        raise conflict("freeze_warnings_unacknowledged",
+                       "Open QC issues or unreviewed near-duplicates would be frozen into this version. Resolve them, "
+                       "or freeze anyway with acknowledge_warnings and a reason (recorded in the manifest).",
+                       **warnings)
+    if has_warnings and not (reason and reason.strip()):
+        raise unprocessable("reason_required", "Freezing with acknowledged warnings needs a reason")
     now = utcnow()
     manifest = build_manifest(db, dv, now, actor.id)
+    if has_warnings:
+        manifest["acknowledged_warnings"] = {**warnings, "reason": reason, "acknowledged_by": actor.id}
     digest = hashlib.sha256(canonical_json(manifest)).hexdigest()
     key = f"projects/{dv.project_id}/datasets/{dv.id}/manifest.json"
     get_store().put_bytes(key, json.dumps(manifest, indent=2, sort_keys=True).encode())

@@ -87,7 +87,8 @@ def freeze(body: FreezeIn | None = None, scope: Scope = Depends(entity_scope("da
            db: Session = Depends(get_db)):
     dv = scope.obj
     _require_draft(dv)
-    ds.freeze(db, scope.actor, dv, reason=body.reason if body else None)
+    ds.freeze(db, scope.actor, dv, reason=body.reason if body else None,
+              acknowledge_warnings=bool(body and body.acknowledge_warnings))
     db.commit()
     return {**ds.dataset_dict(dv, _count(db, dv)), "manifest_verified": ds.verify_manifest(dv)}
 

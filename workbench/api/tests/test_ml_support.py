@@ -74,7 +74,7 @@ def custom_dataset(pid: str, name: str, assign, *, label_scope: str = "slide") -
             db.add(SplitAssignment(dataset_version_id=dv.id, coded_patient_id=pid_, split=assign(p["code"], p["labels"]),
                                    partition="random"))
         db.flush()
-        freeze(db, lead, dv, reason="test dataset")
+        freeze(db, lead, dv, reason="test dataset", acknowledge_warnings=True)
         return dv.id
 
 

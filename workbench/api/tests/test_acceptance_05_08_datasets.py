@@ -30,7 +30,8 @@ def _manifest(lead, dsid):
 
 
 def _freeze(lead, dsid):
-    r = lead.post(f"/api/v1/datasets/{dsid}/freeze", json={"reason": "test"})
+    # These tests are about immutability and splits; the open-QC freeze gate has its own test below.
+    r = lead.post(f"/api/v1/datasets/{dsid}/freeze", json={"reason": "test", "acknowledge_warnings": True})
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -376,3 +377,30 @@ def test_export_and_summary(clients, ids):
     s2 = lead.get(f"/api/v1/datasets/{ds['id']}/summary").json()
     m = [n for n in s2["duplicates"]["near_duplicate_candidates"] if {n["slide_a"], n["slide_b"]} == pair][0]
     assert m["human_decision"]["decision"] == "duplicate" and s2["counts"]["slides"] == len(APPROVED)
+
+
+def test_freeze_with_open_qc_issue_requires_acknowledgement_recorded_in_manifest(clients, ids):
+    """A summary warning is enforced: an open, person-raised QC issue blocks freeze until acknowledged with a reason,
+    and the acknowledgement is written into the immutable manifest."""
+    lead, asst = clients("user-research-lead"), clients("user-assistant")
+    sid = ids["slides"]["p1_a1_l1"]
+    issue = asst.post(f"/api/v1/slides/{sid}/qc/issues", json={"category": "fold", "note": "fold near the edge"})
+    assert issue.status_code in (200, 201), issue.text
+    ds = _create(lead, "gate", split={"partition": "random", "seed": 4})
+
+    refused = lead.post(f"/api/v1/datasets/{ds['id']}/freeze", json={"reason": "x"})
+    assert refused.status_code == 409, refused.text
+    err = refused.json()["error"]
+    assert err["code"] == "freeze_warnings_unacknowledged"
+    assert any(w["slide_id"] == sid for w in err["details"]["open_qc_issues"])
+    assert lead.get(f"/api/v1/datasets/{ds['id']}").json()["status"] == "draft"
+
+    no_reason = lead.post(f"/api/v1/datasets/{ds['id']}/freeze", json={"acknowledge_warnings": True})
+    assert no_reason.status_code == 422 and no_reason.json()["error"]["code"] == "reason_required"
+
+    ok = lead.post(f"/api/v1/datasets/{ds['id']}/freeze",
+                   json={"acknowledge_warnings": True, "reason": "fold is outside the tissue used for this study"})
+    assert ok.status_code == 200, ok.text
+    ack = _manifest(lead, ds["id"])["manifest"]["acknowledged_warnings"]
+    assert ack["reason"] == "fold is outside the tissue used for this study"
+    assert any(w["slide_id"] == sid for w in ack["open_qc_issues"])

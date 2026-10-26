@@ -327,6 +327,9 @@ class NewVersionIn(Req):
 
 class FreezeIn(Req):
     reason: str | None = None
+    # Set to freeze despite open QC issues or unreviewed cross-split near-duplicates; a reason is then required
+    # and the acknowledged warnings are written into the immutable manifest.
+    acknowledge_warnings: bool = False
 
 
 class DatasetOut(Out):

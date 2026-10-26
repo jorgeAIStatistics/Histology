@@ -68,7 +68,10 @@ def _freeze_dataset(db, project: Project, name: str, config: dict) -> DatasetVer
         return existing
     dv = create_draft(db, LEAD, project, name=name, config=config,
                       reason="pipeline-test dataset for the ML demo (synthetic)")
-    freeze(db, LEAD, dv, reason="frozen for synthetic pipeline-test experiments")
+    # The demo slides deliberately carry open QC issues at every lifecycle stage; a research lead freezing this
+    # version acknowledges them with a reason, and they are written into the manifest (never hidden).
+    freeze(db, LEAD, dv, acknowledge_warnings=True,
+           reason="frozen for synthetic pipeline-test experiments; open QC issues on the demo slides acknowledged")
     return dv
 
 
