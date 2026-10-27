@@ -1308,6 +1308,52 @@ def _dinov2_pooler(model, x):
 
 _DINOV2_POOLING = {"cls+mean_patch_concat": _dinov2_cls_mean_patch, "pooler_output": _dinov2_pooler}
 
+# Checkpoints saved with transformers 4.x (for example Midnight-12k, saved with 4.43) use the legacy Dinov2 parameter
+# names. transformers 5 renamed them, and its own pretrained-checkpoint loader converts on load with these rules
+# (transformers conversion_mapping.py, "Dinov2Model" / "Dinov2WithRegistersModel"): three attention renames, the fused
+# SwiGLU input projection split in two along dim 0 (first half gate, second half up), and the output projection
+# renamed. We never use that loader (it can reach the network); we build from the exact hashed bytes, so the same
+# rules are applied here. Parity with the transformers loader is checked by tests (tiny models,
+# tests/test_ml_dinov2_legacy_keys.py) and was measured once on the real Midnight-12k weights (CPU fp32, 8 patches,
+# max abs diff 2.0e-06; to be recorded in docs/ml-engine-report.md).
+_DINOV2_LEGACY_RENAMES = (
+    (".attention.attention.query.", ".attention.q_proj."),
+    (".attention.attention.key.", ".attention.k_proj."),
+    (".attention.attention.value.", ".attention.v_proj."),
+    (".attention.output.dense.", ".attention.o_proj."),
+    (".mlp.weights_out.", ".mlp.down_proj."),
+)
+_DINOV2_LEGACY_SPLIT = (".mlp.weights_in.", (".mlp.gate_proj.", ".mlp.up_proj."))
+
+
+def convert_legacy_dinov2_state(state: dict) -> tuple[dict, dict]:
+    """Rename transformers-4 Dinov2 keys to transformers-5 names; return ``(state, report)``.
+
+    A state dict that already uses the new names is returned unchanged. Anything not covered by the rules keeps its
+    name, so an unknown layout still fails the strict load loudly instead of loading partially.
+    """
+    out: dict = {}
+    renamed = split = 0
+    src, (gate, up) = _DINOV2_LEGACY_SPLIT
+    for key, tensor in state.items():
+        if src in key:
+            if tensor.shape[0] % 2:
+                raise ValueError(f"{key}: fused SwiGLU projection has an odd first dimension {tuple(tensor.shape)}")
+            g, u = tensor.chunk(2, dim=0)
+            out[key.replace(src, gate)] = g.contiguous()
+            out[key.replace(src, up)] = u.contiguous()
+            split += 1
+            continue
+        new = key
+        for old, rep in _DINOV2_LEGACY_RENAMES:
+            if old in new:
+                new = new.replace(old, rep)
+        renamed += new != key
+        out[new] = tensor
+    report = {"rule": "transformers-5 Dinov2 legacy key conversion (q/k/v/o renames, SwiGLU weights_in chunk dim 0 → "
+                      "gate, up; weights_out → down_proj)", "renamed": renamed, "split": split}
+    return out, report
+
 
 class _HFDinov2Adapter(_TorchWeightsAdapter):
     """A configurable, offline transformers DINOv2 adapter (native classes only; no remote code)."""
@@ -1325,6 +1371,7 @@ class _HFDinov2Adapter(_TorchWeightsAdapter):
         cfg = config_cls.from_dict({k: v for k, v in config.items() if k not in _HF_CONFIG_DROP},
                                    attn_implementation=arch["attn_implementation"])
         model = _meta_build(lambda: model_cls(cfg))
+        state, self._last_key_conversion = convert_legacy_dinov2_state(state)
         _strict_load(model, state)
         pooling = self.spec.pooling.split(" ", 1)[0]
         return model, _DINOV2_POOLING[pooling]

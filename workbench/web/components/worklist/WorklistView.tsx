@@ -22,7 +22,7 @@ const STATES: ReviewState[] = ["imported", "pending_review", "approved", "disput
 
 type Filters = {
   state: ReviewState | "all";
-  provenance: "all" | "demo_synthetic" | "public_cc0" | "real_authorized";
+  provenance: "all" | "demo_synthetic" | "public_cc0" | "public_licensed" | "real_authorized";
   label: "all" | "unlabeled" | "single_reader" | "agreed" | "disputed" | "adjudicated";
   qcOnly: boolean;
   ingestProblems: boolean;
@@ -246,6 +246,7 @@ export function WorklistView() {
               <option value="all">All</option>
               <option value="demo_synthetic">DEMO synthetic</option>
               <option value="public_cc0">PUBLIC CC0</option>
+              <option value="public_licensed">PUBLIC LICENSED</option>
               <option value="real_authorized">REAL DATA</option>
             </select>
           </div>

@@ -1,4 +1,18 @@
-"""Feature extraction with a content-addressed embedding cache (FeatureArtifact).
+"""Legacy feature extraction (DEPRECATED: :mod:`dermpath.ml.feature_sets` replaces it).
+
+Research use only. Kept, with unchanged outputs and cache keys, for callers that have not
+migrated to frozen feature sets yet (``training.extract_for_items``, the ``extract_features``
+job, active learning). New code builds a feature set and reads
+:func:`dermpath.ml.feature_sets.load_slide_features`.
+
+Phase 3 changes here (storage only, never the embeddings):
+
+* cache lookups take the newest ``generation`` of a cache key and serve it only if its object
+  exists and matches its sha256; otherwise a new generation row is written (rows are
+  append-only, a corrupt row is never served or rewritten);
+* objects are written write-once and content-addressed
+  (``projects/<pid>/features/legacy[/gen<n>]/<sha256>.npz``);
+* :func:`load_features` also reads engine artifacts (``.npy`` embeddings + ``.npz`` coords).
 
 Cache key = SHA-256 over canonical JSON of::
 
@@ -8,12 +22,12 @@ Cache key = SHA-256 over canonical JSON of::
 ``key_extra`` holds what else changes the embeddings: for the synthetic encoder, its config
 (dim, signal strength/fraction), the pipeline-test fixture label and the seed; for every
 encoder, the pixel mode. Embeddings are stored as a deterministic ``.npz`` in the private
-object store under ``projects/<pid>/features/<cache_key>.npz``; the file's SHA-256 is
-verified on every load.
+object store; the file's SHA-256 is verified on every load.
 """
 
 from __future__ import annotations
 
+import io
 import time
 from dataclasses import dataclass
 
@@ -25,7 +39,7 @@ from ..db import session_scope
 from ..models import QCReview, Slide
 from ..qc.service import excluded_regions
 from ..slides.reader import open_slide_record
-from ..storage import get_store
+from ..storage import StoreError, get_store
 from .artifacts import canonical_json, load_npz, npz_bytes, sha256_hex
 from .encoders import EmbedContext, EncoderAdapter, get_encoder
 from .fixture import SYNTHETIC_PIPELINE_TEST, fixture_context
@@ -164,11 +178,9 @@ def extract_slide_features(slide_id: str, *, encoder_id: str, params: dict, seed
             raise FeatureError(str(exc)) from exc
         fields = cache_fields(slide, encoder, coords, params=params, seed=seed, fixture_label=fixture_label)
         cache_key = sha256_hex(canonical_json(fields))
-        with session_scope() as db:
-            hit = db.scalars(select(FeatureArtifact).where(FeatureArtifact.project_id == project_id,
-                                                           FeatureArtifact.cache_key == cache_key)).first()
-            if hit is not None and get_store().exists(hit.object_key):
-                return ExtractionResult(hit.id, True, hit.n_patches, time.perf_counter() - t0)
+        hit, generation = _legacy_cache_lookup(project_id, cache_key)
+        if hit is not None:
+            return ExtractionResult(hit.id, True, hit.n_patches, time.perf_counter() - t0)
         # Compute.
         n = coords.coords.shape[0]
         cfg = encoder.config_from_params(params) if encoder.synthetic else {}
@@ -200,8 +212,8 @@ def extract_slide_features(slide_id: str, *, encoder_id: str, params: dict, seed
         meta = {"schema": "dermpath.features/1", "cache_key": cache_key, "fields": fields,
                 "synthetic": encoder.synthetic, "scale": coords.plan.scale}
         data = npz_bytes(arrays, meta)
-        key = f"projects/{project_id}/features/{cache_key}.npz"
-        get_store().put_bytes(key, data)
+        suffix = "" if generation == 0 else f"/gen{generation}"
+        key, _ = get_store().put_content_addressed(f"projects/{project_id}/features/legacy{suffix}", data, ".npz")
         stats = {**coords.stats, "scale": coords.plan.scale, "read_seconds": round(t_read, 4),
                  "embed_seconds": round(t_embed, 4), "total_seconds": round(time.perf_counter() - t0, 4),
                  "pixels_read": osr is not None,
@@ -216,27 +228,54 @@ def extract_slide_features(slide_id: str, *, encoder_id: str, params: dict, seed
                               key_extra_json=fields["key_extra"], cache_key=cache_key, object_key=key,
                               sha256=sha256_hex(data), bytes=len(data), n_patches=int(n),
                               embedding_dim=int(emb.shape[1]), calibrated=coords.plan.calibrated,
-                              synthetic=encoder.synthetic, stats_json=stats, job_id=job_id)
+                              synthetic=encoder.synthetic, stats_json=stats, job_id=job_id, generation=generation)
         try:
             with session_scope() as db:
                 db.add(art)
                 db.flush()
                 art_id = art.id
-        except IntegrityError:  # a concurrent worker wrote the same cache entry first
+        except IntegrityError:  # a concurrent worker wrote the same cache entry (generation) first
             with session_scope() as db:
                 art_id = db.scalars(select(FeatureArtifact.id).where(FeatureArtifact.project_id == project_id,
-                                                                     FeatureArtifact.cache_key == cache_key)).one()
+                                                                     FeatureArtifact.cache_key == cache_key,
+                                                                     FeatureArtifact.generation == generation)).one()
         return ExtractionResult(art_id, False, int(n), time.perf_counter() - t0)
     finally:
         if osr is not None:
             osr.close()
 
 
+def _legacy_cache_lookup(project_id: str, cache_key: str) -> tuple[FeatureArtifact | None, int]:
+    """``(newest row if its object verifies, generation to write next)``. A row whose object is
+    missing or corrupt is never served; the replacement is a new generation row."""
+    with session_scope() as db:
+        rows = db.scalars(select(FeatureArtifact).where(FeatureArtifact.project_id == project_id,
+                                                        FeatureArtifact.cache_key == cache_key)
+                          .order_by(FeatureArtifact.generation.desc())).all()
+    if not rows:
+        return None, 0
+    latest = rows[0]
+    store = get_store()
+    try:
+        ok = store.exists(latest.object_key) and store.sha256(latest.object_key) == latest.sha256
+    except (OSError, StoreError):
+        ok = False
+    return (latest, latest.generation) if ok else (None, latest.generation + 1)
+
+
 def load_features(artifact: FeatureArtifact) -> dict[str, np.ndarray]:
-    data = get_store().get_bytes(artifact.object_key)
+    """All arrays of an artifact, sha256-verified (``coords``, ``embeddings``, ...). Engine
+    artifacts (feature sets) return their quality arrays prefixed ``q_`` as stored."""
+    store = get_store()
+    data = store.get_bytes(artifact.object_key)
     if sha256_hex(data) != artifact.sha256:
         raise FeatureError(f"feature artifact {artifact.id} failed its sha256 check (object store corruption)")
     arrays, _ = load_npz(data)
+    if artifact.embeddings_key:
+        raw = store.get_bytes(artifact.embeddings_key)
+        if sha256_hex(raw) != artifact.embeddings_sha256:
+            raise FeatureError(f"feature artifact {artifact.id}: embeddings failed their sha256 check")
+        arrays["embeddings"] = np.load(io.BytesIO(raw), allow_pickle=False)
     return arrays
 
 
@@ -251,5 +290,11 @@ def artifact_dict(a: FeatureArtifact) -> dict:
         "object_key": a.object_key, "sha256": a.sha256, "bytes": a.bytes, "n_patches": a.n_patches,
         "embedding_dim": a.embedding_dim, "stats": a.stats_json, "synthetic": a.synthetic,
         "banner": PIPELINE_TEST_BANNER if a.synthetic else None, "job_id": a.job_id,
-        "created_at": a.created_at.isoformat(),
+        "created_at": a.created_at.isoformat(), "generation": a.generation,
+        # Engine provenance (feature sets; null on legacy rows).
+        "encoder_spec_sha256": a.encoder_spec_sha256, "policy_sha256": a.policy_sha256,
+        "stain_policy_sha256": a.stain_policy_sha256, "mask_sha256": a.mask_sha256,
+        "excluded_regions_sha256": a.excluded_regions_sha256, "extraction_env_sha256": a.extraction_env_sha256,
+        "embeddings_key": a.embeddings_key, "embeddings_sha256": a.embeddings_sha256, "quality_key": a.quality_key,
+        "quality_sha256": a.quality_sha256, "device": a.device, "precision": a.precision, "coverage": a.coverage_json,
     }

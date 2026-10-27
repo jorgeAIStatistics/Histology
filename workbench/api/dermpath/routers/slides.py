@@ -48,6 +48,8 @@ def get_slide(scope: Scope = Depends(entity_scope("hierarchy.read", Slide)), db:
     d["labels"] = {k: view[k] for k in ("reference", "suggestions_hidden", "independent_review", "disagreements")}
     d["labels"]["expert_label_count"] = len(view["expert_labels"])
     d["labels"]["model_suggestion_count"] = None if view["suggestions_hidden"] else len(view["model_suggestions"])
+    d["labels"]["imported_reference_label_count"] = (None if view["suggestions_hidden"]
+                                                     else len(view["imported_reference_labels"]))
     return d
 
 
@@ -91,12 +93,15 @@ def reingest(scope: Scope = Depends(entity_scope("upload.write", Slide)), db: Se
 
 @router.get("/slides/{id}/eligibility")
 def eligibility(label_scope: str = Query("slide"), eligible_review_states: list[str] = Query(["approved"]),
+                reference_standard: str | None = Query(None),
                 scope: Scope = Depends(entity_scope("dataset.read", Slide)), db: Session = Depends(get_db)):
     """Would this slide enter a dataset with this config? Lists every blocking reason."""
     project = db.get(Project, scope.project_id)
-    cfg = normalise_config(project, {"label_scope": label_scope, "eligible_review_states": eligible_review_states})
+    cfg = normalise_config(project, {"label_scope": label_scope, "eligible_review_states": eligible_review_states,
+                                     "reference_standard": reference_standard})
     ok, reasons, ref, _ = slide_eligibility(db, scope.obj, cfg)
     return {"slide_id": scope.obj.id, "eligible": ok, "reasons": reasons, "label_scope": label_scope,
+            "reference_standard": cfg["reference_standard"],
             "label_version_id": ref.id if ref is not None else None,
             "label_value": ref.value if ref is not None else None}
 

@@ -354,8 +354,9 @@ class AnnotationVersion(Base):
 
 
 class LabelVersion(Base):
-    """Append-only. Expert labels and model suggestions are separate rows (``source``);
-    reviewing a suggestion creates a NEW expert row that points at the suggestion."""
+    """Append-only. Expert labels, model suggestions and imported reference labels (``imported_reference``,
+    written only by importers, never an expert opinion) are separate rows (``source``); reviewing a suggestion
+    creates a NEW expert row that points at the suggestion."""
 
     __tablename__ = "label_version"
     __table_args__ = (
@@ -501,7 +502,8 @@ class DatasetItem(Base):
     mpp_y: Mapped[float | None] = mapped_column(Float)
     image_kind: Mapped[str | None] = mapped_column(String(24))
     provenance: Mapped[str | None] = mapped_column(String(32))
-    # How the reference label was reached: adjudicated | agreed | single_reader (always an expert label).
+    # How the reference label was reached: adjudicated | agreed | single_reader (expert reference standard), or
+    # imported_reference (an external dataset's own label, only in datasets whose reference_standard says so).
     label_source: Mapped[str | None] = mapped_column(String(24))
 
 

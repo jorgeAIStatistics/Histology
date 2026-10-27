@@ -19,12 +19,14 @@ export const REVIEW_STATE_LABEL: Record<ReviewState, string> = {
 export const PROVENANCE_SHORT: Record<Provenance, string> = {
   demo_synthetic: "DEMO",
   public_cc0: "PUBLIC CC0",
+  public_licensed: "PUBLIC LICENSED",
   real_authorized: "REAL DATA",
 };
 
 export const PROVENANCE_LONG: Record<Provenance, string> = {
   demo_synthetic: "Demo synthetic: procedural tiles, no histology",
   public_cc0: "Public CC0: OpenSlide test data, unlabeled",
+  public_licensed: "Public licensed dataset: third-party research data; licence terms recorded with the project (e.g. non-commercial)",
   real_authorized: "Real data (authorized): attestation recorded, not proof of de-identification",
 };
 

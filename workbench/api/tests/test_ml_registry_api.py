@@ -13,7 +13,10 @@ RUN_FIELDS = {"id", "name", "project_id", "dataset_version_id", "dataset_name", 
               "code_revision", "deps", "weights_sha256", "checkpoint", "threshold", "split_counts", "created_by",
               "created_at", "finished_at", "error", "registered_model_id"}
 EVAL_FIELDS = {"split", "n_items", "n_patients", "positives", "negatives", "confusion", "metrics", "calibration",
-               "coverage_curve", "subgroups", "bootstrap", "synthetic", "banner", "threshold"}
+               "coverage_curve", "subgroups", "bootstrap", "synthetic", "banner", "threshold", "schema", "classes",
+               "tuning_set", "evaluation_prevalence", "operating_point", "threshold_free_metrics",
+               "intention_to_evaluate", "n_unscorable", "risk_coverage", "abstention", "failure_analysis",
+               "evaluation_protocol", "warnings", "unscored"}
 
 
 def test_contract_fields_present(clients, ids):
@@ -32,17 +35,26 @@ def test_contract_fields_present(clients, ids):
         assert {"value", "numerator", "denominator", "ci", "undefined_reason"} <= set(ev["metrics"][k])
     for k in ("auroc", "auprc"):
         assert {"value", "defined", "undefined_reason", "ci"} <= set(ev["metrics"][k])
-    assert {"bins", "brier", "ece", "note"} <= set(ev["calibration"])
+    assert {"bins", "brier", "ece", "note", "raw", "calibrated"} <= set(ev["calibration"])
     assert ev["calibration"]["note"] == "scores are not probabilities unless calibrated"
     assert all({"lo", "hi", "mean_score", "fraction_positive", "n"} <= set(b) for b in ev["calibration"]["bins"])
     assert all({"coverage", "error_rate", "n_kept"} <= set(c) for c in ev["coverage_curve"])
-    assert all(s["key"] in ("scanner_id", "site_id", "stain") and s["status"] in ("ok", "insufficient_evidence")
-               for s in ev["subgroups"])
-    assert {s["status"] for s in ev["subgroups"]} == {"ok", "insufficient_evidence"}
+    assert ev["risk_coverage"]["aurc"] is not None and "out-of-distribution" in ev["abstention"]["note"]
+    sg = ev["subgroups"]
+    assert sg["count_unit"] == "patients" and sg["rows"]
+    assert all(r["key"] in ("scanner_id", "site_id", "stain", "stain_batch")
+               and r["status"] in ("ok", "insufficient_evidence", "not_recorded") for r in sg["rows"])
+    assert {r["status"] for r in sg["rows"] if r["key"] != "stain_batch"} <= {"ok", "insufficient_evidence"}
     assert ev["bootstrap"]["method"] == "patient_cluster" and ev["bootstrap"]["n_boot"] == 500
     assert ev["metrics"]["auroc"]["ci"] is not None  # 12 validation patients → a CI is reported
     lo, hi = ev["metrics"]["auroc"]["ci"]
     assert lo <= ev["metrics"]["auroc"]["value"] <= hi
+    assert ev["metrics"]["auprc"]["prevalence_baseline"] == pytest.approx(ev["positives"] / ev["n_items"])
+    assert ev["metrics"]["ppv"]["evaluation_prevalence"] == pytest.approx(ev["positives"] / ev["n_items"])
+    assert ev["tuning_set"] is (ev["threshold"]["selection_status"] == "selected")
+    assert ev["classes"]["negative"]["value"] == "bcc_absent_not_benign"
+    fa = ev["failure_analysis"]
+    assert fa["n_errors"] == ev["confusion"]["fp"] + ev["confusion"]["fn"] and "counts" in fa
 
 
 # --------------------------------------------------------------------------- registry
@@ -60,11 +72,22 @@ def test_registry_creates_research_candidates_and_never_deploys(clients, ids):
     mv = r.json()
     assert mv["status"] == "research_candidate" and mv["deployed"] is False and mv["run_id"] == rid
     assert mv["synthetic"] is True and mv["banner"] == BANNER and "Never deployed" in mv["notice"]
+    from dermpath.ml.models import TrainingRun
+
+    with session_scope() as db:
+        pinned = db.get(TrainingRun, rid).feature_set_id is not None
+    if pinned:  # an engine run: registration builds its immutable, research-only inference bundle
+        assert mv["bundle_id"] and mv["bundle"]["verified"] is True and mv["bundle"]["research_use_only"] is True
+        assert mv["bundle"]["can_infer"] is False  # a pipeline-test bundle cannot score new slides
+    else:
+        assert mv["bundle_id"] is None and "legacy run" in mv["bundle_unavailable_reason"]
     again = lead.post(f"/api/v1/experiments/{rid}/register")
     assert again.status_code == 200 and again.json()["id"] == mv["id"]  # idempotent per run
+    assert again.json()["bundle_id"] == mv["bundle_id"]
     assert lead.get(f"/api/v1/experiments/{rid}").json()["registered_model_id"] == mv["id"]
     listed = lead.get(f"/api/v1/projects/{CID}/models").json()
     assert [m["id"] for m in listed["items"]] == [mv["id"]] and "no deployment path" in listed["note"]
+    assert listed["items"][0]["bundle_id"] == mv["bundle_id"]
     # There is no deploy route, and the state cannot be forced.
     for url in (f"/api/v1/models/{mv['id']}/deploy", f"/api/v1/models/{mv['id']}"):
         assert lead.post(url).status_code in (404, 405)
@@ -153,6 +176,9 @@ def test_error_gallery_orders_false_negatives_first(clients, ids):
         assert i["attention_available"] is True and i["patient_code"].startswith("SYN-")
         assert i["failure_reason"] is None  # no QC issue and nothing uncalibrated on the cohort records
         assert (i["error_type"] == "false_negative") == (i["label"] == "bcc_present")
+        assert i["categories"] and set(i["category_details"]) <= set(i["categories"])
+        assert "benign" not in i["description"].replace("not_benign", "")
+    assert body["categories"]["counts"] and body["classes"]["negative"]["value"] == "bcc_absent_not_benign"
     assert body["synthetic"] is True and body["banner"] == BANNER
 
 
@@ -172,7 +198,7 @@ def test_failure_reason_only_from_qc_or_calibration():
 
 def test_qc_context_snapshot_records_issues_on_workflow_slides(env, ids):
     from dermpath.db import session_scope
-    from dermpath.ml.training import qc_context
+    from dermpath.ml.evaluation import qc_context
 
     with session_scope() as db:
         ctx = qc_context(db, [ids["slides"]["p4_a1_l1"]])  # seeded fold issue at "action_suggested"

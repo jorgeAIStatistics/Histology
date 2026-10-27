@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { api, errorText } from "@/lib/api";
 import { useSession } from "@/lib/session";
-import type { DatasetVersion, LabelValue } from "@/lib/types";
+import type { DatasetVersion, LabelValue, ReferenceStandard } from "@/lib/types";
 import { Dialog } from "@/components/ui/Dialog";
 import { Button } from "@/components/ui/Button";
 import { Checkbox, SelectField, TextField } from "@/components/ui/Field";
@@ -16,7 +16,8 @@ export function CreateDatasetDialog({ open, onClose, onCreated }: { open: boolea
   const [scope, setScope] = useState<"slide" | "case">("slide");
   const [pending, setPending] = useState(false);
   const [values, setValues] = useState<LabelValue[]>(["bcc_present", "bcc_absent_not_benign"]);
-  const [prov, setProv] = useState({ demo_synthetic: true, public_cc0: true, real_authorized: false });
+  const [prov, setProv] = useState({ demo_synthetic: true, public_cc0: true, public_licensed: false, real_authorized: false });
+  const [standard, setStandard] = useState<ReferenceStandard>("expert");
   const [split, setSplit] = useState<"none" | "random">("random");
   const [seed, setSeed] = useState("7");
   const [busy, setBusy] = useState(false);
@@ -48,7 +49,13 @@ export function CreateDatasetDialog({ open, onClose, onCreated }: { open: boolea
                     name,
                     config: {
                       label_scope: scope,
-                      eligible_review_states: pending ? ["approved", "pending_review"] : ["approved"],
+                      eligible_review_states: [
+                        "approved",
+                        ...(pending ? ["pending_review"] : []),
+                        // Imported public slides were never reviewed here; they enter only an imported-reference dataset.
+                        ...(standard === "imported_reference" ? ["imported"] : []),
+                      ],
+                      reference_standard: standard,
                       label_values: values,
                       include_provenance: (Object.keys(prov) as (keyof typeof prov)[]).filter((k) => prov[k]),
                       ...(split === "random" ? { split: { partition: "random", seed: Number(seed) || 0 } } : {}),
@@ -89,6 +96,7 @@ export function CreateDatasetDialog({ open, onClose, onCreated }: { open: boolea
             <legend className="text-small font-semibold">Provenance included</legend>
             <Checkbox label="Demo synthetic" checked={prov.demo_synthetic} onChange={(e) => setProv({ ...prov, demo_synthetic: e.target.checked })} />
             <Checkbox label="Public CC0" checked={prov.public_cc0} onChange={(e) => setProv({ ...prov, public_cc0: e.target.checked })} />
+            <Checkbox label="Public licensed dataset" checked={prov.public_licensed} onChange={(e) => setProv({ ...prov, public_licensed: e.target.checked })} hint="Third-party research data; its licence travels with the manifest." />
             <Checkbox label="Real data (authorized)" checked={prov.real_authorized} onChange={(e) => setProv({ ...prov, real_authorized: e.target.checked })} />
           </fieldset>
         </div>
@@ -104,6 +112,21 @@ export function CreateDatasetDialog({ open, onClose, onCreated }: { open: boolea
               />
             ))}
           </fieldset>
+          <SelectField
+            label="Reference standard"
+            value={standard}
+            onChange={(e) => setStandard(e.target.value as ReferenceStandard)}
+            options={[
+              { value: "expert", label: "Expert reads in this workbench (default)" },
+              { value: "imported_reference", label: "Imported reference (an external dataset's own labels)" },
+            ]}
+          />
+          {standard === "imported_reference" ? (
+            <Notice tone="warning">
+              Imported labels are not expert reads. Unreviewed imported slides may enter, and results on this dataset measure agreement with
+              that external reference, not clinical performance.
+            </Notice>
+          ) : null}
           <SelectField
             label="Initial split"
             value={split}

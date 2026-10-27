@@ -1,0 +1,49 @@
+{
+  "_comment": [
+    "Supervised baseline benchmark on the COBRA BCC subset (research use only; CC BY-NC-SA 4.0, non-commercial).",
+    "Prerequisites: (1) import the subset with `python -m dermpath.importers.cobra ... --project proj-cobra-bcc-subset`",
+    "and let its ingest and QC jobs finish; (2) create and freeze a dataset version of that project whose config",
+    "declares \"reference_standard\": \"imported_reference\" (COBRA labels were extracted from pathology reports by a",
+    "rule-based method; they are imported reference labels, never expert reads) with a patient-grouped random",
+    "split that keeps a test split; the most recently frozen version is used (or set \"dataset_version_id\");",
+    "(3) midnight-12k needs WB_MIDNIGHT_WEIGHTS (obtained separately; nothing is downloaded).",
+    "Protocol: dev_cv with 5 patient-grouped stratified folds over train + val; threshold (Youden), Platt calibration",
+    "and abstention are chosen on out-of-fold predictions; the final model is refitted on the development pool; the",
+    "test split is NOT read (test metrics only through a recorded test release of a declared candidate).",
+    "Learning curves: nested stratified subsets of the development patients at 25, 50 and 100 % with 3 repeats.",
+    "Run: cd workbench/api && .venv/bin/python -m dermpath.ml.cli benchmark ../experiments/configs/cobra_supervised_baseline.json"
+  ],
+  "name": "COBRA supervised baseline benchmark",
+  "description": "Encoder effects (handcrafted-stain-texture-v1 vs midnight-12k) with the head fixed and head effects (meanpool_logreg vs abmil) with the encoder fixed, on out-of-fold predictions of one frozen manifest.",
+  "project_id": "proj-cobra-bcc-subset",
+  "dataset": "latest_frozen",
+  "execution_mode": "supervised_experiment",
+  "evaluation_protocol": "dev_cv",
+  "encoders": ["handcrafted-stain-texture-v1", "midnight-12k"],
+  "heads": ["meanpool_logreg", "abmil"],
+  "seeds": [0],
+  "params": {
+    "target_mpp": 0.5,
+    "min_tissue_fraction": 0.25,
+    "sampling_strategy": "spatial",
+    "max_patches_per_slide": 256,
+    "sampling_seed": 0,
+    "stain_normalization": "none",
+    "precision": "fp32",
+    "cv_folds": 5,
+    "threshold_rule": "youden",
+    "min_threshold_evidence": 10,
+    "calibration": "platt",
+    "class_weight": "balanced",
+    "n_boot": 2000,
+    "boot_min_patients": 10
+  },
+  "head_params": {
+    "meanpool_logreg": {"C": 1.0},
+    "abmil": {"hidden_dim": 128, "attn_dim": 64, "dropout": 0.1, "lr": 0.0005, "weight_decay": 0.0001,
+              "max_epochs": 60, "patience": 10, "inner_val_fraction": 0.2, "max_instances_per_bag": 256}
+  },
+  "learning_curve": {"fractions": [0.25, 0.5, 1.0], "repeats": 3},
+  "bootstrap": {"n_boot": 2000, "seed": 20261026, "min_patients": 10},
+  "report_path": "experiments/reports/cobra-supervised-baseline.json"
+}

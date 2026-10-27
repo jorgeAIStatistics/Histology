@@ -22,6 +22,11 @@ test.describe("experiments", () => {
     await expect(uni.getByTestId("encoder-status-detail")).toContainText("WB_UNI_LICENSE_ACCEPTED");
     await expect(uni).toContainText("Commercial use: no");
     await expect(page.getByTestId("encoder-synthetic-deterministic-v1").getByTestId("encoder-status")).toHaveText("available");
+    // The handcrafted technical baseline needs no weights and says what it is (not a pathology foundation model).
+    const handcrafted = page.getByTestId("encoder-handcrafted-stain-texture-v1");
+    await expect(handcrafted.getByTestId("encoder-status")).toHaveText("available");
+    await expect(handcrafted.getByTestId("encoder-kind")).toContainText("not a pathology foundation model");
+    await expect(uni.getByTestId("encoder-spec")).toContainText("input 224px");
   });
 
   test("a synthetic run shows the PIPELINE TEST banner, metrics with denominators, and the error gallery", async ({ page }) => {
@@ -51,10 +56,25 @@ test.describe("experiments", () => {
     await expect(cards.first().getByTestId("error-no-image")).toBeVisible();
     await expect(page.getByTestId("error-open-slide")).toHaveCount(0);
 
-    // The test split: research lead only, after the validation threshold; opening it is audited.
+    // The test split opens only through a recorded release: register the run (its inference bundle becomes the
+    // declared candidate), then release with a reason. The worker scores the pinned features; the page shows the
+    // stored result with its release number.
+    const register = page.getByTestId("register-model");
+    if (await register.isVisible()) {
+      await register.click();
+      await expect(page.getByTestId("registered")).toBeVisible();
+    }
     await page.getByRole("tab", { name: /Test/ }).click();
-    await page.getByTestId("open-test").click();
-    await expect(page.getByTestId("evaluation-test")).toBeVisible();
+    const release = page.getByTestId("release-test");
+    await expect(release).toHaveAttribute("aria-disabled", "true"); // no reason yet
+    await page.getByTestId("release-reason").fill("final evaluation of the registered pipeline-test candidate");
+    if (await page.getByTestId("release-justification").isVisible()) {
+      await page.getByTestId("release-justification").fill("end-to-end test of the release flow");
+    }
+    await release.click();
+    await expect(page.getByTestId("evaluation-test")).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId("test-release-number")).toContainText(/Test release \d+ on this manifest/);
+    await expect(page.getByTestId("release-history")).toContainText("final evaluation of the registered pipeline-test candidate");
   });
 
   test("the workflow-demo run is honest about tiny samples", async ({ page }) => {
@@ -66,20 +86,25 @@ test.describe("experiments", () => {
     await expect(page.getByTestId("evaluation-val")).toContainText(/insufficient evidence|undefined/);
   });
 
-  test("other roles: the director cannot open the test split; the assistant is told who can use experiments", async ({ page, context }) => {
+  test("other roles: the director cannot release the test split; the assistant is told who can use experiments", async ({ page, context }) => {
     const runs = await api<{ items: Run[] }>(page, "/projects/proj-synthetic-cohort/experiments");
-    const run = runs.items.find((r) => r.status === "succeeded")!;
+    // A run whose test split is not released yet (the release test above uses another run when it can).
+    const run = runs.items.find((r) => r.status === "succeeded" && r.head === "meanpool_logreg") ?? runs.items.find((r) => r.status === "succeeded")!;
     await context.clearCookies();
     await loginAs(page, USERS.director);
     await page.goto(`/experiments/${run.id}`);
     await page.getByRole("tab", { name: /Test/ }).click();
-    const open = page.getByTestId("open-test");
-    await expect(open).toHaveAttribute("aria-disabled", "true");
-    await expect(open).toHaveAccessibleDescription(/Only the research lead may open the test split/);
-    // Activating it explains the exact reason instead of doing nothing.
-    await open.focus();
-    await page.keyboard.press("Enter");
-    await expect(page.getByRole("status").filter({ hasText: "Only the research lead may open the test split" })).toBeVisible();
+    const release = page.getByTestId("release-test");
+    if (await release.count()) {
+      await expect(release).toHaveAttribute("aria-disabled", "true");
+      await expect(release).toHaveAccessibleDescription(/Only the research lead may release the test split/);
+      // Activating it explains the exact reason instead of doing nothing.
+      await release.focus();
+      await page.keyboard.press("Enter");
+      await expect(page.getByRole("status").filter({ hasText: "Only the research lead may release the test split" })).toBeVisible();
+    } else {
+      await expect(page.getByTestId("test-released-restricted")).toContainText("visible to the research lead only");
+    }
     await expect(page.getByTestId("evaluation-test")).toHaveCount(0);
 
     await context.clearCookies();

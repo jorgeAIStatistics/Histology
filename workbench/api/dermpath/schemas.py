@@ -290,7 +290,7 @@ class LabelOut(Out):
     target_id: str
     value: str | None
     display: str | None
-    source: Literal["expert", "model_suggestion"]
+    source: Literal["expert", "model_suggestion", "imported_reference"]
     review_action: str | None
     review_of_suggestion_id: str | None
     is_adjudication: bool
@@ -314,9 +314,13 @@ class SplitIn(Req):
 
 class DatasetConfigIn(Req):
     label_scope: Literal["slide", "case"] = "slide"
-    eligible_review_states: list[Literal["approved", "pending_review"]] = ["approved"]
+    # 'imported' (slides nobody reviewed in the workbench) is accepted only with reference_standard
+    # imported_reference (checked in datasets.normalise_config).
+    eligible_review_states: list[Literal["approved", "pending_review", "imported"]] = ["approved"]
     label_values: list[LabelValue] | None = None
-    include_provenance: list[Literal["demo_synthetic", "public_cc0", "real_authorized"]] | None = None
+    include_provenance: list[Literal["demo_synthetic", "public_cc0", "public_licensed", "real_authorized"]] | None = None
+    reference_standard: Literal["expert", "imported_reference"] | None = Field(
+        None, description="which labels count as the reference (default expert); recorded in the manifest")
     split: SplitIn | None = None
 
 

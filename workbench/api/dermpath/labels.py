@@ -15,6 +15,15 @@ Rules
 * Disagreement: two experts with different current values at the same scope and target
   open a :class:`Disagreement`; a slide-scope disagreement moves the slide to
   ``disputed``. Adjudication records a separate expert label marked ``is_adjudication``.
+* Imported reference labels (``source=imported_reference``) come from an external dataset's
+  own reference standard (for example COBRA's report-derived slide labels). They are written
+  only by importers (:func:`create_imported_reference_label`), carry their free-text
+  provenance as the label's ``reason``, have no author, are never expert opinions (they never
+  open or resolve a disagreement) and are never written on ``demo_synthetic`` slides.
+* Reference standard: :func:`reference_label` returns expert references by default. Imported
+  labels become the reference only for a dataset whose config declares
+  ``reference_standard == "imported_reference"``; :func:`label_source_permitted` is the single
+  rule for which label sources a reference standard accepts (datasets and training use it).
 """
 
 from __future__ import annotations
@@ -37,14 +46,38 @@ from .models import (
     new_id,
 )
 from .vocab import (
+    DEFAULT_REFERENCE_STANDARD,
     LABEL_DISPLAY,
     LABEL_SCOPES,
+    LABEL_SOURCE_DISPLAY,
     LABEL_VALUES,
+    REFERENCE_STANDARD_LABEL_SOURCES,
+    REFERENCE_STANDARDS,
     REVIEW_ACTION_RECORDED,
     REVIEW_ACTIONS,
     SUGGESTION_ORIGIN_DISPLAY,
     SUGGESTION_ORIGINS,
 )
+
+#: Audit actor id for labels and records written by command-line importers (no person acted).
+SYSTEM_IMPORT = "system:import"
+
+
+def label_source_permitted(source: str | None, reference_standard: str | None) -> bool:
+    """Whether a label of ``source`` may serve as a reference (and training/validation) label under a dataset's
+    ``reference_standard``. ``expert`` accepts only expert labels; ``imported_reference`` accepts only imported
+    reference labels. Model suggestions are never permitted, and an unknown source or standard is refused."""
+    return source in REFERENCE_STANDARD_LABEL_SOURCES.get(reference_standard or "", ())
+
+
+def check_reference_standard(reference_standard: str | None) -> str:
+    """Normalise a dataset's reference standard (None means the default, ``expert``); 422 when unknown."""
+    standard = reference_standard or DEFAULT_REFERENCE_STANDARD
+    if standard not in REFERENCE_STANDARDS:
+        raise unprocessable("invalid_reference_standard",
+                            f"reference_standard must be one of {list(REFERENCE_STANDARDS)}",
+                            allowed=list(REFERENCE_STANDARDS))
+    return standard
 
 
 def label_dict(lv: LabelVersion) -> dict:
@@ -60,6 +93,7 @@ def label_dict(lv: LabelVersion) -> dict:
         "value": lv.value,
         "display": LABEL_DISPLAY.get(lv.value) if lv.value else None,
         "source": lv.source,
+        "source_display": LABEL_SOURCE_DISPLAY.get(lv.source, lv.source),
         "suggestion_origin": lv.suggestion_origin,
         "suggestion_notice": SUGGESTION_ORIGIN_DISPLAY.get(lv.suggestion_origin) if lv.suggestion_origin else None,
         "model_ref": lv.model_ref,
@@ -131,8 +165,40 @@ def current_expert_opinions(db: Session, project_id: str, scope: str, target_id:
     return latest_by_author
 
 
-def reference_label(db: Session, project_id: str, scope: str, target_id: str) -> tuple[LabelVersion | None, str]:
-    """The label a dataset would use: adjudicated > unanimous expert opinion. Never a suggestion."""
+def current_imported_labels(db: Session, project_id: str, scope: str, target_id: str) -> list[LabelVersion]:
+    """The latest valued version of every imported-reference label lineage at (scope, target), oldest first."""
+    rows = db.scalars(select(LabelVersion).where(
+        LabelVersion.project_id == project_id, LabelVersion.scope == scope, LabelVersion.target_id == target_id,
+        LabelVersion.source == "imported_reference")
+        .order_by(LabelVersion.created_at, LabelVersion.version, LabelVersion.id)).all()
+    latest: dict[str, LabelVersion] = {}
+    for r in rows:
+        if r.label_id not in latest or r.version > latest[r.label_id].version:
+            latest[r.label_id] = r
+    return sorted((r for r in latest.values() if r.value is not None),
+                  key=lambda r: (r.created_at, r.version, r.id))
+
+
+def reference_label(db: Session, project_id: str, scope: str, target_id: str, *,
+                    reference_standard: str = DEFAULT_REFERENCE_STANDARD) -> tuple[LabelVersion | None, str]:
+    """The label a dataset would use under its reference standard. Never a suggestion.
+
+    * ``expert`` (default): adjudicated > unanimous expert opinion; status ``adjudicated``, ``agreed`` or
+      ``single_reader``. Imported reference labels are ignored.
+    * ``imported_reference``: the current imported reference label; status ``imported_reference``. Expert labels
+      are not mixed into this standard (they stay visible in review). Conflicting imported values at the same
+      target give ``disputed``.
+
+    ``unlabeled`` when there is no label of the standard's source at the target."""
+    if reference_standard == "imported_reference":
+        current = current_imported_labels(db, project_id, scope, target_id)
+        if not current:
+            return None, "unlabeled"
+        if len({r.value for r in current}) > 1:
+            return None, "disputed"
+        return current[-1], "imported_reference"
+    if reference_standard != "expert":
+        raise ValueError(f"unknown reference_standard {reference_standard!r}; expected one of {REFERENCE_STANDARDS}")
     adj = db.scalars(select(LabelVersion).where(
         LabelVersion.project_id == project_id, LabelVersion.scope == scope, LabelVersion.target_id == target_id,
         LabelVersion.is_adjudication.is_(True)).order_by(LabelVersion.created_at.desc())).first()
@@ -206,6 +272,49 @@ def create_model_suggestion(db: Session, *, project_id: str, slide: Slide, scope
                  after={"value": value, "scope": scope, "target_id": tgt["target_id"], "origin": origin,
                         "model_ref": model_ref})
     return lv
+
+
+def create_imported_reference_label(db: Session, *, slide: Slide, value: str, provenance: str, scope: str = "slide",
+                                    target_id: str | None = None, actor_id: str = SYSTEM_IMPORT,
+                                    supersede_reason: str | None = None) -> tuple[LabelVersion, bool]:
+    """Record a label taken from an external dataset's reference standard (importers only). Returns
+    ``(label_version, created)``.
+
+    ``provenance`` is mandatory free text naming the source and how its label was produced (for example "COBRA
+    rule-based extraction from pathology reports"); it is stored as the label's ``reason``. Idempotent: when the
+    current imported label at the target already has ``value`` it is returned unchanged (``created=False``). A
+    different value is refused (``409 imported_label_conflict``) unless ``supersede_reason`` is given, which appends a
+    new version to the same lineage. Never written on ``demo_synthetic`` slides, never an expert opinion."""
+    _check_value(value)
+    if not provenance or not provenance.strip():
+        raise unprocessable("provenance_required", "An imported reference label needs its free-text provenance")
+    if slide.provenance == "demo_synthetic":
+        raise unprocessable("imported_label_not_allowed",
+                            "Imported reference labels are never recorded on demo_synthetic slides")
+    tgt = resolve_target(db, slide, scope, target_id)
+    current = current_imported_labels(db, slide.project_id, scope, tgt["target_id"])
+    if current and all(r.value == value for r in current):
+        return current[-1], False
+    if current and not (supersede_reason and supersede_reason.strip()):
+        raise conflict("imported_label_conflict",
+                       "An imported reference label with another value already exists for this target; imported "
+                       "labels are never changed silently", existing_values=sorted({r.value for r in current}),
+                       requested_value=value, label_version_id=current[-1].id)
+    prev = current[-1] if current else None
+    label_id = prev.label_id if prev else new_id()
+    reason = provenance.strip() if prev is None else f"{provenance.strip()} | superseded: {supersede_reason.strip()}"
+    lv = LabelVersion(label_id=label_id, version=_next_in_lineage(db, label_id) if prev else 1,
+                      project_id=slide.project_id, scope=scope, value=value, source="imported_reference",
+                      author_id=None, reason=reason, supersedes=prev.id if prev else None, **tgt)
+    db.add(lv)
+    db.flush()
+    audit.record(db, action="label.imported_reference_recorded", entity_type="label", entity_id=lv.id,
+                 actor_id=actor_id, actor_role="system", project_id=slide.project_id,
+                 before={"value": prev.value, "label_version_id": prev.id} if prev else None,
+                 after={"value": value, "scope": scope, "target_id": tgt["target_id"], "source": "imported_reference",
+                        "version": lv.version, "provenance": provenance.strip()},
+                 reason=supersede_reason)
+    return lv, True
 
 
 def review_suggestion(db: Session, actor: Actor, suggestion: LabelVersion, slide: Slide, *, action: str,

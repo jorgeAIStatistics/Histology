@@ -1,8 +1,8 @@
-"""Phase-2 integration of the ML engine upgrade (docs/ml-engine-design.md) with the existing
-training and feature paths: label-free job payloads (§1 invariant 4), no fixture signal on
-real slides (§1 invariant 3), permanent encoder-identity failures, the set-once
-``weights_sha256`` pin, the lease-fenced final commit (§6, §10), the ``train`` settle hook
-(§10) and the shared torch-state lock."""
+"""Integration of the ML engine upgrade (docs/ml-engine-design.md) with the training path:
+label-free job payloads (§1 invariant 4), no fixture signal on real slides (§1 invariant 3),
+permanent encoder-identity failures while a feature set is built inline, the
+``weights_sha256`` pin set at creation, the lease-fenced final commit (§6, §10), the ``train``
+settle hook (§10) and the shared torch-state lock."""
 
 from __future__ import annotations
 
@@ -97,9 +97,10 @@ def test_fixture_label_never_reaches_a_real_slide(env, ids):
 
 @pytest.mark.parametrize("kind", ["identity_mismatch", "load_error", "synthetic_forbidden"])
 def test_encoder_identity_and_fixture_refusals_fail_training_permanently(clients, ids, monkeypatch, kind):
-    """A weights pin mismatch or strict-load failure during extraction (EncoderUnavailable
-    subclasses), or a refused fixture signal, must not be retried job_max_attempts times."""
-    from dermpath.ml import training
+    """A weights pin mismatch or strict-load failure while the run's feature set is built inline
+    (EncoderUnavailable subclasses), or a refused fixture signal, must not be retried
+    job_max_attempts times."""
+    from dermpath.ml import feature_sets
     from dermpath.ml.encoders import EncoderIdentityMismatch, EncoderLoadError
     from dermpath.ml.fixture import SyntheticSignalForbidden
 
@@ -110,9 +111,11 @@ def test_encoder_identity_and_fixture_refusals_fail_training_permanently(clients
     def boom(*a, **kw):
         raise exc
 
-    monkeypatch.setattr(training, "extract_slide_features", boom)
+    monkeypatch.setattr(feature_sets, "build_feature_set", boom)
     lead = clients(LEAD)
-    out = start(lead, CID, cohort(ids)["dataset_version_id"], "meanpool_logreg", seed=31)
+    # A sampling seed of its own gives a feature set that is not built yet: the train job builds it inline.
+    out = start(lead, CID, cohort(ids)["dataset_version_id"], "meanpool_logreg", seed=31,
+                params={**FAST, "sampling_seed": 77})
     outcomes = run_jobs()
     assert [o.status for o in outcomes] == ["failed"], outcomes
     prefix = "synthetic_signal_forbidden" if kind == "synthetic_forbidden" else "encoder_unavailable"
@@ -122,23 +125,55 @@ def test_encoder_identity_and_fixture_refusals_fail_training_permanently(clients
     assert run.status == "failed" and run.error.startswith(prefix)
 
 
-def test_pinned_weights_mismatch_fails_with_run_identity_changed(clients, ids):
-    """weights_sha256 is set-once (ml/models.py RUN_SET_ONCE): a pin that differs from the
-    encoder's identity at the end of training is a permanent identity failure, never a retry."""
-    from dermpath.db import session_scope
-    from dermpath.ml.models import TrainingRun
+def test_weights_differing_from_the_pin_fail_with_run_identity_changed(clients, ids, monkeypatch):
+    """weights_sha256 is pinned at creation (the feature set's); an artifact whose weights differ
+    is a permanent identity failure, never a retry, and nothing is recorded."""
+    import dataclasses
+
+    from dermpath.ml import feature_sets
 
     lead = clients(LEAD)
     out = start(lead, CID, cohort(ids)["dataset_version_id"], "meanpool_logreg", seed=32)
     rid = out["experiment"]["id"]
-    with session_scope() as db:
-        db.get(TrainingRun, rid).weights_sha256 = "pinned:" + "0" * 64
+    pinned = _run(rid).weights_sha256
+    assert pinned == "synthetic:no-weights"
+    real = feature_sets.load_slide_features
+    monkeypatch.setattr(feature_sets, "load_slide_features",
+                        lambda fs, sid: dataclasses.replace(real(fs, sid), weights_sha256="other:" + "0" * 58))
     outcomes = run_jobs()
     assert [o.status for o in outcomes] == ["failed"], outcomes
     assert "run_identity_changed: weights_sha256" in outcomes[0].error
     run = _run(rid)
-    assert run.status == "failed" and run.weights_sha256 == "pinned:" + "0" * 64
-    assert _n_predictions(rid) == 0
+    assert run.status == "failed" and run.weights_sha256 == pinned
+    assert _n_predictions(rid) == 0 and _job(out["job_id"]).attempts == 1
+
+
+def test_corrupt_pinned_artifact_fails_training_permanently(clients, ids, monkeypatch):
+    """A pinned artifact that fails its identity or sha256 check is never re-extracted by the
+    train job and never retried."""
+    from dermpath.ml import feature_sets
+
+    def corrupt(fs, sid):
+        raise feature_sets.FeatureSetIntegrityError(f"artifact of slide {sid} failed its sha256")
+
+    monkeypatch.setattr(feature_sets, "load_slide_features", corrupt)
+    out = start(clients(LEAD), CID, cohort(ids)["dataset_version_id"], "abmil", seed=37)
+    outcomes = run_jobs()
+    assert [o.status for o in outcomes] == ["failed"] and outcomes[0].error.startswith("feature_set_integrity")
+    assert _job(out["job_id"]).attempts == 1 and _n_predictions(out["experiment"]["id"]) == 0
+
+
+def test_train_job_payload_never_carries_labels(env, ids):
+    from dermpath.db import session_scope
+    from dermpath.jobs import queue
+
+    with session_scope() as db:
+        job, _ = queue.enqueue(db, "train", {"run_id": "x", "fixture_label": 1}, idempotency_key="train-label",
+                               project_id=CID)
+        jid = job.id
+    outcomes = run_jobs()
+    assert [o.status for o in outcomes] == ["failed"] and "never carry labels" in outcomes[0].error
+    assert _job(jid).attempts == 1
 
 
 def test_training_records_the_weights_marker_once(clients, ids):

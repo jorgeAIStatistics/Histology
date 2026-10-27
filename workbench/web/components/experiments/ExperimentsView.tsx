@@ -20,6 +20,20 @@ export const HEAD_LABEL: Record<string, string> = {
   abmil: "Attention-based multiple-instance learning (ABMIL)",
 };
 
+const KIND_LABEL: Record<Encoder["kind"], string> = {
+  synthetic: "Synthetic pipeline-test fixture",
+  handcrafted: "Handcrafted technical baseline (not a pathology foundation model)",
+  pathology_foundation: "Pathology foundation model",
+  generic_imagenet: "Generic ImageNet model",
+};
+
+const ENCODER_STATUS_STYLE: Record<Encoder["status"], string> = {
+  available: "border-approved/40 bg-approved-tint text-approved",
+  missing_weights: "border-amber/70 bg-amber-tint text-amber-ink",
+  missing_dependency: "border-amber/70 bg-amber-tint text-amber-ink",
+  weights_mismatch: "border-rust/50 bg-rust-tint text-rust",
+};
+
 const STATUS_STYLE: Record<string, string> = {
   queued: "border-line-strong bg-sheet text-graphite",
   running: "border-teal/50 bg-teal-tint text-teal-deep",
@@ -120,9 +134,21 @@ export function ExperimentsView() {
                     <tr key={e.id} className="border-b border-line align-top" data-testid={`encoder-${e.id}`}>
                       <td className="px-4 py-3">
                         <p className="font-semibold text-ink">{e.name}</p>
+                        <p className="text-micro text-graphite" data-testid="encoder-kind">
+                          {KIND_LABEL[e.kind] ?? e.kind}
+                          {e.reads_pixels === false ? " · reads no pixels" : ""}
+                        </p>
                         <p className="font-mono text-micro text-graphite">
                           {e.id} · {e.embedding_dim ?? "?"}-d · {e.preprocessing_version}
                         </p>
+                        {e.spec_sha256 ? (
+                          <p className="font-mono text-micro text-graphite" data-testid="encoder-spec">
+                            adapter v{e.adapter_version ?? "?"}
+                            {e.input_size ? ` · input ${e.input_size}px` : ""}
+                            {e.pooling ? ` · ${e.pooling}` : ""}
+                            {e.weights_format ? ` · ${e.weights_format}` : ""} · spec {shortHash(e.spec_sha256, 12)}
+                          </p>
+                        ) : null}
                         {e.synthetic ? <p className="mt-1 text-micro font-bold text-hema">Synthetic: carries no pathology information</p> : null}
                         {e.notice ? <p className="mt-1 max-w-[48ch] text-micro text-graphite">{e.notice}</p> : null}
                       </td>
@@ -140,7 +166,7 @@ export function ExperimentsView() {
                         <span
                           className={cn(
                             "inline-flex h-6 items-center rounded-[var(--radius-chip)] border px-1.5 text-micro font-bold",
-                            e.status === "available" ? "border-approved/40 bg-approved-tint text-approved" : "border-amber/70 bg-amber-tint text-amber-ink",
+                            ENCODER_STATUS_STYLE[e.status] ?? ENCODER_STATUS_STYLE.missing_weights,
                           )}
                           data-testid="encoder-status"
                         >
@@ -153,6 +179,16 @@ export function ExperimentsView() {
                         ) : (
                           <p className="mt-1.5 text-micro text-graphite">weights: {e.weights_sha256 ? shortHash(e.weights_sha256, 16) : "none (no weights exist for this encoder)"}</p>
                         )}
+                        {e.status === "weights_mismatch" ? (
+                          <p className="mt-1 max-w-[60ch] text-micro font-semibold text-rust">
+                            The local files do not match this encoder&rsquo;s pinned identity; it is refused rather than run with unknown weights.
+                          </p>
+                        ) : null}
+                        {e.weights_env || e.license_env || e.expected_weights_sha256_env ? (
+                          <p className="mt-1 max-w-[60ch] font-mono text-micro text-graphite" data-testid="encoder-env">
+                            {[e.weights_env, e.license_env, e.expected_weights_sha256_env ? `${e.expected_weights_sha256_env} (optional pin)` : null].filter(Boolean).join(" · ")}
+                          </p>
+                        ) : null}
                       </td>
                     </tr>
                   ))}
@@ -388,6 +424,7 @@ export function ExperimentsView() {
                   <p className="text-micro text-graphite">
                     {userName(m.created_by, demoUsers)} · {formatDateTime(m.created_at)} · never deployed
                   </p>
+                  {m.bundle_id ? <p className="font-mono text-micro text-graphite">inference bundle {shortHash(m.bundle_id, 10)} · research use only</p> : null}
                   {m.synthetic ? <p className="mt-1 text-micro font-bold text-hema">{m.banner}</p> : null}
                 </li>
               ))}

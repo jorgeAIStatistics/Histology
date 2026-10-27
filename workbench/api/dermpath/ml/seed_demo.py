@@ -2,12 +2,18 @@
 
 ``python -m dermpath.ml.seed_demo`` (or automatically at the end of ``dermpath.seed``).
 
+Every run uses ``execution_mode = synthetic_pipeline_test`` (the only mode in which the
+synthetic encoder and its label-derived fixture signal are allowed, design §1) and a pinned
+feature set built label-free except for the fixture signal derived inside ``feature_sets``
+from the frozen manifest through ``fixture.py``.
+
 1. Workflow demo project (``proj-bcc-demo``): freezes "Workflow demo slides — pipeline test"
    from the approved synthetic slides (if no such version exists) and runs ONE experiment
    per head with ``synthetic-deterministic-v1`` through the real path (QC tissue mask or
    Otsu fallback → patches read from the procedural tiles → synthetic embeddings). With 4
    patients, validation and test hold one patient each, so most metrics are honestly
-   undefined or "insufficient evidence"; that is the point of showing it.
+   undefined or "insufficient evidence" (the threshold is a recorded fallback); that is the
+   point of showing it.
 2. A SEPARATE project, "Synthetic pipeline-test cohort (no images, no histology)": 60
    fictional coded patients whose slide records are generator specs only (never ingested,
    no thumbnails, no pixels read; coordinates from a grid). Fixture labels are recorded by
@@ -54,8 +60,14 @@ ASSISTANT = Actor("user-assistant", "histology_assistant", "Sam Rivera")
 
 WORKFLOW_PARAMS = {"max_patches_per_slide": 24, "n_boot": 200, "pixel_mode": "read", "max_epochs": 30,
                    "patience": 6}
-COHORT_PARAMS = {"max_patches_per_slide": 32, "n_boot": 500, "pixel_mode": "none", "max_epochs": 40, "patience": 8}
+# The cohort's validation split holds 6 positive and 6 negative patients: below the default
+# minimum evidence (10 per class) the threshold would be a recorded fallback. This pipeline test
+# prespecifies 5 so the selected-threshold path is exercised (recorded in the run's params).
+COHORT_PARAMS = {"max_patches_per_slide": 32, "n_boot": 500, "pixel_mode": "none", "max_epochs": 40, "patience": 8,
+                 "min_threshold_evidence": 5}
 DEMO_SEED = 7
+DEMO_MODE = "synthetic_pipeline_test"
+JOB_TYPES = ["build_feature_set", "train"]
 
 
 def _freeze_dataset(db, project: Project, name: str, config: dict) -> DatasetVersion:
@@ -87,7 +99,8 @@ def _experiments(db, project: Project, dv: DatasetVersion, params: dict, label: 
             out[head] = existing.id
             continue
         run, _ = create_experiment(db, LEAD, project, dataset_version_id=dv.id, encoder_id=SYNTHETIC_ID, head=head,
-                                   params=params, seed=DEMO_SEED, name=f"{label} · {head} (PIPELINE TEST)")
+                                   params=params, seed=DEMO_SEED, name=f"{label} · {head} (PIPELINE TEST)",
+                                   execution_mode=DEMO_MODE, evaluation_protocol="holdout")
         out[head] = run.id
     return out
 
@@ -171,42 +184,53 @@ def _cohort_project(db) -> Project:
 def seed_ml_demo() -> dict:
     """Idempotent. Returns a summary; never raises (failures are reported in the summary)."""
     t0 = time.perf_counter()
+    summary: dict = {}
     try:
-        return _seed(t0)
-    except Exception as exc:  # the core demo must still start; the failure is visible
+        return _seed(t0, summary)
+    except Exception as exc:  # the core demo must still start; the failure (and what exists) is visible
         log.exception("ML demo seeding failed")
-        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}",
+        return {**summary, "status": "failed", "error": f"{type(exc).__name__}: {exc}",
                 "seconds": round(time.perf_counter() - t0, 2)}
 
 
-def _seed(t0: float) -> dict:
+WORKFLOW_CONFIG = {
+    "label_scope": "slide", "eligible_review_states": ["approved"], "include_provenance": ["demo_synthetic"],
+    "label_values": ["bcc_present", "bcc_absent_not_benign"],
+    "split": {"partition": "random", "seed": 3, "ratios": {"train": 0.6, "val": 0.2, "test": 0.2}}}
+COHORT_CONFIG = {
+    "label_scope": "slide", "eligible_review_states": ["approved"], "include_provenance": ["demo_synthetic"],
+    "label_values": ["bcc_present", "bcc_absent_not_benign"],
+    "split": {"partition": "random", "seed": 11, "ratios": {"train": 0.6, "val": 0.2, "test": 0.2}}}
+
+
+def _seed(t0: float, summary: dict) -> dict:
     from ..jobs.worker import Worker
 
     init_db()
-    summary: dict = {"banner": PIPELINE_TEST_BANNER, "encoder_id": SYNTHETIC_ID}
+    summary.update({"banner": PIPELINE_TEST_BANNER, "encoder_id": SYNTHETIC_ID, "execution_mode": DEMO_MODE})
+    # Datasets are frozen in their own transactions first, so they exist (and are reported) even
+    # if experiment creation fails afterwards.
     with session_scope() as db:
         project = db.get(Project, WORKFLOW_PROJECT_ID)
         if project is None:
             raise RuntimeError("the core demo seed has not run (no workflow project)")
-        dv = _freeze_dataset(db, project, WORKFLOW_DATASET_NAME, {
-            "label_scope": "slide", "eligible_review_states": ["approved"], "include_provenance": ["demo_synthetic"],
-            "label_values": ["bcc_present", "bcc_absent_not_benign"],
-            "split": {"partition": "random", "seed": 3, "ratios": {"train": 0.6, "val": 0.2, "test": 0.2}}})
-        runs = _experiments(db, project, dv, WORKFLOW_PARAMS, "Workflow demo slides")
-        summary["workflow"] = {"project_id": project.id, "dataset_version_id": dv.id, "runs": runs}
+        dv_id = _freeze_dataset(db, project, WORKFLOW_DATASET_NAME, WORKFLOW_CONFIG).id
+    summary["workflow"] = {"project_id": WORKFLOW_PROJECT_ID, "dataset_version_id": dv_id, "runs": {}}
     t_cohort = time.perf_counter()
     with session_scope() as db:
-        cohort = _cohort_project(db)
+        _cohort_project(db)
     with session_scope() as db:
-        cohort = db.get(Project, COHORT_PROJECT_ID)
-        cdv = _freeze_dataset(db, cohort, COHORT_DATASET_NAME, {
-            "label_scope": "slide", "eligible_review_states": ["approved"], "include_provenance": ["demo_synthetic"],
-            "label_values": ["bcc_present", "bcc_absent_not_benign"],
-            "split": {"partition": "random", "seed": 11, "ratios": {"train": 0.6, "val": 0.2, "test": 0.2}}})
-        cruns = _experiments(db, cohort, cdv, COHORT_PARAMS, "Synthetic cohort")
-        summary["cohort"] = {"project_id": cohort.id, "dataset_version_id": cdv.id, "runs": cruns}
+        cdv_id = _freeze_dataset(db, db.get(Project, COHORT_PROJECT_ID), COHORT_DATASET_NAME, COHORT_CONFIG).id
+    summary["cohort"] = {"project_id": COHORT_PROJECT_ID, "dataset_version_id": cdv_id, "runs": {}}
     summary["cohort_build_seconds"] = round(time.perf_counter() - t_cohort, 2)
-    outcomes = Worker("seed-in-process-ml", record_heartbeat=False, types=["train"]).run_until_idle()
+    for group, pid, dvid, params, label in (
+            ("workflow", WORKFLOW_PROJECT_ID, dv_id, WORKFLOW_PARAMS, "Workflow demo slides"),
+            ("cohort", COHORT_PROJECT_ID, cdv_id, COHORT_PARAMS, "Synthetic cohort")):
+        with session_scope() as db:
+            runs = _experiments(db, db.get(Project, pid), db.get(DatasetVersion, dvid), params, label)
+            summary[group]["runs"] = runs
+            summary[group]["feature_set_ids"] = sorted({db.get(TrainingRun, r).feature_set_id for r in runs.values()})
+    outcomes = Worker("seed-in-process-ml", record_heartbeat=False, types=JOB_TYPES).run_until_idle()
     summary["jobs"] = [{"type": o.type, "status": o.status, "error": o.error} for o in outcomes]
     with session_scope() as db:
         statuses = {}
@@ -214,6 +238,8 @@ def _seed(t0: float) -> dict:
             for head, rid in summary[group]["runs"].items():
                 r = db.get(TrainingRun, rid)
                 statuses[f"{group}:{head}"] = {"status": r.status, "error": r.error,
+                                               "execution_mode": r.execution_mode,
+                                               "feature_set_id": r.feature_set_id,
                                                "timings_seconds": (r.metrics_json or {}).get("timings_seconds")}
     summary["runs"] = statuses
     states = {v["status"] for v in statuses.values()}

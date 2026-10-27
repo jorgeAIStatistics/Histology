@@ -108,12 +108,17 @@ def test_schema_v2_has_engine_tables_columns_and_triggers(env):
             "run_attempt_settled_update", "inference_bundle_no_update", "al_proposal_no_delete",
             "training_run_identity_update", "training_run_set_once_update", "training_run_completed_delete",
             "feature_artifact_no_update", "feature_artifact_no_delete"} <= triggers
-    # The seeded legacy rows still load (new columns are nullable or defaulted).
+    # Phase 3 changed the seed on purpose: the seeded demo runs are now engine runs (pinned feature set,
+    # synthetic_pipeline_test mode, run identity frozen at creation), so identity_sha256 is filled rather than
+    # None. A legacy-style row (no identity) is still constructible; the worker refuses it permanently with
+    # 'legacy_run' (covered in test_ml_training_protocols). New columns stay nullable or defaulted.
     from dermpath.ml.models import FeatureArtifact, TrainingRun
 
     with session_scope() as s:
         run = s.scalars(select(TrainingRun).where(TrainingRun.status == "succeeded")).first()
-        assert run is not None and run.evaluation_protocol == "holdout" and run.identity_sha256 is None
+        assert run is not None and run.evaluation_protocol == "holdout"
+        assert run.execution_mode == "synthetic_pipeline_test" and run.feature_set_id is not None
+        assert run.identity_sha256 is not None and len(run.identity_sha256) == 64
         assert s.scalars(select(FeatureArtifact)).first().generation == 0
 
 

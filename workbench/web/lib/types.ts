@@ -2,7 +2,8 @@
 // Only the fields the UI reads are listed; the API may return more.
 
 export type Role = "histology_assistant" | "pathologist" | "research_lead" | "medical_director" | "admin";
-export type Provenance = "demo_synthetic" | "public_cc0" | "real_authorized";
+export type Provenance = "demo_synthetic" | "public_cc0" | "public_licensed" | "real_authorized";
+export type ReferenceStandard = "expert" | "imported_reference";
 export type ReviewState = "imported" | "pending_review" | "approved" | "disputed" | "excluded";
 export type ImageKind = "wsi" | "field_image" | "synthetic_tiles";
 export type LabelValue = "bcc_present" | "bcc_absent_not_benign" | "indeterminate" | "inadequate" | "out_of_scope";
@@ -163,7 +164,7 @@ export interface LabelVersion {
   annotation_id: string | null;
   value: LabelValue | null;
   display: string | null;
-  source: "expert" | "model_suggestion";
+  source: "expert" | "model_suggestion" | "imported_reference";
   suggestion_origin: string | null;
   suggestion_notice: string | null;
   model_ref: string | null;
@@ -593,8 +594,18 @@ export interface Encoder {
   status_detail: string | null;
   /** EncoderSpec fields (dermpath/ml/encoders.py, design §3); optional for older APIs. */
   adapter_version?: string;
+  architecture?: Record<string, unknown>;
   input_size?: number;
+  resize_policy?: string;
+  mean?: number[];
+  std?: number[];
   pooling?: string;
+  weights_format?: string | null;
+  weights_env?: string | null;
+  license_env?: string | null;
+  expected_weights_sha256_env?: string | null;
+  official_reference?: Record<string, unknown>;
+  reads_pixels?: boolean;
   spec_sha256?: string;
   weights_sha256: string | null;
   embedding_dim: number | null;
@@ -608,8 +619,14 @@ export interface MetricValue {
   numerator?: number;
   denominator?: number;
   ci: [number, number] | null;
+  ci_reason?: string | null;
   undefined_reason: string | null;
   defined?: boolean;
+  /** Threshold-dependent metrics (sensitivity, specificity, PPV, NPV) carry these. */
+  threshold_dependent?: boolean;
+  tuning_set?: boolean;
+  evaluation_prevalence?: number | null;
+  prevalence_baseline?: number | null;
 }
 
 export interface Run {
@@ -633,30 +650,128 @@ export interface Run {
   deps: Record<string, string> | null;
   weights_sha256: string | null;
   checkpoint: { object_key: string; sha256: string; bytes: number } | null;
-  threshold: { value: number; selected_on: string; rule: string; frozen_at: string } | null;
+  threshold: { value: number; selected_on: string; rule: string; frozen_at: string; selection_status?: string | null; reason?: string | null } | null;
   split_counts: Record<string, { patients?: number; items?: number } | number> | null;
   created_by: string;
   created_at: string;
   finished_at: string | null;
   error: string | null;
   registered_model_id: string | null;
+  /** Engine fields (design §6); optional for older APIs. */
+  execution_mode?: string | null;
+  feature_set_id?: string | null;
+  evaluation_protocol?: "holdout" | "dev_cv";
+  family_id?: string | null;
+  bundle_id?: string | null;
+}
+
+export interface CalibrationReport {
+  bins: { lo: number; hi: number; mean_score: number | null; fraction_positive: number | null; n: number }[];
+  ece: number | null;
+  brier: number | null;
+}
+
+export interface SubgroupRow {
+  key: string;
+  value: string | null;
+  status: "ok" | "insufficient_evidence" | "not_recorded";
+  n_bags?: number;
+  n_patients?: number;
+  min_patients?: number;
+  metrics: Record<string, MetricValue> | null;
+  reason: string | null;
 }
 
 export interface Evaluation {
-  split: "val" | "test";
+  split: "val" | "oof" | "test";
+  schema?: string;
   n_items: number;
   n_patients: number;
   positives: number;
   negatives: number;
   confusion: { tp: number; fp: number; tn: number; fn: number };
   metrics: Record<string, MetricValue>;
-  calibration: { bins: { lo: number; hi: number; mean_score: number | null; fraction_positive: number | null; n: number }[]; brier: number | null; ece: number | null; note: string };
+  /** Top-level bins/brier/ece/note mirror the raw equal-width report; raw and calibrated reports alongside. */
+  calibration: {
+    bins: CalibrationReport["bins"];
+    brier: number | null;
+    ece: number | null;
+    note: string;
+    raw?: { equal_width?: CalibrationReport; equal_mass?: CalibrationReport; status?: string; reason?: string };
+    calibrated?: { equal_width: CalibrationReport; equal_mass: CalibrationReport } | null;
+    frozen_calibration?: { method: string; in_sample?: boolean; applied?: boolean } | null;
+    calibrated_note?: string;
+  };
   coverage_curve: { coverage: number; error_rate: number | null; n_kept: number }[];
-  subgroups: { key: string; value: string; n: number; status: "ok" | "insufficient_evidence"; metrics: Record<string, MetricValue> | null }[];
-  bootstrap: { method: string; n_boot: number; seed: number } | null;
+  risk_coverage?: { aurc: number | null; aurc_oracle?: number | null; note: string; undefined_reason?: string | null };
+  abstention?: {
+    policy: { kind: string; lower: number; upper: number; selection_status: string } | null;
+    selective: { coverage: MetricValue; selective_risk: MetricValue } | null;
+    note: string;
+  };
+  subgroups: { count_unit: "patients"; min_patients: number; rows: SubgroupRow[]; note: string };
+  failure_analysis?: { n_errors: number; counts: Record<string, number>; not_assessable: Record<string, { n: number; reason: string }> };
+  bootstrap: { method: string; n_boot: number; seed: number; status?: string } | null;
+  evaluation_prevalence?: { value: number | null; numerator: number; denominator: number; note: string };
+  prevalence_adjusted?: { target_prevalence: number; ppv: MetricValue; npv: MetricValue; assumption: string } | null;
+  intention_to_evaluate?: { sensitivity: MetricValue; specificity: MetricValue; n_unscorable: number; rule: string };
+  n_unscorable?: number;
+  tuning_set?: boolean;
+  tuning_set_note?: string | null;
+  classes?: { positive: { value: string; display: string }; negative: { value: string; display: string; note: string } };
+  warnings?: string[];
   synthetic: boolean;
   banner: string | null;
   threshold: Run["threshold"] | number | null;
+  /** Test bodies only: the recorded release they come from. */
+  test_release_id?: string;
+  release_number?: number;
+  prior_releases_on_manifest?: number;
+  evaluation_id?: string;
+}
+
+export interface TestRelease {
+  id: string;
+  release_number: number;
+  prior_releases_on_manifest: number;
+  candidate_kind: "bundle" | "family";
+  bundle_id: string | null;
+  family_id: string | null;
+  run_ids: string[];
+  reason: string;
+  justification: string | null;
+  released_by: string;
+  released_at: string;
+  job_id: string | null;
+  job_status: string | null;
+  job_error: string | null;
+  complete: boolean;
+}
+
+export interface TestReleaseStatus {
+  run_id: string;
+  released: boolean;
+  releases: TestRelease[];
+  test_evaluation_stored: boolean;
+  candidate: { kind: "bundle" | "family" | null; bundle_id: string | null; family_id: string | null; ready: boolean; reason: string | null };
+  prior_releases_on_manifest: number;
+  next_release_number: number;
+  justification_required: boolean;
+  blockers: string[];
+  can_release: boolean;
+  note: string;
+}
+
+export interface ActiveLearningBatch {
+  batch_id: string;
+  job_id: string;
+  status: string;
+  error: string | null;
+  items: { slide_id: string; coded_patient_id: string | null; rank: number; strategy: string; reason: string; score: number | null; uncertainty: number | null }[];
+  composition: Record<string, number>;
+  result: { unscorable_reason?: string | null; pool_size?: number } | null;
+  pool_size: number;
+  notice: string;
 }
 
 export interface ErrorItem {
@@ -678,4 +793,7 @@ export interface ModelVersion {
   created_at: string;
   synthetic: boolean;
   banner: string | null;
+  /** The immutable inference bundle built at registration (null for legacy runs). */
+  bundle_id?: string | null;
+  bundle_unavailable_reason?: string | null;
 }

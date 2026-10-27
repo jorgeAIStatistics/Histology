@@ -1,6 +1,7 @@
 """ML pipeline: acceptance 9 (a real, loadable checkpoint and metrics, labelled synthetic),
-determinism, the embedding cache, real-path extraction on the CMU fixture, excluded regions,
-cancellation, restart safety, case bags, and immutability against later uploads/labels."""
+determinism, feature-set reuse, the legacy embedding cache, real-path extraction on the CMU
+fixture, excluded regions, cancellation, restart safety, case bags, and immutability against
+later uploads/labels. Runs are ``synthetic_pipeline_test`` runs on pinned feature sets."""
 
 from __future__ import annotations
 
@@ -29,21 +30,28 @@ def test_training_smoke_produces_real_checkpoint_and_synthetic_labelled_metrics(
     # Labelled as a pipeline test everywhere.
     assert run["synthetic"] is True and run["banner"] == BANNER
     assert any("synthetic_encoder" in r for r in run["synthetic_reasons"])
-    # Provenance.
-    assert run["code_revision"] and run["code_revision"] != ""
+    # Provenance and frozen identity.
+    assert run["code_revision"] and run["code_revision"] == run["identity"]["code_revision"]
     assert {"numpy", "torch", "scikit-learn", "python"} <= set(run["deps"])
-    assert run["weights_sha256"] == "synthetic:no-weights"
+    assert run["weights_sha256"] == "synthetic:no-weights" == run["identity"]["weights_sha256"]
+    assert run["execution_mode"] == "synthetic_pipeline_test" and run["evaluation_protocol"] == "holdout"
+    assert run["feature_set_id"] and len(run["identity_sha256"]) == 64 and run["attempts"] == 1
     assert len(run["dataset_manifest_sha256"]) == 64 and run["seed"] == 5
     assert run["split_counts"]["test"]["patients"] > 0 and run["split_counts"]["train"]["items"] > 0
     # A real checkpoint: the bytes in the object store match the recorded sha256 and size, and it loads.
     ck = run["checkpoint"]
     data = get_store().get_bytes(ck["object_key"])
     assert hashlib.sha256(data).hexdigest() == ck["sha256"] and len(data) == ck["bytes"] > 100
+    assert ck["object_key"].endswith(f"/checkpoints/{ck['sha256']}.npz")  # content-addressed, write-once
     with np.load(io.BytesIO(data), allow_pickle=False) as z:  # plain numpy can read it
         assert "meta_json" in z.files
     model = load_checkpoint(data)
     assert model.meta["head"] == head and model.meta["synthetic"] is True
     assert model.meta["threshold"]["selected_on"] == "val"
+    for k in ("encoder_spec_sha256", "weights_sha256", "feature_set_spec_sha256", "policy_sha256", "code", "deps",
+              "calibration", "abstention", "class_mapping"):
+        assert model.meta.get(k) is not None, k
+    assert model.meta["class_mapping"]["0"] == "bcc_absent_not_benign"
     # Threshold frozen on validation.
     thr = run["threshold"]
     assert thr["selected_on"] == "val" and thr["frozen_at"] and thr["value"] == model.meta["threshold"]["value"]
@@ -56,16 +64,18 @@ def test_training_smoke_produces_real_checkpoint_and_synthetic_labelled_metrics(
     assert ev["metrics"]["sensitivity"]["denominator"] == c_["tp"] + c_["fn"]
     assert ev["metrics"]["auroc"]["defined"] is True and 0.0 <= ev["metrics"]["auroc"]["value"] <= 1.0
     assert ev["bootstrap"]["method"] == "patient_cluster" and ev["calibration"]["note"].startswith("scores are not")
-    # Scores reproduce from the stored checkpoint (same code path at test time).
+    # Scores reproduce from the stored checkpoint and the PINNED feature set (same code path at test time).
     from dermpath.db import session_scope
-    from dermpath.ml.models import FeatureArtifact, Prediction
-    from dermpath.ml.features import load_features
+    from dermpath.ml.engine_models import FeatureSet
+    from dermpath.ml.feature_sets import load_slide_features
+    from dermpath.ml.models import Prediction
 
     with session_scope() as db:
         p = db.scalars(select(Prediction).where(Prediction.run_id == run["id"], Prediction.split == "val")).first()
-        embs = np.concatenate([load_features(db.get(FeatureArtifact, a))["embeddings"]
-                               for a in p.feature_artifact_ids_json])
-        assert model.score(embs)[0] == pytest.approx(p.score, abs=0)
+        fs = db.get(FeatureSet, run["feature_set_id"])
+        db.expunge(fs)
+    parts = [load_slide_features(fs, sid).embeddings for sid in p.slide_ids_json]
+    assert model.score_parts(parts)[0] == pytest.approx(p.score, abs=0)
 
 
 def test_seeded_demo_runs_exist_and_are_labelled(clients, ids):
@@ -110,8 +120,9 @@ def test_same_seed_gives_identical_metrics_and_checkpoint(clients, ids, head):
     eb = lead.get(f"/api/v1/experiments/{b['id']}/evaluation?split=val").json()
     for k in ("confusion", "metrics", "calibration", "coverage_curve", "subgroups", "bootstrap"):
         assert ea[k] == eb[k], k
-    # The second run reused every cached embedding.
-    assert b["feature_summary"]["cache_hits"] == b["feature_summary"]["slides"] > 0
+    # Both runs read the same pinned feature set (reused, never re-extracted).
+    assert a["feature_set_id"] == b["feature_set_id"] and b["feature_summary"]["reused_feature_set"] is True
+    assert b["feature_summary"]["slides"] > 0 and b["checkpoint"]["object_key"] == a["checkpoint"]["object_key"]
     c = train(lead, CID, dv, head, seed=22)
     assert c["checkpoint"]["sha256"] != a["checkpoint"]["sha256"]
 
@@ -262,14 +273,14 @@ def test_crashed_attempt_is_retried_and_reproduces_the_same_result(clients, ids,
     """A failure inside the final transaction rolls back every output; the retry (same seed)
     produces the same checkpoint as an uninterrupted run and no duplicate predictions."""
     from dermpath.db import session_scope
-    from dermpath.ml import evaluation as ev_mod
+    from dermpath.ml import training as tr_mod
     from dermpath.ml.models import Prediction
 
     lead = clients(LEAD)
     dv = cohort(ids)["dataset_version_id"]
     reference = train(lead, CID, dv, "abmil", seed=31)
 
-    real = ev_mod.store_evaluation
+    real = tr_mod.store_development_evaluation
     calls = {"n": 0}
 
     def crash_once(*a, **kw):
@@ -278,7 +289,7 @@ def test_crashed_attempt_is_retried_and_reproduces_the_same_result(clients, ids,
             raise RuntimeError("simulated worker crash during the final commit")
         return real(*a, **kw)
 
-    monkeypatch.setattr(ev_mod, "store_evaluation", crash_once)
+    monkeypatch.setattr(tr_mod, "store_development_evaluation", crash_once)
     out = start(lead, CID, dv, "abmil", seed=31)
     from dermpath.jobs.worker import Worker
 
@@ -290,6 +301,7 @@ def test_crashed_attempt_is_retried_and_reproduces_the_same_result(clients, ids,
     assert [o.status for o in second] == ["succeeded"]
     run = lead.get(f"/api/v1/experiments/{out['experiment']['id']}").json()
     assert run["status"] == "succeeded" and run["checkpoint"]["sha256"] == reference["checkpoint"]["sha256"]
+    assert run["attempts"] == 2  # one appended RunAttempt per attempt
     with session_scope() as db:
         n = db.scalar(select(func.count(Prediction.id)).where(Prediction.run_id == run["id"]))
         n_ref = db.scalar(select(func.count(Prediction.id)).where(Prediction.run_id == reference["id"]))
@@ -355,6 +367,12 @@ def test_case_level_labels_make_case_bags(clients, ids):
         p = multi[0]
         assert {r[0] for r in p.attention_json} == set(range(len(p.slide_ids_json)))
     assert p.split in ("train", "val")  # the train job never scores test bags
+    # The case label lives on the case bag only: no slide-level label or prediction exists.
+    assert all(len(x.slide_ids_json) == len({s for s in x.slide_ids_json}) for x in preds)
+    by_case = {}
+    for x in preds:
+        by_case.setdefault((x.split, x.case_id), []).append(x)
+    assert all(len(v) == 1 for v in by_case.values())
     att = lead.get(f"/api/v1/experiments/{run['id']}/attention/{p.slide_ids_json[1]}")
     assert att.status_code == 200, att.text
     body = att.json()

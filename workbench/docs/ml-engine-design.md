@@ -19,8 +19,8 @@ The audit that motivated this design is summarised in `docs/ml-engine-report.md`
 | Mode | Purpose | Encoders | Data | Labels |
 |---|---|---|---|---|
 | `synthetic_pipeline_test` | Exercise orchestration end to end | `synthetic-deterministic-v1` only | dataset `data_mode == "synthetic"` (every item `provenance == demo_synthetic` and `image_kind == synthetic_tiles`) | a label-derived fixture signal is allowed, **only** through `ml/fixture.py` |
-| `real_image_technical` | Pixel path on real slides: extraction, coverage, determinism, throughput, memory | any encoder that reads pixels | real slides (`public_cc0` or `real_authorized`), labelled or not | **none**: no label is read anywhere in this mode |
-| `supervised_experiment` | Pathology experiments on labelled cohorts | non-synthetic encoders | dataset `data_mode == "real"`, calibrated WSIs, expert labels | expert reference labels for train and val; test labels only at a recorded test release |
+| `real_image_technical` | Pixel path on real slides: extraction, coverage, determinism, throughput, memory | any encoder that reads pixels | real slides (`public_cc0`, `public_licensed` or `real_authorized`), labelled or not | **none**: no label is read anywhere in this mode |
+| `supervised_experiment` | Pathology experiments on labelled cohorts | non-synthetic encoders | dataset `data_mode == "real"`, calibrated WSIs, expert labels (or imported reference labels, see below) | expert reference labels for train and val, or imported reference labels when the frozen dataset declares `reference_standard: imported_reference` (recorded in the manifest; results then measure agreement with that external reference, and every evaluation body and bundle says so); test labels only at a recorded test release |
 
 **Invariants (each covered by tests):**
 1. A dataset never mixes `demo_synthetic` items with real items. `data_mode` is computed from the included items and recorded in the manifest. Mixing is refused (`409 mixed_data_mode`) at freeze, and reported at materialise and in freeze-check.
@@ -249,6 +249,16 @@ Extraction:
 - per-slide stats: read, preprocess and embed seconds, patches per second, peak RSS delta, cache hit;
 - the loaded encoder's `weights_sha256` must equal the feature set's `weights_sha256` before anything is written.
 
+**Implemented differently from the text above (phase 3, recorded with the reason):**
+- *QC snapshot source.* Sets built from a dataset version snapshot the QC state frozen in the manifest (`qc_review_id`, mask key and sha, excluded issue ids, regions sha), verified against the stored objects (`409 input_changed` when it cannot be reproduced), so the set and the manifest agree per item. Only explicit-slide sets snapshot live QC at creation.
+- *`macenko-v1`.* The reference is fitted at **build** time, on up to 32 seeded train-split slides × 8 seeded patches, stored content-addressed (`stain_reference_key/sha256`). `stain_policy_json` holds the declared, deferred plan (`deferred: true`, train slide ids, fit settings); artifacts and inference bundles carry the **effective** policy (with the reference) and its sha. Macenko on explicit slides (no dataset) is refused (`422 stain_reference_needs_dataset`).
+- *Extraction parameters.* There is no column for them, so `encoder_spec_json` = the spec's output fields + `weights_config_sha256` (hf_dir config) + `encoder_config` (synthetic fixture) + `extraction {pixel_mode, batch_size, device, cpu_threads, extractor_version}`. Licence and notice text are excluded so text edits do not orphan sets.
+- *Worker environment check.* A build refuses (`extraction_env_changed`) when the worker's library versions, device class, precision, machine or torch CPU thread count differ from the set's. The device is resolved once at creation and pinned; numpy encoders always record cpu/fp32.
+- *Repair pass.* Building a `ready` set verifies every pinned artifact and re-extracts missing or corrupt ones as a new generation under the same cache key; items stay pinned and `load_slide_features` serves the newest valid generation.
+- *Sampling seed.* The synthetic fixture embeddings use the feature set's `sampling_seed` (default 0), not the training seed, so runs with different training seeds share one set.
+- *Coverage floor.* `COVERAGE_FLOOR = 0.5` on `tissue_within_radius_of_sample_fraction` is an untuned research default. Torch technical-validation tolerances (1e-4 abs, cosine 0.9999) are proposals not yet measured on real weights.
+- *Inline builds.* A train job builds its run's set inline when it is not ready. Deterministic build failures (input or environment changed, integrity, mode) fail the run permanently; if the queue ends the train job while the set is still `building` and no other job can finish it, the set becomes `failed` (resumable).
+
 Build job `build_feature_set`:
 - resumable: slides already `done` are skipped;
 - cancellable;
@@ -309,6 +319,16 @@ API (router `ml/router_features.py`):
   - paired comparisons from §7.
   - Configurations are JSON files under `workbench/experiments/configs/`, and the CLI is `python -m dermpath.ml.cli`.
 
+**Implemented differently from the text above (phase 3, recorded with the reason):**
+- *Identity dependencies.* Run identity pins a training-relevant subset (numpy, scipy, scikit-learn, torch, python, implementation, machine); the full `dependency_versions()` is recorded on every `run_attempt`, and feature-extraction libraries are pinned by the feature set's `extraction_env_sha256`. Pinning every package caused spurious `run_identity_changed` between API and worker processes.
+- *Code drift.* An attempt also fails `run_identity_changed: code_tree_drift` when any `dermpath/*.py` file changed since the worker process started; restart workers after deploying code.
+- *Folds and seeds.* `dev_cv` folds depend only on the development pool and k (salt `<family salt>|cv|k=<k>`), not on the head seed, so every run on a manifest shares its folds and OOF set. The ABMIL inner early-stopping split depends on the seed (`<family salt>|inner|<seed>`); learning-curve subsets use `<family salt>|lc`. In `dev_cv` a learning-curve fraction restricts each fold's fitting part and the refit, so every point is evaluated on the same full OOF set.
+- *ABMIL fitting.* ABMIL is fitted on the inner fit part of the training patients (default 80 %); the inner hold-out is used only for early stopping, with the same class-weighted BCE, and there is no refit on all of train.
+- *Operating point.* Decisions (`predicted`, `abstained`) use the raw score against the frozen threshold; the calibration map (fitted on the same development scores) is applied for reporting as `calibrated_score`. Under `dev_cv`, calibration fitted on pooled OOF scores of the fold models is applied to the refitted final model (a standard approximation, not validated beyond the synthetic pipeline). The evidence rule is one parameter, `min_threshold_evidence` (patients per class, default 10); below it the threshold falls back to 0.5, recorded as `insufficient_evidence` with a `threshold_unvalidated` warning. `tuning_set` is true only when the threshold was selected on those data.
+- *Unscorable folds.* A `dev_cv` fold whose fitting part lacks a class is not fitted; its held-out bags are recorded as unscorable (counted in intention-to-evaluate), never imputed.
+- *Outputs.* Prediction rows carry `calibrated_score`, `fold` and `manifest_split` in `attributes_json`; `train` rows under `dev_cv` are the final model's in-sample scores on the whole development pool. Checkpoints are `dermpath.checkpoint/2` (`/1` still loads). Legacy runs without identity, mode or feature set fail permanently with `legacy_run`.
+- *Labels.* Training labels must satisfy `labels.label_source_permitted(source, manifest.config.reference_standard)`; model suggestions never qualify.
+
 ## 7. Evaluation (`ml/metrics.py`, `ml/comparison.py`, `ml/calibration.py`, `ml/failure.py`, `ml/evaluation.py`)
 
 - Metrics at the prespecified operating point:
@@ -366,6 +386,12 @@ The bundle is built at registration (`POST /experiments/{id}/register`). `POST /
 - it extracts features with the bundle's policies (label-free);
 - it scores and applies calibration, threshold and abstention;
 - it writes an `inference_prediction` row (research only; never a label, never routed to care).
+
+**Implemented differently from §7–§8 (phase 3, recorded with the reason):**
+- *Reading stored test results.* `GET …/evaluation?split=test` (and errors, attention) never computes, enqueues, seals or writes domain rows, and a `409` writes nothing; a successful read of a stored release appends one `experiment.test_accessed` audit row, because who read test results is governance information.
+- *Release candidate.* When the run belongs to a **locked** comparison family, the family is the default candidate (all members released together); otherwise the run's bundle. A run already released is refused (`409 test_already_released`): `Evaluation` is unique per (run, split). Test predictions store no attention yet (`409 attention_unavailable`).
+- *Bundles.* The bundle carries the feature set's **effective** stain policy (macenko with its fitted reference) and the reference standard of the training labels. Pipeline-test bundles (synthetic encoder) refuse inference with `409 mode_mismatch`: their signal is label-derived by construction. `inference_prediction` is unique per (bundle, slide), so a slide recorded as unscorable needs a new bundle to be re-scored.
+- *Active learning* is asynchronous (`202` + job `active_learning`) and needs the run's registered bundle; scored candidates are stored as `inference_prediction` rows. Patients new to the split family can be proposed (recorded per proposal as `new_to_family`) and may later be allocated to val or test by the family allocator; this is reported, not prevented.
 
 ## 9. Data and label quality (`dermpath/datasets.py` audit; `ml/active_learning.py`)
 

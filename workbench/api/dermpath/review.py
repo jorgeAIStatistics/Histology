@@ -155,11 +155,17 @@ def labels_view(db: Session, actor: Actor, project: Project, member: ProjectMemb
     rows = list(slide_rows) + [r for r in case_rows if r not in slide_rows]
     expert = [label_dict(r) for r in rows if r.source == "expert"]
     suggestions = [] if hidden else [label_dict(r) for r in rows if r.source == "model_suggestion"]
+    # Imported reference labels (an external dataset's own standard, e.g. report-derived) are not expert reads. Like
+    # model suggestions they are hidden until the reader has recorded an independent assessment, so they never
+    # anchor a blinded read.
+    imported = [] if hidden else [label_dict(r) for r in rows if r.source == "imported_reference"]
     if hidden:
         # Do not leak suggestion content through expert review rows either.
         expert = [e for e in expert if not (e["review_of_suggestion_id"] and e["author_id"] != actor.id)]
     ref_slide, ref_slide_status = reference_label(db, slide.project_id, "slide", slide.id)
     ref_case, ref_case_status = (reference_label(db, slide.project_id, "case", case.id) if case else (None, "no_case"))
+    ref_imported, ref_imported_status = (None, "hidden") if hidden else reference_label(
+        db, slide.project_id, "slide", slide.id, reference_standard="imported_reference")
     my = db.scalars(select(ReviewAssessment).where(ReviewAssessment.slide_id == slide.id,
                                                    ReviewAssessment.reviewer_id == actor.id)).first()
     disagreements = db.scalars(select(Disagreement).where(
@@ -179,8 +185,13 @@ def labels_view(db: Session, actor: Actor, project: Project, member: ProjectMemb
         "my_assessment": assessment_dict(my) if my else None,
         "expert_labels": expert,
         "model_suggestions": suggestions,
+        "imported_reference_labels": imported,
         "reference": {
             "slide": {"status": ref_slide_status, "label": label_dict(ref_slide) if ref_slide else None},
+            "slide_imported": {"status": ref_imported_status,
+                               "label": label_dict(ref_imported) if ref_imported else None,
+                               "note": "Imported reference (external dataset standard), not an expert read; it counts "
+                                       "only in datasets whose reference_standard is imported_reference."},
             "case": {"status": ref_case_status, "label": label_dict(ref_case) if ref_case else None,
                      "case_id": case.id if case else None,
                      "note": "A case-level label is valid for the case only; it is never copied to slides."},

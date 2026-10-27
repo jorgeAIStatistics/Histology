@@ -8,3 +8,7 @@
 **Derived from the CC0 slide:** the Overview page's images (`web/public/overview/`: WebP renderings at 720 and 1200 px wide and the QC screen's background mask) and `web/lib/overview-data.json` (dimensions, scale, hash, tissue fraction, the 41 patch coordinates). They are regenerated with `api/.venv/bin/python scripts/build_overview_assets.py` (run from `workbench/api`), which checks the fixture's SHA-256 first and never reads the label or macro images. The page shows only the region image; the outline drawn in its third step is marked as illustrative.
 
 Synthetic tiled images used in the demo are generated procedurally by `dermpath/slides/synthetic.py`. They are labelled `DEMO SYNTHETIC` everywhere and contain **no histology**.
+
+## External datasets (kept under `var/`, never committed)
+
+Public research datasets are not fixtures. They are downloaded only with the project owner's approval, under their own licences, into `workbench/var/datasets/<name>/`. `var/` is gitignored, so they are never committed. They are registered as slides by an importer (for example `python -m dermpath.importers.cobra`), which verifies every file against the dataset's published sha256 list. The only one in use is a 60-slide COBRA BCC biopsy subset: CC BY-NC-SA 4.0, **non-commercial**, with report-derived labels imported as `imported_reference`, never as expert labels. See `docs/public-datasets.md` for its source, selection rule, licence and limitations. Tests never read these files; the importer tests use padded copies of the CC0 fixture as stand-ins.

@@ -20,6 +20,7 @@ export function Chip({ className, children, title }: { className?: string; child
 const provenanceStyle: Record<Provenance, string> = {
   demo_synthetic: "border-hema/40 bg-hema-tint text-hema",
   public_cc0: "border-slate/40 bg-slate-tint text-slate",
+  public_licensed: "border-teal/40 bg-teal-tint text-teal",
   real_authorized: "border-rust/50 bg-rust-tint text-rust",
 };
 

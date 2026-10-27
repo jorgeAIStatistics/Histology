@@ -69,7 +69,7 @@ from ..db import session_scope
 
 log = logging.getLogger("dermpath.jobs")
 
-OPTIONAL_HANDLER_MODULES = ("dermpath.ml.jobs",)
+OPTIONAL_HANDLER_MODULES = ("dermpath.ml.jobs", "dermpath.ml.feature_sets", "dermpath.ml.inference")
 BUILTIN_HANDLER_MODULES = ("dermpath.jobs.builtin",)
 
 

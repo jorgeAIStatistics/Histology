@@ -6,6 +6,8 @@
 
 **Default position until this template is completed and signed:** the workbench holds only **public CC0 test data** and **synthetic or fictional** material. No patient material enters it.
 
+**Public licensed research datasets** (provenance `public_licensed`, for example the COBRA BCC subset under CC BY-NC-SA 4.0) are published third-party data, not patient material entering through this workbench. They are imported only by an importer that verifies checksums and records the licence on the project, on each case and in every frozen manifest; their labels are the dataset's own reference (`imported_reference`), never expert reads. Licence conditions (for example non-commercial, share-alike) bind every use of these items and of anything derived from them; see `license-ledger.md` and `public-datasets.md`.
+
 ## 1. Who may authorise what
 
 | Decision | Who decides | Status |

@@ -8,12 +8,12 @@ import { useApi } from "@/lib/useApi";
 import { useSession } from "@/lib/session";
 import { api, errorText } from "@/lib/api";
 import { LABEL_SHORT, formatBytes, formatDateTime, humanize, isSpecOnlySlide, shortHash, userName } from "@/lib/format";
-import type { ErrorItem, Evaluation, LabelValue, MetricValue, Run, Slide, ViewerToken } from "@/lib/types";
+import type { ActiveLearningBatch, ErrorItem, Evaluation, LabelValue, MetricValue, Run, Slide, TestRelease, TestReleaseStatus, ViewerToken } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
 import { ErrorBox, Loading, Notice } from "@/components/ui/Notice";
 import { PipelineTestBanner } from "@/components/ui/Badges";
 import { Tabs, TabPanel } from "@/components/ui/Tabs";
-import { TextField } from "@/components/ui/Field";
+import { TextArea, TextField } from "@/components/ui/Field";
 import { useToast } from "@/components/ui/Toaster";
 import { cn } from "@/components/ui/cn";
 import { CalibrationChart, CoverageChart } from "./Charts";
@@ -26,23 +26,34 @@ const METRIC_LABEL: Record<string, string> = {
   npv: "NPV",
   auroc: "AUROC",
   auprc: "AUPRC (average precision)",
+  brier: "Brier score (lower is better)",
 };
+
+const SPLIT_LABEL: Record<string, string> = { val: "validation", oof: "out-of-fold (development cross-validation)", test: "test" };
 
 function fmt(v: number | null | undefined, d = 3) {
   return v === null || v === undefined ? "n/a" : v.toFixed(d);
 }
 
-function MetricRow({ name, m }: { name: string; m: MetricValue & { ci_reason?: string | null; prevalence_baseline?: number } }) {
+function MetricRow({ name, m }: { name: string; m: MetricValue }) {
   const isRatio = m.denominator !== undefined;
+  const second = isRatio
+    ? `${m.numerator} / ${m.denominator}`
+    : m.prevalence_baseline !== undefined && m.prevalence_baseline !== null
+      ? `baseline ${m.prevalence_baseline.toFixed(3)} (prevalence)`
+      : name === "brier"
+        ? "threshold-free"
+        : "rank metric, threshold-free";
   return (
     <tr className="border-b border-line align-top" data-testid={`metric-${name}`}>
       <th scope="row" className="py-2 pr-3 text-left font-semibold text-ink">
         {METRIC_LABEL[name] ?? name}
+        {m.tuning_set ? <span className="ml-1 block text-micro font-semibold text-amber-ink">tuning set: optimistic</span> : null}
       </th>
       <td className="tabular py-2 pr-3 font-bold">
         {m.value === null ? <span className="font-semibold text-amber-ink">{m.undefined_reason ?? "undefined"}</span> : m.value.toFixed(3)}
       </td>
-      <td className="tabular py-2 pr-3 text-ink">{isRatio ? `${m.numerator} / ${m.denominator}` : m.prevalence_baseline !== undefined ? `baseline ${m.prevalence_baseline.toFixed(3)}` : "rank metric"}</td>
+      <td className="tabular py-2 pr-3 text-ink">{second}</td>
       <td className="tabular py-2 text-graphite">{m.ci ? `${m.ci[0].toFixed(3)} – ${m.ci[1].toFixed(3)}` : <span className="text-micro">{m.ci_reason ?? "no interval"}</span>}</td>
     </tr>
   );
@@ -92,9 +103,22 @@ function Confusion({ ev }: { ev: Evaluation }) {
   );
 }
 
-function EvaluationBody({ ev }: { ev: Evaluation & { warnings?: string[]; unscored?: unknown[] } }) {
+function EvaluationBody({ ev }: { ev: Evaluation }) {
+  const ite = ev.intention_to_evaluate;
+  const adj = ev.prevalence_adjusted;
+  const fa = ev.failure_analysis;
   return (
     <div className="space-y-5" data-testid={`evaluation-${ev.split}`}>
+      {ev.split === "test" && ev.release_number ? (
+        <p className="text-small font-semibold text-ink" data-testid="test-release-number">
+          Test release {ev.release_number} on this manifest · {ev.prior_releases_on_manifest ?? 0} earlier release(s)
+        </p>
+      ) : null}
+      {ev.tuning_set ? (
+        <Notice tone="warning" title="Tuning set: threshold-dependent metrics are optimistic">
+          {ev.tuning_set_note ?? "The threshold was chosen on these data."} AUROC, AUPRC and the Brier score do not depend on the threshold.
+        </Notice>
+      ) : null}
       {ev.warnings?.length ? (
         <Notice tone="warning" title="Read these numbers with care">
           <ul className="list-disc pl-4">
@@ -125,8 +149,19 @@ function EvaluationBody({ ev }: { ev: Evaluation & { warnings?: string[]; unscor
           </table>
           <p className="mt-2 text-micro text-graphite">
             {ev.positives} positive and {ev.negatives} negative items. Bootstrap: {ev.bootstrap ? `${ev.bootstrap.method.replace("_", "-")}, ${ev.bootstrap.n_boot} replicates, seed ${ev.bootstrap.seed}` : "none"}
-            {(ev.bootstrap as { status?: string } | null)?.status && (ev.bootstrap as { status?: string }).status !== "ok" ? ` (${(ev.bootstrap as { status?: string }).status})` : ""}.
+            {ev.bootstrap?.status && ev.bootstrap.status !== "ok" ? ` (${ev.bootstrap.status})` : ""}.
           </p>
+          {ev.evaluation_prevalence ? (
+            <p className="mt-1 text-micro text-graphite" data-testid="evaluation-prevalence">
+              PPV and NPV are at this split&rsquo;s prevalence, {fmt(ev.evaluation_prevalence.value)} ({ev.evaluation_prevalence.numerator}/{ev.evaluation_prevalence.denominator}); they do not transfer to another population.
+              {adj ? ` At a declared prevalence of ${adj.target_prevalence}: PPV ${fmt(adj.ppv.value)}, NPV ${fmt(adj.npv.value)} (assumes sensitivity and specificity transfer).` : ""}
+            </p>
+          ) : null}
+          {ite && (ev.n_unscorable ?? 0) > 0 ? (
+            <p className="mt-1 text-micro font-semibold text-amber-ink" data-testid="unscorable">
+              {ev.n_unscorable} bag(s) could not be scored. Intention to evaluate: sensitivity {fmt(ite.sensitivity.value)} ({ite.sensitivity.numerator}/{ite.sensitivity.denominator}), specificity {fmt(ite.specificity.value)} ({ite.specificity.numerator}/{ite.specificity.denominator}).
+            </p>
+          ) : null}
         </div>
       </div>
       <div className="grid gap-6 lg:grid-cols-2">
@@ -134,49 +169,76 @@ function EvaluationBody({ ev }: { ev: Evaluation & { warnings?: string[]; unscor
           <h4 className="font-bold">Calibration</h4>
           <p className="mb-2 text-micro text-graphite">
             Brier {fmt(ev.calibration.brier)} · ECE {fmt(ev.calibration.ece)} · {ev.calibration.note}
+            {ev.calibration.calibrated ? ` · after the frozen ${ev.calibration.frozen_calibration?.method ?? ""} calibration: ECE ${fmt(ev.calibration.calibrated.equal_width.ece)}` : ""}
+            {ev.calibration.calibrated_note ? ` (${ev.calibration.calibrated_note})` : ""}
           </p>
           {ev.n_items ? <CalibrationChart cal={ev.calibration} /> : <p className="text-small text-graphite">No scored items.</p>}
         </section>
         <section className="rounded-[var(--radius-panel)] border border-line bg-sheet p-4">
           <h4 className="font-bold">Coverage and error (abstention)</h4>
-          <p className="mb-2 text-micro text-graphite">How the error rate changes if the least certain items go to a person instead.</p>
+          <p className="mb-2 text-micro text-graphite">
+            How the error rate changes if the least certain items go to a person instead. AURC {fmt(ev.risk_coverage?.aurc)}
+            {ev.abstention?.selective ? ` · frozen abstention policy: coverage ${fmt(ev.abstention.selective.coverage.value)}, selective risk ${fmt(ev.abstention.selective.selective_risk.value)}` : ""}. {ev.abstention?.note ?? ""}
+          </p>
           {ev.coverage_curve.length ? <CoverageChart curve={ev.coverage_curve} /> : <p className="text-small text-graphite">No scored items.</p>}
         </section>
       </div>
       <section>
         <h4 className="font-bold">Subgroups (scanner, site, stain)</h4>
+        <p className="mt-1 text-micro text-graphite">
+          Minimum {ev.subgroups.min_patients} {ev.subgroups.count_unit} per subgroup. {ev.subgroups.note}
+        </p>
         <div className="mt-2 overflow-x-auto">
           <table className="w-full min-w-[640px] text-left text-small" data-testid="subgroups">
             <thead>
               <tr className="border-b border-line-strong text-micro text-graphite">
                 <th scope="col" className="py-1 font-semibold">Group</th>
-                <th scope="col" className="py-1 text-right font-semibold">n</th>
+                <th scope="col" className="py-1 text-right font-semibold">Patients</th>
+                <th scope="col" className="py-1 text-right font-semibold">Bags</th>
                 <th scope="col" className="py-1 pl-4 font-semibold">Result</th>
               </tr>
             </thead>
             <tbody>
-              {ev.subgroups.map((g) => (
-                <tr key={`${g.key}:${g.value}`} className="border-b border-line">
-                  <th scope="row" className="py-1.5 font-normal">
-                    {humanize(g.key.replace("_id", ""))}: <span className="font-semibold">{g.value}</span>
-                  </th>
-                  <td className="tabular py-1.5 text-right">{g.n}</td>
-                  <td className="py-1.5 pl-4">
-                    {g.status === "ok" && g.metrics ? (
-                      <span className="text-ink">
-                        sensitivity {fmt(g.metrics.sensitivity?.value, 2)} ({g.metrics.sensitivity?.numerator}/{g.metrics.sensitivity?.denominator}) · specificity {fmt(g.metrics.specificity?.value, 2)} ({g.metrics.specificity?.numerator}/
-                        {g.metrics.specificity?.denominator}) <span className="text-micro text-graphite">point estimates, exploratory</span>
-                      </span>
-                    ) : (
-                      <span className="font-semibold text-amber-ink">{(g as { reason?: string }).reason ?? "insufficient evidence"}</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {ev.subgroups.rows
+                .filter((g) => g.status !== "not_recorded")
+                .map((g) => (
+                  <tr key={`${g.key}:${g.value}`} className="border-b border-line">
+                    <th scope="row" className="py-1.5 font-normal">
+                      {humanize(g.key.replace("_id", ""))}: <span className="font-semibold">{g.value}</span>
+                    </th>
+                    <td className="tabular py-1.5 text-right">{g.n_patients ?? "?"}</td>
+                    <td className="tabular py-1.5 text-right">{g.n_bags ?? "?"}</td>
+                    <td className="py-1.5 pl-4">
+                      {g.status === "ok" && g.metrics ? (
+                        <span className="text-ink">
+                          sensitivity {fmt(g.metrics.sensitivity?.value, 2)} ({g.metrics.sensitivity?.numerator}/{g.metrics.sensitivity?.denominator}) · specificity {fmt(g.metrics.specificity?.value, 2)} ({g.metrics.specificity?.numerator}/
+                          {g.metrics.specificity?.denominator}) <span className="text-micro text-graphite">exploratory, patient-cluster intervals in the API</span>
+                        </span>
+                      ) : (
+                        <span className="font-semibold text-amber-ink">{g.reason ?? "insufficient evidence"}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
         </div>
       </section>
+      {fa ? (
+        <section data-testid="failure-analysis">
+          <h4 className="font-bold">Failure analysis ({fa.n_errors} errors)</h4>
+          <p className="mt-1 text-micro text-graphite">Possible contributing factors read from recorded context, never causes; an error can carry several.</p>
+          <ul className="mt-2 flex flex-wrap gap-2 text-small">
+            {Object.entries(fa.counts)
+              .filter(([, n]) => n > 0)
+              .map(([k, n]) => (
+                <li key={k} className="rounded border border-line bg-sheet px-2 py-1">
+                  {humanize(k)} <span className="tabular font-semibold">{n}</span>
+                </li>
+              ))}
+          </ul>
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -241,14 +303,38 @@ export function RunDetail({ runId }: { runId: string }) {
   const ml = useApi<{ items: unknown[] }>("/encoders");
   const run = useApi<Run & Record<string, unknown>>(`/experiments/${runId}`);
   const ready = run.data?.status === "succeeded";
-  const val = useApi<Evaluation & { warnings?: string[] }>(ready ? `/experiments/${runId}/evaluation?split=val` : null);
-  const errs = useApi<{ items: (ErrorItem & { threshold?: number })[]; counts: Record<string, number>; order: string; failure_reason_note: string }>(ready ? `/experiments/${runId}/errors?split=val` : null);
+  // The development evaluation is validation (holdout) or out-of-fold (dev_cv).
+  const devSplit = run.data?.evaluation_protocol === "dev_cv" || run.data?.threshold?.selected_on === "oof" ? "oof" : "val";
+  const val = useApi<Evaluation>(ready ? `/experiments/${runId}/evaluation?split=${devSplit}` : null);
+  const errs = useApi<{ items: (ErrorItem & { threshold?: number; categories?: string[] })[]; counts: Record<string, number>; order: string; failure_reason_note: string }>(ready ? `/experiments/${runId}/errors?split=${devSplit}` : null);
   const [tab, setTab] = useState("val");
-  const [test, setTest] = useState<Evaluation | null>(null);
+  const canTest = can("dataset.test_access");
+  const release = useApi<TestReleaseStatus>(ready ? `/experiments/${runId}/test-release` : null);
+  const stored = !!release.data?.test_evaluation_stored;
+  // Reading stored test results writes an access record: load them only when the research lead opens the tab.
+  const testEval = useApi<Evaluation>(ready && stored && canTest && tab === "test" ? `/experiments/${runId}/evaluation?split=test` : null);
   const [testErr, setTestErr] = useState<unknown>(null);
+  const [rel, setRel] = useState({ reason: "", justification: "" });
   const [busy, setBusy] = useState<string | null>(null);
   const [al, setAl] = useState<{ k: string; rf: string }>({ k: "8", rf: "0.25" });
-  const [alOut, setAlOut] = useState<{ items: { slide_id: string; reason: string; score: number | null }[]; pool: string; notice: string } | null>(null);
+  const [alBatch, setAlBatch] = useState<string | null>(null);
+  const batch = useApi<ActiveLearningBatch>(alBatch ? `/active-learning/batches/${alBatch}` : null);
+  const lastRelease: TestRelease | undefined = release.data?.releases[release.data.releases.length - 1];
+  const releasePending = !!lastRelease && !lastRelease.complete && (lastRelease.job_status === "queued" || lastRelease.job_status === "running");
+  const releaseFailed = !!lastRelease && !lastRelease.complete && (lastRelease.job_status === "failed" || lastRelease.job_status === "canceled");
+  const batchActive = batch.data?.status === "queued" || batch.data?.status === "running";
+
+  useEffect(() => {
+    if (!releasePending) return;
+    const t = window.setInterval(() => void release.reload(), 1500);
+    return () => window.clearInterval(t);
+  }, [releasePending, release]);
+
+  useEffect(() => {
+    if (!batchActive) return;
+    const t = window.setInterval(() => void batch.reload(), 1500);
+    return () => window.clearInterval(t);
+  }, [batchActive, batch]);
 
   // Align the header's project with the run's project once per run. Re-aligning on every change silently undid a
   // project chosen in the top bar while this page was open; that choice now opens the chosen project's experiments.
@@ -292,18 +378,38 @@ export function RunDetail({ runId }: { runId: string }) {
   const training = r.training_summary as { epochs_run?: number; best_epoch?: number; early_stopping?: string } | null;
   const reasons = (r.synthetic_reasons as string[] | undefined) ?? [];
 
-  const openTest = async () => {
+  const releaseTest = async () => {
     setBusy("test");
     setTestErr(null);
     try {
-      setTest(await api<Evaluation>(`/experiments/${runId}/evaluation?split=test`));
-      toast.show({ tone: "info", title: "Test evaluation opened (audited)", body: "Computed once with the threshold frozen on validation." });
+      const out = await api<{ test_release: TestRelease; job_id: string }>(`/experiments/${runId}/test-release`, {
+        method: "POST",
+        body: { reason: rel.reason.trim(), justification: rel.justification.trim() || null },
+      });
+      toast.show({
+        tone: "info",
+        title: `Test release ${out.test_release.release_number} recorded (audited)`,
+        body: "The test patients are sealed. The worker scores the pinned features with the frozen threshold; nothing is re-extracted.",
+      });
+      setRel({ reason: "", justification: "" });
+      await release.reload();
     } catch (err) {
       setTestErr(err);
     } finally {
       setBusy(null);
     }
   };
+  const releaseBlocker = !canTest
+    ? "Only the research lead may release the test split (permission dataset.test_access)."
+    : !thr
+      ? "The threshold has not been frozen yet."
+      : release.data?.blockers.length
+        ? `Not yet: ${release.data.blockers.join("; ")}.`
+        : !rel.reason.trim()
+          ? "State the reason for this release; it is recorded in the audit trail."
+          : release.data?.justification_required && !rel.justification.trim()
+            ? "A further release on this manifest needs a justification."
+            : null;
 
   return (
     <div className="mx-auto max-w-[1400px] px-4 pb-16 pt-5 md:px-6 xl:px-8">
@@ -341,8 +447,9 @@ export function RunDetail({ runId }: { runId: string }) {
                 setBusy("register");
                 try {
                   await api(`/experiments/${runId}/register`, { method: "POST", body: {} });
-                  toast.show({ tone: "success", title: "Registered as a research candidate", body: "Nothing is deployed. New uploads or labels never change it." });
+                  toast.show({ tone: "success", title: "Registered as a research candidate", body: "Its immutable inference bundle is the declared test-release candidate. Nothing is deployed." });
                   await run.reload();
+                  await release.reload();
                 } catch (err) {
                   toast.show({ tone: "error", title: "Not registered", body: errorText(err) });
                 } finally {
@@ -416,7 +523,7 @@ export function RunDetail({ runId }: { runId: string }) {
               </p>
               <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-small">
                 <dt className="text-graphite">Chosen on</dt>
-                <dd className="font-semibold">the validation split</dd>
+                <dd className="font-semibold">{thr.selected_on === "oof" ? "out-of-fold development predictions" : "the validation split"}</dd>
                 <dt className="text-graphite">Rule</dt>
                 <dd>{humanize(thr.rule)}</dd>
                 <dt className="text-graphite">Frozen</dt>
@@ -430,8 +537,8 @@ export function RunDetail({ runId }: { runId: string }) {
                   </>
                 ) : null}
               </dl>
-              {thr.selection_status === "fallback" ? (
-                <Notice tone="warning" className="mt-3" title="Fallback threshold">
+              {thr.selection_status === "fallback" || thr.selection_status === "insufficient_evidence" ? (
+                <Notice tone="warning" className="mt-3" title="Fallback threshold (unvalidated)">
                   {thr.reason}
                 </Notice>
               ) : null}
@@ -443,7 +550,10 @@ export function RunDetail({ runId }: { runId: string }) {
             <p className="flex items-center gap-1.5 font-bold text-hema">
               <Lock size={14} aria-hidden /> Test split
             </p>
-            <p className="mt-1 text-ink">Locked until the threshold is frozen on validation; then readable by the research lead only, and every access is audited.</p>
+            <p className="mt-1 text-ink">
+              Locked until the research lead records a test release with a reason and a declared candidate (the registered bundle or a locked comparison family). Results are scored once from the pinned
+              features; every release is numbered per manifest and audited.
+            </p>
           </div>
         </section>
       </div>
@@ -459,8 +569,8 @@ export function RunDetail({ runId }: { runId: string }) {
             onChange={setTab}
             className="mt-2"
             tabs={[
-              { id: "val", label: "Validation" },
-              { id: "test", label: "Test (locked)" },
+              { id: "val", label: devSplit === "oof" ? "Out-of-fold" : "Validation" },
+              { id: "test", label: lastRelease ? `Test (release ${lastRelease.release_number})` : "Test (locked)" },
               { id: "errors", label: `Errors (${errs.data?.counts.errors ?? "…"})` },
               { id: "al", label: "Active learning" },
             ]}
@@ -470,38 +580,66 @@ export function RunDetail({ runId }: { runId: string }) {
             {val.data ? <EvaluationBody ev={val.data} /> : val.loading ? <Loading /> : null}
           </TabPanel>
           <TabPanel idBase="ev" id="test" active={tab} className="pt-4">
-            {test ? (
+            <ErrorBox error={release.error} what="load the test-release status" />
+            {testEval.data ? (
               <>
-                <Notice tone="info" className="mb-4" title="Test evaluation (audited access)">
-                  Computed once with the checkpoint and the threshold frozen on validation. Looking at it again does not change it; tuning on it would invalidate it.
+                <Notice tone="info" className="mb-4" title={`Test release ${testEval.data.release_number ?? ""} (audited)`}>
+                  Scored once from the pinned feature-set artifacts with the checkpoint and the threshold frozen on development data. Reading it again changes nothing; tuning on it would invalidate it.
                 </Notice>
-                <EvaluationBody ev={test} />
+                <EvaluationBody ev={testEval.data} />
               </>
+            ) : testEval.loading ? (
+              <Loading label="Loading the stored test results" />
+            ) : stored && !canTest ? (
+              <p className="max-w-[72ch] text-small text-ink" data-testid="test-released-restricted">
+                The test split of this run was released (release {lastRelease?.release_number}). Test results are visible to the research lead only.
+              </p>
+            ) : releasePending ? (
+              <Notice tone="info" title={`Test release ${lastRelease?.release_number} recorded`}>
+                The scoring job is {lastRelease?.job_status}: it reads only the pinned features of the test slides. This page updates when the stored result is ready.
+              </Notice>
+            ) : releaseFailed ? (
+              <Notice tone="error" title={`Test release ${lastRelease?.release_number} could not be scored`}>
+                {lastRelease?.job_error} Nothing was re-extracted. A person with jobs.manage can retry the job once the cause is fixed; the release itself stays on record.
+              </Notice>
             ) : (
-              <div className="space-y-3">
-                <p className="max-w-[72ch] text-small text-ink">
-                  The test split stays untouched during development. Open it only when the run is final. The access is recorded in the audit trail with your name.
+              <div className="max-w-[760px] space-y-3">
+                <p className="text-small text-ink">
+                  The test split stays untouched during development. Release it only for a final, declared candidate. The release seals the test patients, is numbered per manifest and is recorded in the
+                  audit trail with your name and reason.
                 </p>
-                <Button
-                  variant="primary"
-                  icon={<Lock size={15} aria-hidden />}
-                  busy={busy === "test"}
-                  data-testid="open-test"
-                  unavailable={can("dataset.test_access") ? (thr ? null : "The threshold has not been frozen on validation yet.") : "Only the research lead may open the test split (permission dataset.test_access)."}
-                  onClick={openTest}
-                >
-                  Open the test evaluation (audited)
+                {release.data && release.data.prior_releases_on_manifest > 0 ? (
+                  <Notice tone="warning" title={`${release.data.prior_releases_on_manifest} earlier test release(s) on this manifest`}>
+                    This would be release {release.data.next_release_number}. Every further look weakens the independence of the test split, so it needs a justification and is shown with the results.
+                  </Notice>
+                ) : null}
+                <TextArea label="Reason for the release" required value={rel.reason} onChange={(e) => setRel({ ...rel, reason: e.target.value })} data-testid="release-reason" />
+                {release.data?.justification_required ? (
+                  <TextArea label="Justification for a further release" required value={rel.justification} onChange={(e) => setRel({ ...rel, justification: e.target.value })} data-testid="release-justification" />
+                ) : null}
+                <Button variant="primary" icon={<Lock size={15} aria-hidden />} busy={busy === "test"} data-testid="release-test" unavailable={releaseBlocker} onClick={releaseTest}>
+                  Release the test split (audited)
                 </Button>
-                {testErr ? <ErrorBox error={testErr} what="open the test evaluation" /> : null}
+                {testErr ? <ErrorBox error={testErr} what="record the test release" /> : null}
               </div>
             )}
+            {release.data?.releases.length ? (
+              <ul className="mt-4 space-y-1 text-micro text-graphite" data-testid="release-history">
+                {release.data.releases.map((x) => (
+                  <li key={x.id}>
+                    Release {x.release_number} ({x.candidate_kind}) by {userName(x.released_by, demoUsers)} {formatDateTime(x.released_at)}: {x.reason}
+                    {x.justification ? ` · justification: ${x.justification}` : ""} · job {x.job_status ?? "?"}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </TabPanel>
           <TabPanel idBase="ev" id="errors" active={tab} className="pt-4">
             <ErrorBox error={errs.error} what="load the error gallery" />
             {errs.data ? (
               <div data-testid="error-gallery">
                 <p className="text-small text-ink">
-                  Validation errors, {errs.data.order}. {errs.data.counts.false_negative} false negatives, {errs.data.counts.false_positive} false positives out of {errs.data.counts.n_items} items.
+                  {devSplit === "oof" ? "Out-of-fold" : "Validation"} errors, {errs.data.order}. {errs.data.counts.false_negative} false negatives, {errs.data.counts.false_positive} false positives out of {errs.data.counts.n_items} items.
                 </p>
                 <p className="mt-1 text-micro text-graphite">
                   A failure reason appears only when a recorded QC issue or missing calibration offers a possible contributing factor. It is never a causal explanation.
@@ -525,8 +663,9 @@ export function RunDetail({ runId }: { runId: string }) {
           <TabPanel idBase="ev" id="al" active={tab} className="pt-4">
             <div className="max-w-[900px] space-y-3">
               <p className="text-small text-ink">
-                Proposes training-pool slides for expert labelling: the most uncertain, a diverse set and a random share so the selection does not tunnel. It never
-                touches the test split and never creates a label: a pathologist labels whatever is proposed.
+                Proposes development-pool slides for expert labelling: slides without a reference label, or with an open reader disagreement, scored out-of-sample through the registered bundle. The mix is
+                the most uncertain, a diverse set (at most one slide per patient) and a random share so the selection does not tunnel. Validation, test and sealed patients are never proposed, and nothing
+                is labelled: a pathologist labels whatever is proposed.
               </p>
               <div className="flex flex-wrap items-end gap-3">
                 <TextField label="How many" type="number" min={1} max={500} value={al.k} onChange={(e) => setAl({ ...al, k: e.target.value })} />
@@ -538,7 +677,12 @@ export function RunDetail({ runId }: { runId: string }) {
                   onClick={async () => {
                     setBusy("al");
                     try {
-                      setAlOut(await api(`/projects/${r.project_id ?? projectId}/active-learning`, { method: "POST", body: { dataset_version_id: r.dataset_version_id, run_id: runId, k: Number(al.k) || 8, random_fraction: Number(al.rf) } }));
+                      const out = await api<{ batch_id: string; pool_size: number }>(`/projects/${r.project_id ?? projectId}/active-learning`, {
+                        method: "POST",
+                        body: { dataset_version_id: r.dataset_version_id, run_id: runId, k: Number(al.k) || 8, random_fraction: Number(al.rf) },
+                      });
+                      setAlBatch(out.batch_id);
+                      toast.show({ tone: "info", title: "Proposal batch queued", body: `${out.pool_size} eligible slide(s) in the pool; the worker scores them through the bundle.` });
                     } catch (err) {
                       toast.show({ tone: "error", title: "No proposal", body: errorText(err) });
                     } finally {
@@ -549,16 +693,20 @@ export function RunDetail({ runId }: { runId: string }) {
                   Propose slides
                 </Button>
               </div>
-              {alOut ? (
+              <ErrorBox error={batch.error} what="load the proposal batch" />
+              {batch.data ? (
                 <div data-testid="active-learning">
                   <p className="text-small font-semibold">
-                    Pool: {alOut.pool.replace("_", " ")}. {alOut.notice}
+                    Batch {batch.data.status}: {batch.data.items.length} proposal(s) from a pool of {batch.data.pool_size}. {batch.data.notice}
                   </p>
+                  {batch.data.result?.unscorable_reason ? <p className="mt-1 text-micro text-amber-ink">Not scored: {batch.data.result.unscorable_reason}</p> : null}
+                  {batch.data.error ? <p className="mt-1 text-micro text-rust">{batch.data.error}</p> : null}
                   <ul className="mt-2 grid gap-1.5 md:grid-cols-2">
-                    {alOut.items.map((it) => (
+                    {batch.data.items.map((it) => (
                       <li key={it.slide_id} className="rounded border border-line bg-sheet px-3 py-2 text-small">
-                        <span className="font-mono">{it.slide_id.slice(0, 12)}</span> · {it.reason}
+                        <span className="font-mono">{it.slide_id.slice(0, 12)}</span> · {it.strategy}
                         {it.score !== null ? <span className="text-graphite"> · score {it.score.toFixed(3)}</span> : null}
+                        {it.uncertainty !== null ? <span className="text-graphite"> · uncertainty {it.uncertainty.toFixed(2)}</span> : null}
                       </li>
                     ))}
                   </ul>

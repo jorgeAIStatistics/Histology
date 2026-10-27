@@ -50,12 +50,20 @@ from .dataset_audit import UNIT_NOTE, association, contingency, patient_attribut
 from .db import utcnow
 from .errors import ApiError, conflict, unprocessable
 from .hierarchy import slide_lineage
-from .labels import current_expert_opinions, open_disagreement, reference_label
+from .labels import (
+    check_reference_standard,
+    current_expert_opinions,
+    current_imported_labels,
+    label_source_permitted,
+    open_disagreement,
+    reference_label,
+)
 from .models import (
     Case,
     CodedPatient,
     DatasetItem,
     DatasetVersion,
+    LabelVersion,
     NearDuplicateReview,
     Project,
     QCIssue,
@@ -72,19 +80,26 @@ from .storage import get_store
 from .vocab import (
     DATASET_ELIGIBLE_REVIEW_STATES,
     DATASET_LABEL_SCOPES,
+    IMPORTED_REFERENCE_ONLY_REVIEW_STATES,
     ITEM_PURPOSES,
     LABEL_DISPLAY,
     LABEL_VALUES,
     PROVENANCES,
     PURPOSE_SPLITS,
+    REAL_PROVENANCES,
+    REFERENCE_STANDARD_DISPLAY,
+    REFERENCE_STANDARD_LABEL_SOURCES,
     TEST_LOCKED_PURPOSES,
 )
 
 PIPELINE_TEST_NOTICE = "PIPELINE TEST — NOT PATHOLOGY VALIDATION (synthetic, procedural images; no histology)"
+IMPORTED_REFERENCE_NOTICE = ("IMPORTED REFERENCE LABELS: taken from an external dataset's own reference standard (see "
+                             "each label's provenance), not expert reads in this workbench. Results on this dataset "
+                             "measure agreement with that reference, not clinical performance.")
 NEAR_DUPLICATE_MAX_DISTANCE = 6
 MANIFEST_SCHEMA = "dermpath.dataset_manifest/2"
 AUDIT_SCHEMA = "dermpath.dataset_audit/1"
-REAL_PROVENANCES = ("public_cc0", "real_authorized")
+# REAL_PROVENANCES (public_cc0, public_licensed, real_authorized) is defined in vocab and re-exported here.
 # Snapshot fields compared by freeze (draft_stale) and written to every manifest item.
 SNAPSHOT_FIELDS = ("slide_sha256", "label_version_id", "label_value", "label_scope", "label_source", "case_id",
                    "coded_patient_id", "patient_code", "accession_code", "part", "block_id", "block", "level_index",
@@ -109,17 +124,29 @@ class TestSetLockViolation(AssertionError):
 # --------------------------------------------------------------------------- config
 
 
+def reference_standard_of(cfg: dict | None) -> str:
+    """A dataset config's reference standard. Configs written before the key existed are expert-reference."""
+    return (cfg or {}).get("reference_standard") or "expert"
+
+
 def normalise_config(project: Project, config: dict) -> dict:
     tmpl = project.task_template_json or {}
     scope = config.get("label_scope", "slide")
     if scope not in DATASET_LABEL_SCOPES:
         raise unprocessable("invalid_label_scope", f"label_scope must be one of {list(DATASET_LABEL_SCOPES)}")
+    standard = check_reference_standard(config.get("reference_standard"))
     states = list(config.get("eligible_review_states") or ["approved"])
     bad = [s for s in states if s not in DATASET_ELIGIBLE_REVIEW_STATES]
     if bad or not states:
         raise unprocessable("invalid_review_states",
                             f"eligible_review_states must be a non-empty subset of {list(DATASET_ELIGIBLE_REVIEW_STATES)}",
                             invalid=bad)
+    unreviewed = sorted(set(states) & set(IMPORTED_REFERENCE_ONLY_REVIEW_STATES))
+    if unreviewed and standard != "imported_reference":
+        raise unprocessable("review_state_requires_imported_reference",
+                            "Slides nobody has reviewed in this workbench ('imported') can enter only a dataset whose "
+                            "reference_standard is imported_reference; expert-reference datasets need reviewed slides",
+                            invalid=unreviewed)
     values = list(config.get("label_values") or tmpl.get("classes") or ["bcc_present", "bcc_absent_not_benign"])
     if any(v not in LABEL_VALUES for v in values):
         raise unprocessable("invalid_label_values", f"label_values must be from {list(LABEL_VALUES)}")
@@ -133,6 +160,8 @@ def normalise_config(project: Project, config: dict) -> dict:
         "eligible_review_states": sorted(set(states)),
         "label_values": values,
         "include_provenance": sorted(set(prov)),
+        # Which labels count as the reference (labels.label_source_permitted); recorded in the manifest config.
+        "reference_standard": standard,
         "split": None,
     }
     if config.get("split"):
@@ -179,19 +208,27 @@ def _eligibility(db: Session, slide: Slide, cfg: dict) -> tuple[bool, list[dict]
         reasons.append(_reason("no_hierarchy", "slide is not assigned to a coded patient / case"))
     else:
         scope = cfg["label_scope"]
+        standard = reference_standard_of(cfg)
+        kind = "expert" if standard == "expert" else "imported reference"
         target = slide.id if scope == "slide" else lineage["case_id"]
-        ref, status = reference_label(db, slide.project_id, scope, target)
+        ref, status = reference_label(db, slide.project_id, scope, target, reference_standard=standard)
         if open_disagreement(db, slide.project_id, scope, target):
             reasons.append(_reason("open_disagreement", f"{scope}-level expert labels disagree"))
         elif status == "unlabeled":
-            detail = f"no expert label at {scope} scope"
+            detail = f"no {kind} label at {scope} scope"
             if scope == "slide":
-                case_ref, _ = reference_label(db, slide.project_id, "case", lineage["case_id"])
+                case_ref, _ = reference_label(db, slide.project_id, "case", lineage["case_id"],
+                                              reference_standard=standard)
                 if case_ref is not None:
                     detail += " (a case-level label exists but is never copied down to slides)"
+            if standard == "expert" and current_imported_labels(db, slide.project_id, scope, target):
+                detail += (" (an imported reference label exists; it counts only in a dataset whose "
+                           "reference_standard is imported_reference)")
             reasons.append(_reason(f"no_reference_label_{scope}", detail))
         elif status == "disputed":
-            reasons.append(_reason("label_disputed", f"{scope}-level expert labels disagree"))
+            reasons.append(_reason("label_disputed", f"{scope}-level {kind} labels disagree"))
+        if ref is not None and not label_source_permitted(ref.source, standard):  # defence in depth
+            reasons.append(_reason("label_source_not_permitted", f"{ref.source} under {standard}"))
         if ref is not None and ref.value not in cfg["label_values"]:
             reasons.append(_reason("label_value_not_in_task", ref.value))
     return (not reasons), reasons, ref, status, lineage
@@ -241,7 +278,7 @@ def _stored_items(db: Session, dv: DatasetVersion) -> list[DatasetItem]:
 
 
 def item_data_mode(provenance: str | None, image_kind: str | None) -> str:
-    """``synthetic`` (demo_synthetic procedural tiles), ``real`` (public_cc0 / real_authorized images) or
+    """``synthetic`` (demo_synthetic procedural tiles), ``real`` (public_cc0 / public_licensed / real_authorized) or
     ``inconsistent`` (any other combination, e.g. a synthetic provenance on a scanned file)."""
     if provenance == "demo_synthetic" and image_kind == "synthetic_tiles":
         return "synthetic"
@@ -257,8 +294,8 @@ def data_mode(rows: list[dict]) -> dict:
     kinds = set(counts)
     mode = None if not kinds else "synthetic" if kinds == {"synthetic"} else "real" if kinds == {"real"} else "mixed"
     return {"mode": mode, "item_counts": dict(sorted(counts.items())),
-            "rule": "synthetic = every item demo_synthetic + synthetic_tiles; real = every item public_cc0 or "
-                    "real_authorized; anything else is mixed and cannot be frozen"}
+            "rule": "synthetic = every item demo_synthetic + synthetic_tiles; real = every item public_cc0, "
+                    "public_licensed or real_authorized; anything else is mixed and cannot be frozen"}
 
 
 def materialize(db: Session, dv: DatasetVersion) -> dict:
@@ -658,6 +695,59 @@ def _decisions_in_force(db: Session, dv: DatasetVersion, slide_ids: set[str]) ->
     return out
 
 
+def label_provenance(db: Session, dv: DatasetVersion, rows: list[dict] | None = None) -> dict:
+    """How the dataset's reference labels were produced: the declared reference standard, the label sources and
+    reference statuses of the items, and (imported reference) the distinct provenance texts plus the items where a
+    workbench expert currently reads the target differently. Descriptive; nothing is resolved automatically."""
+    rows = item_rows(db, dv) if rows is None else rows
+    standard = reference_standard_of(dv.config_json)
+    lv_ids = sorted({r["label_version_id"] for r in rows if r.get("label_version_id")})
+    labels: dict[str, LabelVersion] = {}
+    for i in range(0, len(lv_ids), 500):
+        for lv in db.scalars(select(LabelVersion).where(LabelVersion.id.in_(lv_ids[i:i + 500]))).all():
+            labels[lv.id] = lv
+    sources = Counter(labels[r["label_version_id"]].source if r.get("label_version_id") in labels else "missing"
+                      for r in rows)
+    not_permitted = sorted(r["slide_id"] for r in rows
+                           if not label_source_permitted(getattr(labels.get(r.get("label_version_id")), "source",
+                                                                 None), standard))
+    out = {
+        "reference_standard": standard,
+        "display": REFERENCE_STANDARD_DISPLAY[standard],
+        "accepted_label_sources": list(REFERENCE_STANDARD_LABEL_SOURCES[standard]),
+        "label_sources": dict(sorted(sources.items())),
+        "reference_statuses": dict(sorted(Counter(r.get("label_source") or "unknown" for r in rows).items())),
+        "items_with_label_source_not_permitted": not_permitted,
+        "notice": IMPORTED_REFERENCE_NOTICE if standard == "imported_reference" else None,
+    }
+    if standard == "imported_reference":
+        texts = Counter((labels[r["label_version_id"]].reason or "") for r in rows if r["label_version_id"] in labels)
+        out["provenance_texts"] = [{"provenance": t, "items": n} for t, n in sorted(texts.items())][:_DIFF_CAP]
+        differing = []
+        for r in rows:
+            target = r["slide_id"] if r["label_scope"] == "slide" else r["case_id"]
+            experts = sorted({o.value for o in current_expert_opinions(db, dv.project_id, r["label_scope"],
+                                                                       target).values()})
+            if experts and experts != [r["label_value"]]:
+                differing.append({"slide_id": r["slide_id"], "imported_value": r["label_value"],
+                                  "expert_values": experts})
+        out["expert_reads_differing_from_imported"] = {"count": len(differing), "items": differing[:_DIFF_CAP],
+                                                       "note": "Candidates for human review (possible label noise); "
+                                                               "the imported reference is not changed."}
+    return out
+
+
+def public_dataset_record(db: Session, project_id: str, rows: list[dict]) -> dict | None:
+    """The licence and source record of a public licensed dataset (``Project.settings_json.public_dataset``, written
+    by the importer) when any item has ``public_licensed`` provenance, so the licence terms travel with the frozen
+    manifest."""
+    if not any(r.get("provenance") == "public_licensed" for r in rows):
+        return None
+    project = db.get(Project, project_id)
+    record = (project.settings_json or {}).get("public_dataset") if project is not None else None
+    return record or {"missing": True, "note": "public_licensed items but no licence record on the project"}
+
+
 def build_manifest(db: Session, dv: DatasetVersion, frozen_at, frozen_by: str, *,
                    family: SplitFamily | None = None) -> dict:
     rows = [{**r, **qc_snapshot(db, r["slide_id"])} for r in item_rows(db, dv)]
@@ -705,6 +795,9 @@ def build_manifest(db: Session, dv: DatasetVersion, frozen_at, frozen_by: str, *
         "label_display": {v: LABEL_DISPLAY[v] for v in cfg["label_values"]},
         "positive_class": positive_class(cfg),
         "patient_label_rule": _label_rule(cfg),
+        "reference_standard": reference_standard_of(cfg),
+        "label_provenance": label_provenance(db, dv, rows),
+        "public_dataset": public_dataset_record(db, dv.project_id, rows),
         "items": rows,
         "splits": splits,
         "split_family_id": family.id if family else None,
@@ -1015,10 +1108,11 @@ def refresh(db: Session, actor: Actor, dv: DatasetVersion) -> dict:
 def staleness(db: Session, dv: DatasetVersion) -> dict:
     """Differences between this version's labels and the current reference labels."""
     rows = item_rows(db, dv)
+    standard = reference_standard_of(dv.config_json)
     changed = []
     for r in rows:
         target = r["slide_id"] if r["label_scope"] == "slide" else r["case_id"]
-        ref, status = reference_label(db, dv.project_id, r["label_scope"], target)
+        ref, status = reference_label(db, dv.project_id, r["label_scope"], target, reference_standard=standard)
         if ref is None or ref.id != r["label_version_id"]:
             changed.append({"slide_id": r["slide_id"], "label_scope": r["label_scope"],
                             "dataset_label_version_id": r["label_version_id"], "dataset_value": r["label_value"],
@@ -1027,6 +1121,7 @@ def staleness(db: Session, dv: DatasetVersion) -> dict:
     return {
         "dataset_version_id": dv.id,
         "status": dv.status,
+        "reference_standard": standard,
         "changed_labels": changed,
         "stale": bool(changed),
         "action": ("Frozen versions never change. Create a new version (POST /datasets/{id}/new-version) "
@@ -1160,6 +1255,7 @@ def summary(db: Session, dv: DatasetVersion) -> dict:
         "version": dv.version,
         "status": dv.status,
         "label_scope": scope,
+        "reference_standard": reference_standard_of(cfg),
         "counts": {
             "patients": len({r["coded_patient_id"] for r in rows}),
             "cases": len({r["case_id"] for r in rows}),
@@ -1358,13 +1454,18 @@ def audit(db: Session, dv: DatasetVersion) -> dict:
 CSV_FIELDS = ["slide_id", "slide_sha256", "label_version_id", "label_value", "label_scope", "split", "partition",
               "coded_patient_id", "patient_code", "case_id", "accession_code", "part", "block_id", "block",
               "level_index", "stain", "scanner_id", "site_id", "collected_on", "image_kind", "provenance",
-              "mpp_x", "mpp_y"]
+              "mpp_x", "mpp_y", "label_source"]
 
 
 def export_csv(dv: DatasetVersion) -> str:
     buf = io.StringIO()
     buf.write(f"# dermpath dataset manifest {dv.id} v{dv.version}; manifest_sha256={dv.manifest_sha256}\n")
     buf.write("# Research use only. Coded identifiers only. Label 'bcc_absent_not_benign' is NOT 'benign'.\n")
+    standard = (dv.manifest_json or {}).get("config", {}).get("reference_standard") or "expert"
+    buf.write(f"# reference_standard={standard}: {REFERENCE_STANDARD_DISPLAY.get(standard, standard)}\n")
+    licence = ((dv.manifest_json or {}).get("public_dataset") or {}).get("licence")
+    if licence:
+        buf.write(f"# Contains public licensed data under {licence}; the licence terms apply to this export.\n")
     w = csv.DictWriter(buf, fieldnames=CSV_FIELDS, extrasaction="ignore", lineterminator="\n")
     w.writeheader()
     for r in dv.manifest_json["items"]:

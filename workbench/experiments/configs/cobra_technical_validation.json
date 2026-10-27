@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "Technical validation of the pixel path on the COBRA BCC subset (real_image_technical: NO label is read).",
+    "Prerequisites: (1) the COBRA subset is imported with `python -m dermpath.importers.cobra ... --project",
+    "proj-cobra-bcc-subset` and its ingest and QC jobs have finished; (2) a dataset version of that project is",
+    "frozen (the most recently frozen version is used; replace \"dataset\" with {\"name\": ..., \"version\": ...} or",
+    "\"dataset_version_id\" to pin another); (3) midnight-12k needs its weights directory in WB_MIDNIGHT_WEIGHTS",
+    "(obtained separately under the model's licence; nothing is downloaded). Without them the command stops with",
+    "encoder_unavailable. COBRA is CC BY-NC-SA 4.0: non-commercial research only.",
+    "Builds one feature set per encoder with the SAME patch and sampling policy (patch_size follows each encoder's",
+    "input size), reports coverage diagnostics and re-extracts a seeded subset to check determinism.",
+    "Run: cd workbench/api && .venv/bin/python -m dermpath.ml.cli benchmark ../experiments/configs/cobra_technical_validation.json"
+  ],
+  "name": "COBRA subset technical validation",
+  "description": "Extraction, coverage, determinism, throughput and memory of handcrafted-stain-texture-v1 and midnight-12k on real COBRA slides. No labels, no heads, no metrics.",
+  "project_id": "proj-cobra-bcc-subset",
+  "dataset": "latest_frozen",
+  "execution_mode": "real_image_technical",
+  "encoders": ["handcrafted-stain-texture-v1", "midnight-12k"],
+  "heads": [],
+  "params": {
+    "target_mpp": 0.5,
+    "min_tissue_fraction": 0.25,
+    "sampling_strategy": "spatial",
+    "max_patches_per_slide": 256,
+    "sampling_seed": 0,
+    "stain_normalization": "none",
+    "precision": "fp32"
+  },
+  "technical_validation": {"seed": 0, "n_slides": 2},
+  "report_path": "experiments/reports/cobra-technical-validation.json"
+}

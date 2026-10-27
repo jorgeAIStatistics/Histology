@@ -10,12 +10,20 @@ ROLES = (
     "admin",
 )
 
-PROVENANCES = ("demo_synthetic", "public_cc0", "real_authorized")
+PROVENANCES = ("demo_synthetic", "public_cc0", "public_licensed", "real_authorized")
 PROVENANCE_DISPLAY = {
     "demo_synthetic": "DEMO SYNTHETIC (procedural tiles, not histology)",
     "public_cc0": "PUBLIC CC0 (OpenSlide test data, unlabeled)",
+    # A published research dataset under a licence other than CC0 (for example CC BY-NC-SA 4.0). The licence,
+    # attribution and source are recorded with the project (settings_json.public_dataset) and on every case note.
+    "public_licensed": ("PUBLIC LICENSED DATASET (third-party research data; licence terms recorded with the project, "
+                        "e.g. non-commercial)"),
     "real_authorized": "REAL DATA (authorized; attestation recorded, not proof of de-identification)",
 }
+#: Provenances whose items are real images (dataset ``data_mode == "real"``).
+REAL_PROVENANCES = ("public_cc0", "public_licensed", "real_authorized")
+#: Public provenances: no local authorisation is needed, but the source's licence terms apply.
+PUBLIC_PROVENANCES = ("public_cc0", "public_licensed")
 
 IMAGE_KINDS = ("wsi", "field_image", "synthetic_tiles")
 INGEST_STATUSES = ("pending", "running", "succeeded", "failed")
@@ -50,7 +58,31 @@ REVIEW_REASON_REQUIRED = {
 }
 
 LABEL_SCOPES = ("case", "slide", "region")
-LABEL_SOURCES = ("expert", "model_suggestion")
+# ``imported_reference``: a label taken from an external dataset's own reference standard (for example the COBRA
+# labels, extracted from pathology reports by a rule-based method). It is never an expert read in this workbench,
+# never an expert opinion in disagreement detection, and it becomes a dataset's reference label only when the
+# dataset declares ``reference_standard == "imported_reference"``. Its free-text provenance is the label's reason.
+LABEL_SOURCES = ("expert", "model_suggestion", "imported_reference")
+LABEL_SOURCE_DISPLAY = {
+    "expert": "Expert label recorded by a pathologist in this workbench",
+    "model_suggestion": "Model suggestion (not expert truth)",
+    "imported_reference": ("Imported reference label from an external dataset's reference standard "
+                           "(not an expert read in this workbench)"),
+}
+# The reference standard a dataset version declares (config ``reference_standard``, recorded in the manifest).
+# ``expert`` is the default everywhere.
+REFERENCE_STANDARDS = ("expert", "imported_reference")
+DEFAULT_REFERENCE_STANDARD = "expert"
+REFERENCE_STANDARD_DISPLAY = {
+    "expert": ("Expert reference: adjudicated, agreed or single-reader expert labels recorded in this workbench"),
+    "imported_reference": ("Imported reference: labels from an external dataset's own reference standard (see each "
+                           "label's provenance); not expert reads in this workbench"),
+}
+#: Reference standard -> the label sources accepted as reference (and training) labels under it.
+REFERENCE_STANDARD_LABEL_SOURCES = {
+    "expert": ("expert",),
+    "imported_reference": ("imported_reference",),
+}
 LABEL_VALUES = (
     "bcc_present",
     "bcc_absent_not_benign",
@@ -125,7 +157,10 @@ DATASET_STATUSES = ("draft", "frozen")
 SPLITS = ("train", "val", "test")
 PARTITIONS = ("random", "temporal", "external_site")
 DATASET_LABEL_SCOPES = ("slide", "case")
-DATASET_ELIGIBLE_REVIEW_STATES = ("approved", "pending_review")
+DATASET_ELIGIBLE_REVIEW_STATES = ("approved", "pending_review", "imported")
+# ``imported`` means nobody has reviewed the slide in this workbench. Only a dataset whose reference standard is
+# ``imported_reference`` may list it (explicitly); expert-reference datasets refuse it.
+IMPORTED_REFERENCE_ONLY_REVIEW_STATES = ("imported",)
 # Purposes for training_eligible_items(). The test split is reachable ONLY through
 # "test_evaluation"; "train", "active_learning" and "threshold_selection" never see it.
 ITEM_PURPOSES = ("train", "active_learning", "threshold_selection", "validation", "test_evaluation")
