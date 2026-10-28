@@ -278,6 +278,9 @@ Extraction:
 - *Rescued fragments.* When the tissue-centred rescue patch touches an exclusion, aligned placements that still contain the anchor pixel are tried. `uniform`, `spatial` and `lesion_aware` sampling keep `fragment_rescue` candidates ahead of the strategy (up to the budget), and coverage reports `fragments_without_sampled_patch` and the sampled origins.
 - *Embedding sink.* The trimmed `.npy` copy is bounded by the kept rows, so read-time rejections (pen, background) never break a build.
 
+**Implemented differently (COBRA experiment driver dry run, 2026-10-27, recorded with the reason):**
+- *Stain reference seeding is content-keyed.* The `macenko-v1` reference chooses its train slides (above `STAIN_REFERENCE_MAX_SLIDES`) and their reference patches with seeds keyed by the slide's sha256, never its database id; the fit plan records it as `reference_fit.selection_key: "slide_sha256"`. Reason: three imports of the same six COBRA slides (identical bytes, identical content-stable split) fitted three different references, so macenko feature sets and every run on them depended on the import. Plans created before the rule (no `selection_key`) keep their declared id-keyed selection when built; ready sets keep their pinned reference. Regression test: `tests/test_stain_reference_content_stable.py`.
+
 Build job `build_feature_set`:
 - resumable: slides already `done` are skipped;
 - cancellable;

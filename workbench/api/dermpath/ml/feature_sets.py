@@ -727,10 +727,21 @@ def load_encoder(encoder_id: str, *, weights_sha256: str, encoder_spec_sha256: s
 # --------------------------------------------------------------------------- creation
 
 
-def _choose_train_slides(train_ids: list[str], seed: int, limit: int) -> list[str]:
+#: What seeds the macenko-v1 reference's choice of train slides (above ``max_slides``) and of their patches: the
+#: slide's sha256, never its database id, so a cohort re-imported under new ids fits the same reference. Recorded in
+#: the fit plan; plans without it (created before this rule) keep their id-keyed selection when built.
+STAIN_REFERENCE_SELECTION_KEY = "slide_sha256"
+
+
+def _choose_train_slides(train_ids: list[str], seed: int, limit: int,
+                         sha_of: dict[str, str] | None = None) -> list[str]:
+    """Train slides for the stain reference: all of them up to ``limit``, else a seeded subset ranked by content
+    (``sha_of``: slide id -> sha256), so the choice does not depend on database ids."""
     if len(train_ids) <= limit:
         return sorted(train_ids)
-    ranked = sorted(train_ids, key=lambda s: hashlib.sha256(f"stain-reference|{seed}|{s}".encode()).hexdigest())
+    sha_of = sha_of or {}
+    ranked = sorted(train_ids, key=lambda s: (hashlib.sha256(f"stain-reference|{seed}|{sha_of.get(s) or s}".encode())
+                                              .hexdigest(), sha_of.get(s) or "", s))
     return sorted(ranked[:limit])
 
 
@@ -819,7 +830,9 @@ def create_feature_set(db: Session, actor, project: Project, *, encoder_id: str,
             raise conflict("no_train_slides", "macenko-v1 needs train-split slides to fit its reference")
         fit = {"fitted_on": "train-split slides of the dataset version only (never validation or test)",
                "dataset_version_id": dv.id,
-               "train_slide_ids": _choose_train_slides(train, sampling.seed, STAIN_REFERENCE_MAX_SLIDES),
+               "train_slide_ids": _choose_train_slides(train, sampling.seed, STAIN_REFERENCE_MAX_SLIDES,
+                                                       {s: items_by_slide[s].get("slide_sha256") for s in train}),
+               "selection_key": STAIN_REFERENCE_SELECTION_KEY,
                "n_train_slides": len(train), "patches_per_slide": STAIN_REFERENCE_PATCHES_PER_SLIDE,
                "max_slides": STAIN_REFERENCE_MAX_SLIDES, "seed": sampling.seed,
                "source_patches_per_slide": STAIN_SOURCE_PATCHES, "params": stainlib.MacenkoParams().to_json()}
@@ -1666,7 +1679,9 @@ def _fit_stain_reference(plan: _Plan, ctx: JobContext | None) -> None:
             try:
                 if not len(prep.sampled):
                     continue
-                ranks = seeded_ranks(prep.sampled.coords, int(fit.get("seed", 0)), f"stain-reference|{sid}")
+                # Content-keyed (the slide sha256) unless the plan predates the rule (then its declared id key).
+                key = snap["slide_sha256"] if fit.get("selection_key") == STAIN_REFERENCE_SELECTION_KEY else sid
+                ranks = seeded_ranks(prep.sampled.coords, int(fit.get("seed", 0)), f"stain-reference|{key}")
                 idx = np.sort(np.argsort(ranks, kind="stable")[:int(fit.get("patches_per_slide",
                                                                             STAIN_REFERENCE_PATCHES_PER_SLIDE))])
                 for _, patches, _ in iter_patch_batches(prep.osr, prep.sampled.subset(idx), prep.plan,
