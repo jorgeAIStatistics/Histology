@@ -6,8 +6,10 @@ portable column types; SQLite-specific behaviour is confined to connection PRAGM
 this module.
 
 Schema management is ``create_all`` plus an explicit ``schema_version`` table. There
-are no migrations: when the stored version differs from :data:`SCHEMA_VERSION`, startup
-fails with an instruction to reset the demo database.
+are no general migrations: when the stored version differs from :data:`SCHEMA_VERSION`, startup
+fails with an instruction to reset the demo database. The one exception is an additive,
+idempotent in-place step that ``create_all`` runs through a metadata ``after_create`` hook
+(:func:`dermpath.ml.engine_models.migrate_inference_prediction`); it keeps the version.
 """
 
 from __future__ import annotations
@@ -38,6 +40,11 @@ from .config import ensure_var_dirs, get_settings
 #: stain, mpp_x, mpp_y, image_kind, provenance, label_source) and the split_family /
 #: split_family_assignment tables. Reset existing databases with
 #: ``python -m dermpath.seed --reset``.
+#: Additive changes that are migrated in place at startup keep the version (so "any column
+#: change needs a bump and a reset" is not universal): new tables (``create_all`` adds them,
+#: e.g. acquisition_exposure, 2026-10-28) and
+#: :func:`dermpath.ml.engine_models.migrate_inference_prediction` (inference_prediction
+#: input-snapshot identity, 2026-10-28; historical rows are kept and marked legacy_unverified).
 SCHEMA_VERSION = 2
 
 

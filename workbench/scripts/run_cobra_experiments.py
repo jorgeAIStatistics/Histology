@@ -5,12 +5,37 @@ Not a medical device. Outputs are research measurements, never diagnoses, never 
 The COBRA subset is CC BY-NC-SA 4.0 (non-commercial); its labels are report-derived imported reference labels.
 
 Staged, checkpointed and reproducible. Every stage writes ``<reports-dir>/<stage>.json`` (default
-``workbench/experiments/reports``) and is skipped on a re-run when its report exists, unless ``--force <stage>``
-(a forced stage's previous report is archived under ``<reports-dir>/_superseded/``). Every report records the code
-identity, the dependency versions, the driver's own sha256 and the command line. The driver only calls the engine's
-public services (dataset, feature-set, experiment, comparison, registry and test-release services) as the research
-lead ``user-research-lead``, with the same permission checks as the HTTP routers, and runs the engine's jobs with an
+``workbench/experiments/reports``). Every report records the code identity, the dependency versions, the driver's
+own sha256, the command line and the stage's INPUT FINGERPRINT. The driver only calls the engine's public services
+(dataset, feature-set, experiment, comparison, registry and test-release services) as the research lead
+``user-research-lead``, with the same permission checks as the HTTP routers, and runs the engine's jobs with an
 in-process worker. It never modifies ``dermpath/`` code or rows directly.
+
+Resumption (a report file's existence is never enough)
+-----------------------------------------------------
+Each stage has a canonical input fingerprint: sha256 of the canonical JSON of its relevant configuration and budgets,
+the implementation identity (driver sha256, engine ``code_tree_sha256``, ``EXTRACTOR_VERSION``, dependency
+versions), the database, the dataset / reference / split identity, encoder spec and weights identity,
+preprocessing policy, feature-set identities, seeds, and the report sha256 + fingerprint of every upstream stage in
+the explicit dependency graph (``DEPENDS``; ``OPTIONAL_DEPENDS`` when present). A stage is reused only when it is
+``valid``: its recorded fingerprint equals the one computed for this request, its bytes still match the sha256
+recorded when it was written (``_state/<stage>.integrity.json``), every upstream stage is valid, and its artifacts
+are intact in the database (dataset frozen with the same manifest, feature sets ready with the same spec, runs
+succeeded with the same identity and checkpoint, test release present). Otherwise its status is ``missing``,
+``failed`` (the last attempt raised; ``_state/<stage>.error.json``), ``stale`` (inputs changed: every changed
+component is listed) or ``invalid`` (report edited, unreadable or artifacts missing). Re-running or forcing a stage
+changes its report sha, so every dependent becomes stale. A re-run moves the previous report (and resumable state)
+to ``<reports-dir>/_superseded/`` with the reason in ``_superseded/INDEX.jsonl``; nothing is deleted.
+``--status`` prints the status of every stage for this command line (``--json`` for machine output).
+
+Test releases are never automatic (s6)
+--------------------------------------
+s6 runs only with ``--release-test <run id>`` naming the PRE-DECLARED candidate of the current, valid s3 report and
+``--release-reason``. The fingerprint of s6 contains no implementation identity: development code or configuration
+changes never cause a test look. When s3 changes after a release, the release stays recorded (immutable copy in
+``test_release_history/``) and s6 is reported ``obsolete`` (its candidate comparison no longer matches the
+development stage); a release for a new candidate needs ``--justification``, because the test patients were
+already looked at.
 
 Stages
 ------
@@ -22,27 +47,36 @@ s1  dataset: create and freeze ONE dataset version of ``proj-cobra-bcc-subset`` 
 s2  technical validation (real_image_technical, no labels): one feature set per encoder with an identical policy,
     built for every slide; determinism job; coverage; timings; storage; cache reuse.
 s3  supervised baselines (dev_cv, patient-grouped stratified folds; the test split is untouched): {handcrafted,
-    midnight-12k} x {meanpool_logreg, abmil}, learning curves for meanpool_logreg, paired OOF comparisons, and the
-    PRE-DECLARED test candidate (rule and choice written into s3.json before any test access).
+    midnight-12k} x {meanpool_logreg, abmil} for every PRE-DECLARED training seed (default 0, 1, 2; folds are fixed
+    across heads and seeds and checked), learning curves for meanpool_logreg (first seed), paired OOF comparisons on
+    paired evaluable bags (unscorable bags counted separately), and the PRE-DECLARED test candidate (rule and choice
+    written into s3.json before any test access).
 s4  ablations (paired OOF comparisons, meanpool_logreg): sampling uniform vs spatial, stain macenko-v1 vs none,
-    midnight fp16 / bf16 vs fp32 (devices.compare_precision; downstream fp16 only if accepted).
+    midnight fp16 / bf16 vs fp32 (devices.compare_precision; downstream fp16 only if accepted). A macenko arm that
+    the engine refuses as fold-unsafe preprocessing is recorded ``blocked``; a macenko dev_cv result without
+    declared fold-specific fitting is ``invalid_for_cv_comparison`` (its shared reference saw held-out folds).
+s4b sampling budget on DEVELOPMENT data only: the current budget vs one pre-declared higher budget (default 512):
+    tissue / fragment coverage, runtime, memory and paired out-of-fold prediction changes (meanpool_logreg).
 s5  resources: throughput, memory, seconds and storage per slide, cache speedup; cost only as a formula of compute
     seconds x a user-supplied hourly rate (``--hourly-rate``); prices are never invented.
-s6  ONE pre-declared test release of the s3 candidate (registered bundle). A second run needs ``--force s6`` AND
-    ``--justification``.
-s7  failure analysis: OOF error taxonomy of every s3 run, test errors of the candidate (from s6, no new test
-    access), learning-curve slopes, dominant error categories.
-s8  summary.json linking every stage, the key numbers, every caveat and the elapsed time per stage.
+s6  opt-in test release of the pre-declared s3 candidate (registered bundle); see above.
+s7  failure analysis: OOF error taxonomy of every s3 run, test errors of the candidate (only from a valid s6 of the
+    current candidate, no new test access), learning-curve slopes, dominant error categories.
+s8  summary.json linking every stage, the key numbers, every caveat and the elapsed time per stage. It refuses to
+    assemble a summary when a present stage is stale, invalid or failed (an obsolete s6 is reported as history).
 
 Usage (from ``workbench/api``)::
 
     .venv/bin/python ../scripts/run_cobra_experiments.py --device mps
+    .venv/bin/python ../scripts/run_cobra_experiments.py --status
     .venv/bin/python ../scripts/run_cobra_experiments.py --only s3,s4 --force s4
+    .venv/bin/python ../scripts/run_cobra_experiments.py --only s6 --release-test <candidate run id> \\
+        --release-reason "<why now>"
     .venv/bin/python ../scripts/run_cobra_experiments.py --var-dir /tmp/dryrun/var --dry-run-subset 6 \\
         --skip-precision-downstream
-    .venv/bin/python ../scripts/run_cobra_experiments.py --status
 
-Exit codes: 0 every requested stage succeeded (or was skipped), 1 a stage failed (its traceback is written to
+Exit codes: 0 every requested stage succeeded or was reused, 1 a stage failed, was blocked by an upstream stage
+that is not valid, or an explicit test-release request was refused (tracebacks in
 ``<reports-dir>/_state/<stage>.error.json``), 2 invalid usage.
 """
 
@@ -63,6 +97,11 @@ import time
 import traceback
 from pathlib import Path
 
+try:
+    import resource as _resource
+except ImportError:  # pragma: no cover - not on Windows
+    _resource = None
+
 SCRIPT = Path(__file__).resolve()
 WORKBENCH = SCRIPT.parents[1]
 API_DIR = WORKBENCH / "api"
@@ -72,6 +111,7 @@ BASELINE_CONFIG = WORKBENCH / "experiments" / "configs" / "cobra_supervised_base
 DEFAULT_MIDNIGHT_WEIGHTS = DEFAULT_VAR_DIR / "models" / "midnight-12k"
 
 REPORT_SCHEMA = "dermpath.cobra_experiments/1"
+FINGERPRINT_SCHEMA = "dermpath.cobra_stage_fingerprint/1"
 PROJECT_ID = "proj-cobra-bcc-subset"
 LEAD_USER_ID = "user-research-lead"
 HANDCRAFTED = "handcrafted-stain-texture-v1"
@@ -86,30 +126,60 @@ SPLIT_SEED = 20261027
 SPLIT_RATIOS = {"train": 0.7, "val": 0.0, "test": 0.3}
 DATASET_NAME = "COBRA BCC benchmark (run_cobra_experiments)"
 ELIGIBLE_REVIEW_STATES = ["approved", "imported"]
-SEED = 0
+SEED = 0  # the first pre-declared seed when --seeds / the baseline config give none
 PRECISION_SEED = 20261027
+# Item 7 of the owner's brief, declared before any budget comparison was run (2026-10-28): the current budget
+# (max_patches_per_slide, default 256) against ONE higher budget, on development data only.
+SAMPLING_BUDGET_DEFAULT = 512
+SAMPLING_HEAD = "meanpool_logreg"
 
-STAGES = ("s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8")
+STAGES = ("s0", "s1", "s2", "s3", "s4", "s4b", "s5", "s6", "s7", "s8")
 TITLES = {
     "s0": "environment",
     "s1": "dataset version (create and freeze once)",
     "s2": "technical validation (real_image_technical, no labels)",
-    "s3": "supervised baselines (dev_cv; test untouched) and the pre-declared test candidate",
+    "s3": "supervised baselines (dev_cv; test untouched; pre-declared seeds) and the pre-declared test candidate",
     "s4": "ablations (paired out-of-fold comparisons)",
+    "s4b": "sampling budget (development data only: current vs one pre-declared higher budget)",
     "s5": "resources",
-    "s6": "one pre-declared test release",
+    "s6": "opt-in test release of the pre-declared candidate (never automatic)",
     "s7": "failure analysis",
     "s8": "summary",
 }
-REQUIRES = {"s0": (), "s1": (), "s2": ("s1",), "s3": ("s1", "s2"), "s4": ("s1", "s3"), "s5": ("s2",),
-            "s6": ("s1", "s3"), "s7": ("s1", "s3"), "s8": ()}
+# Explicit dependency graph. A stage's fingerprint contains the report sha256 and fingerprint of every hard
+# dependency (which must be valid before it runs) and of every optional dependency that exists (which must then be
+# valid too; an obsolete or failed s6 is history and never blocks development stages).
+DEPENDS = {"s0": (), "s1": (), "s2": ("s1",), "s3": ("s1", "s2"), "s4": ("s1", "s2", "s3"), "s4b": ("s1", "s3"),
+           "s5": ("s2",), "s6": ("s1", "s3"), "s7": ("s1", "s3"), "s8": ()}
+OPTIONAL_DEPENDS = {"s5": ("s3", "s4", "s4b"), "s7": ("s6",),
+                    "s8": ("s0", "s1", "s2", "s3", "s4", "s4b", "s5", "s6", "s7")}
+REQUIRES = DEPENDS  # backwards-compatible name
+STATEFUL_STAGES = ("s3", "s4", "s4b")  # resumable state (family and run ids) tied to the stage fingerprint
+STATUSES = ("valid", "missing", "failed", "stale", "invalid", "obsolete")
+STATUS_MEANING = {
+    "valid": "fingerprint, report sha256, upstream stages and artifacts verified: reused",
+    "missing": "no report",
+    "failed": "the last attempt raised (see _state/<stage>.error.json); a previous report, if any, is not reused",
+    "stale": "inputs changed since the report was written (changed components listed) or an upstream stage is not "
+             "valid",
+    "invalid": "the report is unreadable or was edited after it was written, has no integrity record, or its "
+               "artifacts are missing or changed in the database",
+    "obsolete": "s6 only: a historical test release whose candidate no longer matches the current development "
+                "stage; immutable, never re-run automatically",
+}
+# Refusal codes of the engine for dev_cv with preprocessing fitted once on the development pool (item 3).
+FOLD_UNSAFE_CODES = ("fold_unsafe_preprocessing",)
 
 NOTICE = ("Research use only. Not a medical device; outputs are not diagnoses, never become labels and are never "
           "routed to care. COBRA labels are report-derived imported reference labels (not expert reads in this "
           "workbench): metrics measure agreement with that reference, not clinical performance.")
-CANDIDATE_RULE = ("the encoder x head combination with the highest out-of-fold AUROC point estimate in S3; ties "
-                  "resolved toward meanpool_logreg, then handcrafted")
+CANDIDATE_RULE = ("the encoder x head combination with the highest mean out-of-fold AUROC point estimate over the "
+                  "pre-declared S3 training seeds; ties resolved toward meanpool_logreg, then handcrafted; the "
+                  "candidate model is that combination's run with the first pre-declared seed")
 RELEASE_REASON = "pre-declared final candidate of the COBRA baseline benchmark (rule recorded in s3 report)"
+SEED_NOTE = ("Training-seed repeats measure optimisation variability on the same patients and the same folds; they "
+             "are not additional independent patients. Intervals come from the patient-clustered bootstrap within "
+             "each seed.")
 CAVEATS = [
     "Labels are imported reference labels extracted from free-text pathology reports by COBRA's rule-based method, "
     "not expert reads in this workbench; a report-level diagnosis may have been copied to a slide that does not "
@@ -127,8 +197,13 @@ CAVEATS = [
     "Threshold (Youden), Platt calibration and abstention were selected on out-of-fold predictions; threshold-"
     "dependent OOF metrics are optimistic (tuning set). Calibration fitted on pooled OOF scores is applied to the "
     "refitted final model (an approximation).",
-    "No winner is declared from development comparisons; the single test release evaluates a candidate chosen by a "
-    "rule written before any test access.",
+    "No winner is declared from development comparisons; a test release (only on explicit request) evaluates a "
+    "candidate chosen by a rule written before any test access.",
+    SEED_NOTE,
+    "macenko-v1 with a reference fitted once on the development pool is not fold-safe under dev_cv (held-out folds "
+    "influence the normalisation): such an arm is reported blocked or invalid for CV comparison, never as evidence.",
+    "Sampling coverage is tissue coverage of the sampled patches, not lesion coverage: no lesion annotations are "
+    "used, and attention maps are not lesion localisation.",
 ]
 
 
@@ -233,6 +308,317 @@ def parse_fractions(text: str) -> list[float]:
     return fr
 
 
+def parse_seeds(text: str) -> list[int]:
+    """Comma list of distinct non-negative integers, in the declared order (the first is the primary seed)."""
+    out: list[int] = []
+    for part in str(text).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            v = int(part)
+        except ValueError:
+            raise SystemExit(f"error: --seeds must be integers, got {part!r}") from None
+        if v < 0:
+            raise SystemExit("error: --seeds must be non-negative")
+        if v not in out:
+            out.append(v)
+    if not out:
+        raise SystemExit("error: --seeds needs at least one seed")
+    return out
+
+
+def peak_rss_bytes() -> int | None:
+    """Peak resident set size of this process (getrusage: bytes on macOS, KiB on Linux)."""
+    if _resource is None:
+        return None
+    v = int(_resource.getrusage(_resource.RUSAGE_SELF).ru_maxrss)
+    return v if sys.platform == "darwin" else v * 1024
+
+
+# =================================================================================================== fingerprints
+
+
+def canonical_json(obj) -> bytes:
+    return json.dumps(jsonable(obj), sort_keys=True, separators=(",", ":"), ensure_ascii=True, default=str).encode()
+
+
+def sha256_json(obj) -> str:
+    return hashlib.sha256(canonical_json(obj)).hexdigest()
+
+
+def fingerprint(components: dict) -> dict:
+    """``{schema, sha256, components}``: sha256 of the canonical JSON of the stage's input components."""
+    comps = json.loads(canonical_json(components))
+    return {"schema": FINGERPRINT_SCHEMA, "sha256": sha256_json(comps), "components": comps}
+
+
+def _flatten(obj, prefix: str = "") -> dict:
+    if isinstance(obj, dict) and obj:
+        out = {}
+        for k, v in obj.items():
+            out.update(_flatten(v, f"{prefix}.{k}" if prefix else str(k)))
+        return out
+    return {prefix: obj}
+
+
+def _short(v) -> str:
+    if isinstance(v, str) and len(v) == 64 and all(c in "0123456789abcdef" for c in v):
+        return v[:12] + "…"
+    s = json.dumps(v, sort_keys=True, default=str) if not isinstance(v, str) else v
+    return s if len(s) <= 80 else s[:77] + "..."
+
+
+_ABSENT = object()
+
+
+def diff_components(old: dict | None, new: dict | None, limit: int = 25) -> list[str]:
+    """Human-readable list of the components that differ between a recorded and a requested fingerprint."""
+    a, b = _flatten(old or {}), _flatten(new or {})
+    msgs: list[str] = []
+    for key in sorted(set(a) | set(b)):
+        va, vb = a.get(key, _ABSENT), b.get(key, _ABSENT)
+        if va == vb:
+            continue
+        parts = key.split(".")
+        if parts[0] in ("upstream", "optional_upstream") and len(parts) >= 2:
+            what = f"upstream {parts[1]}" + (" (optional)" if parts[0] == "optional_upstream" else "")
+            if va is _ABSENT or va is None:
+                msgs.append(f"{what} appeared since this report was written")
+            elif vb is _ABSENT or vb is None:
+                msgs.append(f"{what} is absent or not valid now (it was present when this report was written)")
+            else:
+                msgs.append(f"{what} changed (re-run, forced or edited): {parts[-1]} {_short(va)} -> {_short(vb)}")
+            continue
+        sa = "(absent)" if va is _ABSENT else _short(va)
+        sb = "(absent)" if vb is _ABSENT else _short(vb)
+        msgs.append(f"{key}: {sa} -> {sb}")
+    msgs = list(dict.fromkeys(msgs))
+    if len(msgs) > limit:
+        msgs = msgs[:limit] + [f"... and {len(msgs) - limit} more changed component(s)"]
+    return msgs
+
+
+# =================================================================================================== item 3 / 7 helpers
+
+
+def abmil_fit_counts(training: dict) -> dict:
+    """Counts-only view of the engine's ABMIL fit (brief item 7): the inner hold-out that selected the epoch count
+    (``epoch_selection``) and the final refit on every permitted fitting bag (``final_fit``). No patient keys and no
+    per-epoch history reach the report."""
+    out = {}
+    sel, fin = training.get("epoch_selection"), training.get("final_fit")
+    if isinstance(sel, dict):
+        out["epoch_selection"] = {"status": sel.get("status"), "best_epoch": sel.get("best_epoch"),
+                                  "epochs_run": sel.get("epochs_run"),
+                                  **{part: {k: (sel.get(part) or {}).get(k)
+                                            for k in ("bags", "patients", "bags_by_class", "patients_by_class")}
+                                     if sel.get(part) else None for part in ("fit", "holdout")}}
+    if isinstance(fin, dict):
+        out["final_fit"] = {k: fin.get(k) for k in ("bags", "patients", "bags_by_class", "patients_by_class", "epochs",
+                                                    "early_stopping")}
+    return out
+
+
+def is_fold_unsafe(code, text) -> bool:
+    """Whether an engine refusal or job error says that the preprocessing is not fold-safe under dev_cv."""
+    blob = f"{code or ''} {text or ''}".lower()
+    return any(c in blob for c in FOLD_UNSAFE_CODES) or ("fold" in blob and "unsafe" in blob)
+
+
+_FOLD_SAFE_SCOPES = {"per_fold", "fold", "fold_specific", "outer_fold", "external", "external_fixed", "fixed"}
+
+
+def declares_fold_safe(*objs) -> bool:
+    """True when any of the given records explicitly declares fold-safe preprocessing: ``fold_safe: true``,
+    ``fold_specific: true``, or a ``fit_scope`` / ``reference_source`` naming per-fold fitting or an independently
+    fixed external reference. A dataset-fitted shared reference declares none of these."""
+
+    def walk(o) -> bool:
+        if isinstance(o, dict):
+            for k, v in o.items():
+                if k in ("fold_safe", "fold_specific") and v is True:
+                    return True
+                if k in ("fit_scope", "reference_source") and isinstance(v, str) and v.lower() in _FOLD_SAFE_SCOPES:
+                    return True
+                if walk(v):
+                    return True
+        elif isinstance(o, (list, tuple)):
+            return any(walk(v) for v in o)
+        return False
+
+    return any(walk(o) for o in objs)
+
+
+def cv_comparison_validity(rec: dict, *extra) -> tuple[bool, str]:
+    """``(valid, why)`` for using a dev_cv run with LEARNED preprocessing in a cross-validated comparison.
+
+    The engine's verdict wins (``preprocessing_fold_safety`` on the run, or ``protocol.preprocessing``):
+    ``fold_unsafe`` / ``valid_for_cv_comparison: false`` is invalid; ``fold_safe`` or ``no_learned_preprocessing``
+    (e.g. an independently fixed external reference) is valid. Without an engine verdict, only an explicit
+    fold-safe declaration (:func:`declares_fold_safe`) makes it valid; anything else is invalid by default."""
+    for v in (rec.get("preprocessing_fold_safety"), rec.get("preprocessing")):
+        if not isinstance(v, dict):
+            continue
+        status = v.get("status")
+        if status == "fold_unsafe" or v.get("valid_for_cv_comparison") is False:
+            return False, "engine verdict: " + "; ".join(str(p) for p in (v.get("problems") or [status]))[:600]
+        if status in ("fold_safe", "no_learned_preprocessing") and v.get("valid_for_cv_comparison", True) is not False:
+            return True, f"engine verdict: {status}"
+    if declares_fold_safe(rec.get("preprocessing"), rec.get("params"), *extra):
+        return True, "declared fold-specific (or externally fixed) preprocessing"
+    return False, "no engine verdict and no declared fold-specific fitting: a dataset-fitted shared reference"
+
+
+def fold_consistency(records: list[dict]) -> dict:
+    """Are the outer folds identical across every run (heads, encoders, seeds)? Compared through the sha256 of
+    each run's ``fold_of_patient_code`` map (folds depend on the development pool and k only)."""
+    shas = {r.get("run_id"): r.get("fold_assignment_sha256") for r in records if r.get("status") == "succeeded"}
+    known = {s for s in shas.values() if s}
+    return {"runs": len(shas), "runs_without_fold_record": sorted(k for k, v in shas.items() if not v),
+            "distinct": len(known), "identical": len(known) == 1 and all(shas.values()),
+            "fold_assignment_sha256": next(iter(known)) if len(known) == 1 else None,
+            "rule": "folds depend on the development pool and k only, never on the head or the training seed"}
+
+
+def _auroc_of(rec: dict):
+    return ((((rec.get("oof") or {}).get("threshold_free") or {}).get("auroc")) or {}).get("value")
+
+
+def seed_summary(records: list[dict], seeds: list[int]) -> dict:
+    """Per encoder x head: the out-of-fold AUROC point estimate of every pre-declared seed and its spread."""
+    groups: dict[tuple, list] = {}
+    for r in records:
+        if r.get("role") != "grid":
+            continue
+        groups.setdefault((r.get("encoder"), r.get("head")), []).append(r)
+    per = []
+    for (e, h), rows in sorted(groups.items(), key=lambda kv: (str(kv[0][0]), str(kv[0][1]))):
+        by_seed = {r.get("seed", SEED): r for r in rows}
+        vals = [(s, _auroc_of(by_seed[s]) if s in by_seed and by_seed[s].get("status") == "succeeded" else None)
+                for s in seeds]
+        ok = [v for _, v in vals if v is not None]
+        st = stats(ok)
+        if st:
+            st["range"] = st["max"] - st["min"]
+            st["sd"] = statistics.stdev(ok) if len(ok) > 1 else None
+        per.append({"encoder": e, "head": h, "auroc_by_seed": [{"seed": s, "auroc": v} for s, v in vals],
+                    "auroc": st, "seeds_missing_or_failed": [s for s, v in vals if v is None],
+                    "n_patients": ((by_seed.get(seeds[0]) or {}).get("oof") or {}).get("n_patients")})
+    return {"seeds": list(seeds), "per_model": per, "note": SEED_NOTE}
+
+
+def comparison_seed_summary(per_seed: dict) -> list[dict]:
+    """Pairwise AUROC deltas of one comparison family across seeds: value per seed and whether the sign agrees."""
+    acc: dict[tuple, list] = {}
+    for seed, comps in per_seed.items():
+        for c in comps or []:
+            for d in c.get("deltas") or []:
+                key = (json.dumps(c.get("fixed"), sort_keys=True), d.get("a"), d.get("b"))
+                acc.setdefault(key, []).append((seed, (d.get("auroc") or {}).get("value"),
+                                                (d.get("auroc") or {}).get("ci")))
+    out = []
+    for (fixed, a, b), rows in sorted(acc.items()):
+        vals = [v for _, v, _ in rows if v is not None]
+        out.append({"fixed": json.loads(fixed), "a": a, "b": b,
+                    "auroc_delta_by_seed": [{"seed": s, "delta": v, "ci": ci} for s, v, ci in rows],
+                    "auroc_delta": stats(vals),
+                    "sign_consistent": bool(vals) and (all(v > 0 for v in vals) or all(v < 0 for v in vals)),
+                    "note": SEED_NOTE})
+    return out
+
+
+def paired_accounting(models: dict) -> dict:
+    """``models``: ``{name: {"scored": {bag_id: patient}, "unscorable": {bag_id: patient}}}``. Paired evaluable
+    subjects are the bags scored by EVERY model; unscorable bags are counted per model, never imputed."""
+    scored = {n: dict(m.get("scored") or {}) for n, m in models.items()}
+    unsc = {n: dict(m.get("unscorable") or {}) for n, m in models.items()}
+    names = list(models)
+    common = set(scored[names[0]]) if names else set()
+    for n in names[1:]:
+        common &= set(scored[n])
+    patient_of: dict[str, str] = {}
+    for d in list(scored.values()) + list(unsc.values()):
+        patient_of.update(d)
+    every = set(patient_of)
+    excluded = every - common
+    return {"paired_evaluable": {"bags": len(common), "patients": len({patient_of[b] for b in common})},
+            "unscorable": {n: {"bags": len(unsc[n]), "patients": len(set(unsc[n].values()))} for n in names},
+            "excluded_from_pairing": {"bags": len(excluded), "patients": len({patient_of[b] for b in excluded})},
+            "note": "deltas use only bags scored by every model (paired evaluable subjects); bags unscorable under "
+                    "any model are excluded from the pairing and counted here per model, never imputed"}
+
+
+DEVELOPMENT_SPLITS = ("oof", "val", "train")
+
+
+def prediction_changes(current: list[dict], higher: list[dict]) -> dict:
+    """Paired development predictions of the same bags under two sampling budgets. Each row: ``bag_id``,
+    ``patient``, ``label``, ``score``, ``threshold`` (the run's own frozen threshold), ``split``. Test rows are
+    refused: the budget comparison is development-only."""
+    for rows in (current, higher):
+        bad = [r.get("bag_id") for r in rows if r.get("split") not in DEVELOPMENT_SPLITS]
+        if bad:
+            raise ValueError(f"prediction_changes is development-only; {len(bad)} row(s) are not development rows")
+    a = {r["bag_id"]: r for r in current}
+    b = {r["bag_id"]: r for r in higher}
+    common = sorted(set(a) & set(b))
+    deltas, flips, to_ok, to_bad, patients = [], 0, 0, 0, set()
+    for k in common:
+        ra, rb = a[k], b[k]
+        da = int(float(ra["score"]) >= float(ra["threshold"]))
+        db_ = int(float(rb["score"]) >= float(rb["threshold"]))
+        deltas.append(float(rb["score"]) - float(ra["score"]))
+        if da != db_:
+            flips += 1
+            patients.add(ra.get("patient"))
+            lab = int(ra["label"])
+            if db_ == lab:
+                to_ok += 1
+            else:
+                to_bad += 1
+    absd = [abs(d) for d in deltas]
+    return {"paired_bags": len(common), "only_in_current": len(set(a) - set(b)), "only_in_higher": len(set(b) - set(a)),
+            "paired_patients": len({a[k].get("patient") for k in common}),
+            "score_delta_higher_minus_current": stats(deltas), "abs_score_delta": stats(absd),
+            "decision_flips": flips, "flips_to_correct": to_ok, "flips_to_incorrect": to_bad,
+            "patients_with_a_flip": len(patients),
+            "note": "decisions at each run's own frozen development threshold; flips are relative to the imported "
+                    "reference labels of development bags only"}
+
+
+COVERAGE_KEYS = ("tissue_within_radius_of_sample_fraction", "sampled_tissue_fraction",
+                 "fragments_without_sampled_patch")
+
+
+def paired_coverage(current_rows: list[dict], higher_rows: list[dict], dev_slide_ids) -> dict:
+    """Per-slide tissue / fragment coverage of the same DEVELOPMENT slides under two budgets."""
+    dev = set(dev_slide_ids)
+    a = {r["slide_id"]: r for r in current_rows if r.get("status") == "done" and r["slide_id"] in dev}
+    b = {r["slide_id"]: r for r in higher_rows if r.get("status") == "done" and r["slide_id"] in dev}
+    common = sorted(set(a) & set(b))
+
+    def cov(r, k):
+        return (r.get("coverage") or {}).get(k)
+
+    out = {"slides": len(common), "current": {}, "higher": {}, "delta": {},
+           "patches_per_slide": {"current": stats(a[s].get("n_patches") for s in common),
+                                 "higher": stats(b[s].get("n_patches") for s in common)}}
+    for k in COVERAGE_KEYS:
+        out["current"][k] = stats(cov(a[s], k) for s in common)
+        out["higher"][k] = stats(cov(b[s], k) for s in common)
+        out["delta"][k] = stats(cov(b[s], k) - cov(a[s], k) for s in common
+                                if cov(a[s], k) is not None and cov(b[s], k) is not None)
+    fa = [(cov(a[s], "fragments_without_sampled_patch"), cov(b[s], "fragments_without_sampled_patch")) for s in common]
+    out["slides_with_fewer_unsampled_fragments"] = sum(1 for x, y in fa if x is not None and y is not None and y < x)
+    out["slides_with_more_unsampled_fragments"] = sum(1 for x, y in fa if x is not None and y is not None and y > x)
+    out["slides_with_any_unsampled_fragment"] = {
+        "current": sum(1 for x, _ in fa if x), "higher": sum(1 for _, y in fa if y)}
+    out["note"] = ("tissue coverage of sampled patches on development slides only; it is not lesion coverage (no "
+                   "lesion annotations are used)")
+    return out
+
+
 # =================================================================================================== arguments
 
 
@@ -246,7 +632,8 @@ def build_parser() -> argparse.ArgumentParser:
                                          "with --dry-run-subset: <var-dir>/cobra-experiment-reports)")
     p.add_argument("--only", action="append", metavar="STAGES", help="run only these stages (comma list, e.g. s0,s1)")
     p.add_argument("--force", action="append", metavar="STAGES",
-                   help="re-run these stages even if their report exists (comma list); s6 also needs --justification")
+                   help="re-run these stages even if they are valid (comma list); their dependents become stale. "
+                        "s6 also needs --release-test and --justification")
     p.add_argument("--device", choices=("auto", "mps", "cpu"), default="auto",
                    help="device for midnight-12k (handcrafted always runs on the CPU)")
     p.add_argument("--dry-run-subset", type=int, metavar="N",
@@ -258,6 +645,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lc-repeats", type=int, help="learning-curve repeats per fraction < 1 (default 3; dry run 1)")
     p.add_argument("--n-boot", type=int, help="bootstrap replicates (default from the baseline config: 2000; "
                                               "dry run 200)")
+    p.add_argument("--seeds", help="pre-declared training seeds for the S3 encoder x head grid, comma list "
+                                   "(default: the baseline config's seeds, 0,1,2); folds stay fixed across seeds")
+    p.add_argument("--sampling-budget", type=int, metavar="N",
+                   help=f"the ONE higher max_patches_per_slide of the s4b budget comparison (default "
+                        f"{SAMPLING_BUDGET_DEFAULT}, or twice --max-patches when that is not lower; must exceed "
+                        f"--max-patches)")
+    p.add_argument("--sampling-encoders", help="encoders of the s4b comparison (comma list; default both). An "
+                                               "omitted encoder is recorded as skipped work")
     p.add_argument("--precision-patches", type=int, default=512,
                    help="seeded development patches for the precision comparison (default 512)")
     p.add_argument("--skip-precision-downstream", action="store_true",
@@ -266,12 +661,20 @@ def build_parser() -> argparse.ArgumentParser:
                                                      "without it only the formula is reported")
     p.add_argument("--freeze-ack-reason", help="written reason that acknowledges freeze warnings (recorded in the "
                                                "manifest); without it a freeze with warnings stops")
-    p.add_argument("--justification", help="required with --force s6 (a second look at the test patients)")
+    p.add_argument("--release-test", metavar="RUN_ID",
+                   help="OPT-IN test release (s6): the run id of the pre-declared candidate of the current, valid s3 "
+                        "report. Without it s6 never runs; a different id is refused")
+    p.add_argument("--release-reason", help="written reason for the test release (recorded with the release)")
+    p.add_argument("--justification", help="required for any further look at test patients already looked at "
+                                           "(a release for a new candidate, or --force s6)")
     p.add_argument("--midnight-weights", help="midnight-12k weights directory (default: WB_MIDNIGHT_WEIGHTS or "
                                               "workbench/var/models/midnight-12k)")
     p.add_argument("--job-timeout", type=float, default=0.0,
                    help="seconds to wait for one batch of jobs (0: no limit)")
-    p.add_argument("--status", action="store_true", help="list the stage reports and exit")
+    p.add_argument("--status", action="store_true",
+                   help="print every stage's status for this command line (valid / missing / failed / stale / "
+                        "invalid / obsolete, with the reasons) and exit")
+    p.add_argument("--json", action="store_true", help="with --status: machine-readable output")
     return p
 
 
@@ -302,6 +705,32 @@ class Driver:
         self.boot_seed = int((self.baseline_cfg.get("bootstrap") or {}).get("seed", 20261026))
         self.boot_min_patients = int((self.baseline_cfg.get("bootstrap") or {}).get("min_patients", 10))
         self.dataset_name = DATASET_NAME + (" [dry run]" if self.dry else "")
+        # item 7: pre-declared seeds and the one higher sampling budget
+        cfg_seeds = [int(s) for s in (self.baseline_cfg.get("seeds") or [SEED])]
+        self.seeds = parse_seeds(args.seeds) if args.seeds else list(dict.fromkeys(cfg_seeds))
+        self.seeds_source = "--seeds" if args.seeds else f"{BASELINE_CONFIG.name} seeds"
+        if args.sampling_budget is not None:
+            if args.sampling_budget <= self.max_patches:
+                raise SystemExit(f"error: --sampling-budget {args.sampling_budget} must exceed the current budget "
+                                 f"--max-patches {self.max_patches}")
+            self.sampling_budget, self.sampling_budget_source = int(args.sampling_budget), "--sampling-budget"
+        elif SAMPLING_BUDGET_DEFAULT > self.max_patches and not self.dry:
+            self.sampling_budget, self.sampling_budget_source = SAMPLING_BUDGET_DEFAULT, "pre-declared default"
+        else:
+            self.sampling_budget = 2 * self.max_patches
+            self.sampling_budget_source = "twice the current budget (the default is not higher, or dry run)"
+        enc = [e.strip() for e in (args.sampling_encoders or "").split(",") if e.strip()] or list(ENCODERS)
+        unknown = [e for e in enc if e not in ENCODERS]
+        if unknown:
+            raise SystemExit(f"error: --sampling-encoders: unknown encoder(s) {unknown}; choose from {list(ENCODERS)}")
+        self.sampling_encoders = [e for e in ENCODERS if e in enc]
+        self.release_test = (args.release_test or "").strip() or None
+        self.skipped: list[dict] = []
+        self.actor = None
+        self.midnight_device = None
+        self._memo: dict[str, dict] = {}
+        self._enc_cache: dict[str, dict] = {}
+        self._impl: dict | None = None
 
     # ------------------------------------------------------------------ environment and imports
     def setup(self) -> None:
@@ -366,11 +795,40 @@ class Driver:
         p = self.report_path(stage)
         return json.loads(p.read_text()) if p.is_file() else None
 
+    def read_report(self, stage: str) -> tuple[dict | None, str | None]:
+        """``(report, None)``, ``(None, "missing")`` or ``(None, <why it cannot be read>)``; never raises."""
+        p = self.report_path(stage)
+        if not p.is_file():
+            return None, "missing"
+        try:
+            data = json.loads(p.read_text())
+        except (OSError, ValueError) as exc:
+            return None, f"{type(exc).__name__}: {str(exc)[:200]}"
+        if not isinstance(data, dict):
+            return None, "not a JSON object"
+        return data, None
+
+    @staticmethod
+    def read_json_safe(path: Path) -> dict | None:
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
     def require(self, stage: str) -> dict:
-        rep = self.load_report(stage)
+        """The report of a VALID upstream stage (the run loop checks validity before a stage starts)."""
+        rep, why = self.read_report(stage)
         if rep is None:
-            raise StageError(f"this stage needs the {stage} report ({self.report_path(stage)}); run {stage} first")
+            raise StageError(f"this stage needs the {stage} report ({self.report_path(stage)}): {why}; run {stage} "
+                             "first")
         return rep
+
+    def error_path(self, stage: str) -> Path:
+        return self.state_dir / f"{stage}.error.json"
+
+    def integrity_path(self, stage: str) -> Path:
+        return self.state_dir / f"{stage}.integrity.json"
 
     def header(self, stage: str) -> dict:
         from dermpath.config import get_settings
@@ -387,8 +845,13 @@ class Driver:
             "budgets": {"max_patches_per_slide": self.max_patches, "cv_folds": self.cv_folds,
                         "lc_fractions": self.lc_fractions, "lc_repeats": self.lc_repeats, "n_boot": self.n_boot,
                         "precision_patches": self.args.precision_patches,
-                        "skip_precision_downstream": self.skip_precision_downstream},
-            "midnight_device": self.midnight_device, "project_id": PROJECT_ID, "actor": self.actor.id,
+                        "skip_precision_downstream": self.skip_precision_downstream,
+                        "seeds": self.seeds, "seeds_source": self.seeds_source,
+                        "sampling_budget": {"current": self.max_patches, "higher": self.sampling_budget,
+                                            "source": self.sampling_budget_source,
+                                            "encoders": self.sampling_encoders}},
+            "midnight_device": self.midnight_device, "project_id": PROJECT_ID,
+            "actor": getattr(self.actor, "id", None),
         }
 
     def write_json(self, path: Path, data: dict) -> None:
@@ -397,21 +860,70 @@ class Driver:
         tmp.write_text(json.dumps(jsonable(data), indent=2, sort_keys=True, default=str))
         os.replace(tmp, path)
 
-    def write_report(self, stage: str, body: dict, started_at: str) -> Path:
+    def write_report(self, stage: str, body: dict, started_at: str, fp: dict | None = None) -> Path:
         rep = {**self.header(stage), **body, "started_at": started_at, "finished_at": now_iso(),
                "elapsed_seconds": round(time.perf_counter() - self.t_stage, 3)}
         rep["warnings"] = list(dict.fromkeys((body.get("warnings") or []) + self.warnings))
+        rep["skipped_work"] = list(body.get("skipped_work") or []) + list(self.skipped)
+        rep["costs"] = {**(body.get("costs") or {}), "stage_wall_seconds": rep["elapsed_seconds"],
+                        "process_peak_rss_bytes": peak_rss_bytes(),
+                        "process_peak_rss_note": "getrusage maximum resident set size of the driver process so far "
+                                                 "(monotonic over the process; includes earlier stages of this run)"}
+        if fp is not None:
+            rep["fingerprint"] = fp
         path = self.report_path(stage)
         self.write_json(path, rep)
+        digest = sha256_file(path)
+        self.write_json(self.integrity_path(stage), {
+            "stage": stage, "report": path.name, "report_sha256": digest,
+            "fingerprint_sha256": (fp or {}).get("sha256"), "written_at": now_iso(),
+            "driver_sha256": self.driver_sha256})
+        if stage == "s6":
+            self.record_test_release_history(path, rep, digest)
+        self._memo.clear()
         return path
 
-    def archive(self, stage: str) -> None:
-        p = self.report_path(stage)
-        if p.is_file():
-            dst = self.reports_dir / "_superseded" / f"{p.stem}.{_dt.datetime.now().strftime('%Y%m%dT%H%M%S')}.json"
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(p, dst)
-            self.log(f"{stage}: previous report archived to {dst}")
+    def record_test_release_history(self, path: Path, rep: dict, digest: str) -> Path:
+        """Write-once copy of every s6 report: the audit of a test look is immutable and outlives any re-run."""
+        hist = self.reports_dir / "test_release_history"
+        hist.mkdir(parents=True, exist_ok=True)
+        rid = str(rep.get("test_release_id") or "unknown").replace("/", "_")
+        dst = hist / f"s6.{rid}.{digest[:12]}.json"
+        if not dst.exists():
+            data = path.read_bytes()
+            fd = os.open(dst, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o444)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+        return dst
+
+    def supersede(self, path: Path, stage: str, reason: str, *, kind: str = "report") -> Path | None:
+        """Move a previous output to ``_superseded/`` (reports) or ``_superseded/_state/`` (resumable state) and
+        append the reason to ``_superseded/INDEX.jsonl``. Nothing is deleted."""
+        if not path.is_file():
+            return None
+        base = self.reports_dir / "_superseded"
+        sub = base if kind == "report" else base / "_state"
+        sub.mkdir(parents=True, exist_ok=True)
+        ts = _dt.datetime.now().strftime("%Y%m%dT%H%M%S%f")
+        dst = sub / f"{path.stem}.{ts}{path.suffix}"
+        digest = sha256_file(path)
+        os.replace(path, dst)
+        line = {"at": now_iso(), "stage": stage, "kind": kind, "from": path.name,
+                "to": str(dst.relative_to(self.reports_dir)), "sha256": digest, "reason": reason,
+                "driver_sha256": self.driver_sha256}
+        with open(base / "INDEX.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(jsonable(line), sort_keys=True) + "\n")
+        if kind == "report":
+            ip = self.integrity_path(stage)
+            if ip.is_file():
+                (base / "_state").mkdir(parents=True, exist_ok=True)
+                os.replace(ip, base / "_state" / f"{ip.stem}.{ts}{ip.suffix}")
+        self.log(f"{stage}: previous {kind} moved to {dst} ({reason[:200]})")
+        self._memo.clear()
+        return dst
+
+    def archive(self, stage: str, reason: str = "forced re-run (--force)") -> None:
+        self.supersede(self.report_path(stage), stage, reason)
 
     def state(self, stage: str) -> dict:
         p = self.state_dir / f"{stage}.json"
@@ -420,10 +932,407 @@ class Driver:
     def save_state(self, stage: str, data: dict) -> None:
         self.write_json(self.state_dir / f"{stage}.json", data)
 
-    def reset_state(self, stage: str) -> None:
+    def reset_state(self, stage: str, reason: str = "forced re-run (--force)") -> None:
+        self.supersede(self.state_dir / f"{stage}.json", stage, reason, kind="state")
+
+    def prepare_state(self, stage: str, fp: dict, forced: bool) -> None:
+        """Resumable state (family and run ids) belongs to ONE fingerprint: resumed when it matches, superseded
+        (with the reason) when the inputs changed, the state predates fingerprints, or the stage is forced."""
+        if stage not in STATEFUL_STAGES:
+            return
         p = self.state_dir / f"{stage}.json"
+        st = self.read_json_safe(p) if p.is_file() else None
+        if st is not None and not forced and st.get("fingerprint_sha256") == fp["sha256"]:
+            self.log(f"{stage}: resuming state recorded for fingerprint {fp['sha256'][:12]}")
+            return
         if p.is_file():
-            os.replace(p, self.state_dir / f"{stage}.superseded-{_dt.datetime.now().strftime('%Y%m%dT%H%M%S')}.json")
+            why = ("forced re-run (--force)" if forced else
+                   "legacy state without a fingerprint: its family and runs belong to unverified inputs"
+                   if st is not None and not st.get("fingerprint_sha256") else
+                   "unreadable state" if st is None else
+                   f"state recorded for other inputs (fingerprint {str(st.get('fingerprint_sha256'))[:12]}, now "
+                   f"{fp['sha256'][:12]})")
+            self.reset_state(stage, why)
+        self.save_state(stage, {"fingerprint_sha256": fp["sha256"]})
+
+    def skip_work(self, what: str, reason: str, **details) -> None:
+        self.skipped.append({"what": what, "reason": reason, **details})
+
+    # ------------------------------------------------------------------ fingerprints
+    def implementation_identity(self) -> dict:
+        """Driver sha256, engine code tree, extractor version and the numerical stack (computed once)."""
+        if self._impl is None:
+            from dermpath.ml.artifacts import code_identity, dependency_versions
+            from dermpath.ml.feature_sets import EXTRACTOR_VERSION
+
+            ci = code_identity()
+            self._impl = {"driver_sha256": self.driver_sha256, "report_schema": REPORT_SCHEMA,
+                          "fingerprint_schema": FINGERPRINT_SCHEMA,
+                          "engine_code_tree_sha256": ci.get("code_tree_sha256"),
+                          "extractor_version": EXTRACTOR_VERSION,
+                          "dependency_versions_sha256": sha256_json(dependency_versions())}
+        return dict(self._impl)
+
+    def encoder_identity(self, encoder: str) -> dict:
+        """Spec sha256 and pinned weights identity (streaming sha256, memoised by file stat) of an encoder."""
+        if encoder not in self._enc_cache:
+            from dermpath.ml.encoders import get_encoder
+
+            ad = get_encoder(encoder)
+            if ad is None:
+                ident = {"status": "unknown_encoder"}
+            else:
+                st, _detail = ad.status()
+                ident = {"status": st, "spec_sha256": ad.spec.spec_sha256() if ad.spec is not None else None}
+                if st == "available":
+                    from dermpath.ml.feature_sets import resolve_weights_identity
+
+                    try:
+                        w, c = resolve_weights_identity(ad)
+                        ident.update(weights_sha256=w, weights_config_sha256=c)
+                    except Exception as exc:  # noqa: BLE001 - an unavailable identity is part of the fingerprint
+                        ident.update(status="weights_identity_unavailable", error=type(exc).__name__)
+            self._enc_cache[encoder] = ident
+        return dict(self._enc_cache[encoder])
+
+    def dataset_identity(self) -> dict | None:
+        rep, _ = self.read_report("s1")
+        if not rep:
+            return None
+        d = rep.get("dataset") or {}
+        return {k: d.get(k) for k in ("dataset_version_id", "manifest_sha256", "split_fingerprint",
+                                      "reference_standard")}
+
+    def technical_set_identity(self) -> dict | None:
+        rep, _ = self.read_report("s2")
+        if not rep:
+            return None
+        out = {}
+        for e, v in (rep.get("encoders") or {}).items():
+            c = (v or {}).get("created") or {}
+            out[e] = {k: c.get(k) for k in ("feature_set_id", "spec_sha256", "policy_sha256")}
+        return out
+
+    def s3_identity(self) -> dict | None:
+        """Baseline runs (meanpool_logreg, first seed) and supervised sets of the s3 report."""
+        rep, _ = self.read_report("s3")
+        if not rep:
+            return None
+        base = {}
+        for r in rep.get("runs") or []:
+            if (isinstance(r, dict) and r.get("role") == "grid" and r.get("head") == "meanpool_logreg"
+                    and r.get("seed", SEED) == self.seeds[0]):
+                base[r.get("encoder")] = {"run_id": r.get("run_id"), "identity_sha256": r.get("identity_sha256")}
+        sets = {e: (v or {}).get("supervised_feature_set_id") for e, v in (rep.get("feature_sets") or {}).items()}
+        return {"baselines": base, "supervised_feature_sets": sets}
+
+    def candidate_identity(self) -> dict | None:
+        rep, _ = self.read_report("s3")
+        cand = (rep or {}).get("pre_declared_test_candidate") or {}
+        ch = cand.get("chosen") or {}
+        if not ch:
+            return None
+        return {"rule": cand.get("rule"), "declared_at": cand.get("declared_at"),
+                **{k: ch.get(k) for k in ("run_id", "encoder", "head", "identity_sha256", "checkpoint_sha256")}}
+
+    def baseline_config_identity(self) -> str:
+        return sha256_json({k: v for k, v in self.baseline_cfg.items() if not str(k).startswith("_")})
+
+    def precision_acceptance(self) -> dict | None:
+        try:
+            from dermpath.ml import devices
+
+            return {"rule": devices.PRECISION_ACCEPTANCE_RULE, "acceptance": dict(devices.PRECISION_ACCEPTANCE)}
+        except Exception:  # noqa: BLE001 - recorded as unknown
+            return None
+
+    def stage_config(self, stage: str) -> dict:
+        """The stage-relevant configuration and budgets (the ``config`` component of the fingerprint)."""
+        pol = self.policy_params()
+        devs = {e: self.device_for(e) for e in ENCODERS}
+        if stage == "s0":
+            return {"device_request": self.args.device, "devices": devs,
+                    "encoders": {e: self.encoder_identity(e) for e in ENCODERS}}
+        if stage == "s1":
+            return {"dataset_name": self.dataset_name, "dataset_config": self.dataset_config(),
+                    "eligible_review_states": ELIGIBLE_REVIEW_STATES}
+        encs = {e: self.encoder_identity(e) for e in ENCODERS}
+        if stage == "s2":
+            return {"policy": pol, "devices": devs, "encoders": encs, "dataset": self.dataset_identity(),
+                    "technical_validation": {"seed": 0, "n_slides": 2}}
+        if stage == "s3":
+            return {"policy": pol, "devices": devs, "encoders": encs, "dataset": self.dataset_identity(),
+                    "technical_feature_sets": self.technical_set_identity(),
+                    "baseline_config_sha256": self.baseline_config_identity(),
+                    "base_params": {e: {h: self.base_run_params(h, e) for h in HEADS} for e in ENCODERS},
+                    "protocol": {"evaluation_protocol": "dev_cv", "cv_folds": self.cv_folds},
+                    "seeds": self.seeds, "learning_curve": {"fractions": self.lc_fractions,
+                                                            "repeats": self.lc_repeats, "seed": self.seeds[0]},
+                    "bootstrap": {"n_boot": self.n_boot, "seed": self.boot_seed,
+                                  "min_patients": self.boot_min_patients},
+                    "candidate_rule": CANDIDATE_RULE}
+        if stage == "s4":
+            return {"policy": pol, "devices": devs, "encoders": encs, "dataset": self.dataset_identity(),
+                    "head": "meanpool_logreg", "seed": self.seeds[0], "arms": {a: o for a, o, _ in self.s4_arms()},
+                    "base_params": {e: self.base_run_params("meanpool_logreg", e) for e in ENCODERS},
+                    "precision": {"patches": self.args.precision_patches, "seed": PRECISION_SEED,
+                                  "skip_downstream": self.skip_precision_downstream,
+                                  "acceptance": self.precision_acceptance()},
+                    "technical_feature_sets": self.technical_set_identity(), "s3": self.s3_identity(),
+                    "bootstrap": {"n_boot": self.n_boot, "seed": self.boot_seed,
+                                  "min_patients": self.boot_min_patients}}
+        if stage == "s4b":
+            return {"policy": pol, "devices": {e: devs[e] for e in self.sampling_encoders},
+                    "encoders": {e: encs[e] for e in self.sampling_encoders}, "dataset": self.dataset_identity(),
+                    "budgets": {"current": self.max_patches, "higher": self.sampling_budget},
+                    "head": SAMPLING_HEAD, "seed": self.seeds[0],
+                    "base_params": {e: self.base_run_params(SAMPLING_HEAD, e) for e in self.sampling_encoders},
+                    "s3": self.s3_identity(),
+                    "bootstrap": {"n_boot": self.n_boot, "seed": self.boot_seed,
+                                  "min_patients": self.boot_min_patients}}
+        if stage == "s5":
+            return {"hourly_rate": self.args.hourly_rate}
+        if stage == "s6":
+            return {"candidate": self.candidate_identity(), "candidate_rule": CANDIDATE_RULE,
+                    "release_reason_prefix": RELEASE_REASON, "dataset": self.dataset_identity()}
+        if stage == "s8":
+            return {"caveats_sha256": sha256_json(CAVEATS)}
+        return {}
+
+    def upstream_identity(self, dep: str) -> dict | None:
+        p = self.report_path(dep)
+        if not p.is_file():
+            return None
+        rep, _ = self.read_report(dep)
+        return {"report_sha256": sha256_file(p),
+                "fingerprint_sha256": ((rep or {}).get("fingerprint") or {}).get("sha256")}
+
+    def stage_fingerprint(self, stage: str) -> dict:
+        """The canonical input fingerprint of ``stage`` for THIS command line and the current upstream reports.
+        s6 carries no implementation identity: a code change alone never makes a test release due again."""
+        comps: dict = {"stage": stage,
+                       "environment": {"database": str(self.var_dir), "project_id": PROJECT_ID, "dry_run": self.dry,
+                                       "dry_run_subset": self.args.dry_run_subset}}
+        if stage != "s6":
+            comps["implementation"] = self.implementation_identity()
+        comps["config"] = self.stage_config(stage)
+        comps["upstream"] = {d: self.upstream_identity(d) for d in DEPENDS[stage]}
+        opt = {}
+        for d in OPTIONAL_DEPENDS.get(stage, ()):
+            if d == "s6" and stage == "s7":  # test errors enter s7 only from a valid release of this candidate
+                opt[d] = self.upstream_identity(d) if self.evaluate(d)["status"] == "valid" else None
+            else:
+                opt[d] = self.upstream_identity(d)
+        comps["optional_upstream"] = opt
+        return fingerprint(comps)
+
+    # ------------------------------------------------------------------ status
+    def evaluate(self, stage: str) -> dict:
+        """Status of ``stage`` for this command line: valid / missing / failed / stale / invalid / obsolete (s6),
+        with the reasons. Memoised until the next write."""
+        if stage in self._memo:
+            return self._memo[stage]
+        self._memo[stage] = {"stage": stage, "status": "invalid", "reasons": ["dependency cycle"]}  # guard
+        try:
+            return self._evaluate(stage)
+        except BaseException:
+            self._memo.pop(stage, None)
+            raise
+
+    def _evaluate(self, stage: str) -> dict:
+        path = self.report_path(stage)
+        fp = self.stage_fingerprint(stage)
+        error = self.read_json_safe(self.error_path(stage)) if self.error_path(stage).is_file() else None
+        out = {"stage": stage, "title": TITLES[stage], "report": path.name if path.is_file() else None,
+               "fingerprint_sha256": fp["sha256"], "recorded_fingerprint_sha256": None, "finished_at": None,
+               "depends": list(DEPENDS[stage]), "optional_depends": list(OPTIONAL_DEPENDS.get(stage, ()))}
+        integrity: list[str] = []
+        stale: list[str] = []
+        failed: list[str] = []
+        if not path.is_file():
+            if error:
+                failed.append(f"last attempt failed at {error.get('at')}: {str(error.get('error'))[:300]}")
+            status = "failed" if failed else "missing"
+            reasons = failed or ["no report"]
+            out.update(status=status, reasons=reasons)
+            self._memo[stage] = out
+            return out
+        rep, why = self.read_report(stage)
+        if rep is None:
+            integrity.append(f"report unreadable ({why})")
+        else:
+            out["finished_at"] = rep.get("finished_at")
+            recorded = rep.get("fingerprint") or {}
+            out["recorded_fingerprint_sha256"] = recorded.get("sha256")
+            side = self.read_json_safe(self.integrity_path(stage))
+            actual = sha256_file(path)
+            if not recorded:
+                stale.append("the report has no input fingerprint (written by an earlier driver, sha "
+                             f"{_short((rep.get('driver') or {}).get('sha256'))}): its inputs cannot be verified, so "
+                             "its existence alone is not reused")
+            elif side is None:
+                integrity.append("no integrity record (_state/<stage>.integrity.json): the report sha256 cannot be "
+                                 "verified")
+            elif side.get("report_sha256") != actual:
+                integrity.append(f"report bytes changed after it was written (sha256 recorded "
+                                 f"{_short(side.get('report_sha256'))}, now {_short(actual)})")
+            elif side.get("fingerprint_sha256") != recorded.get("sha256"):
+                integrity.append("integrity record and report disagree on the fingerprint")
+            if recorded and recorded.get("sha256") != fp["sha256"]:
+                stale.extend(diff_components(recorded.get("components"), fp["components"])
+                             or ["fingerprint differs (schema change)"])
+        for d in DEPENDS[stage]:
+            ev = self.evaluate(d)
+            if ev["status"] != "valid":
+                stale.append(f"upstream {d} is {ev['status']}" + (f": {ev['reasons'][0]}" if ev["reasons"] else ""))
+        for d in OPTIONAL_DEPENDS.get(stage, ()):
+            ev = self.evaluate(d)
+            if ev["status"] in ("missing", "valid"):
+                continue
+            if d == "s6" and ev["status"] in ("obsolete", "failed", "stale"):
+                continue  # test-release history never blocks development stages
+            stale.append(f"optional upstream {d} is {ev['status']}"
+                         + (f": {ev['reasons'][0]}" if ev["reasons"] else ""))
+        if rep is not None and not integrity and not stale:
+            try:
+                problems = list(self.artifact_problems(stage, rep) or [])
+            except Exception as exc:  # noqa: BLE001 - an unverifiable artifact is not valid
+                problems = [f"artifact check raised {type(exc).__name__}: {exc}"]
+            integrity.extend(f"artifact: {p}" for p in problems)
+        if error and self.error_path(stage).stat().st_mtime >= path.stat().st_mtime:
+            failed.append(f"last attempt failed at {error.get('at')}: {str(error.get('error'))[:300]}; the previous "
+                          "report is kept but not reused")
+        if integrity:
+            status = "invalid"
+        elif failed:
+            status = "failed"
+        elif stale:
+            status = "obsolete" if stage == "s6" else "stale"
+        else:
+            status = "valid"
+        reasons = integrity + failed + stale
+        if status == "obsolete":
+            reasons = ["historical test release (immutable; never re-run automatically): its candidate comparison "
+                       "no longer matches the current development stage s3"] + reasons
+        out.update(status=status, reasons=reasons)
+        self._memo[stage] = out
+        return out
+
+    def upstream_blockers(self, stage: str) -> list[str]:
+        out = []
+        for d in DEPENDS[stage]:
+            ev = self.evaluate(d)
+            if ev["status"] != "valid":
+                out.append(f"{d} is {ev['status']}" + (f" ({'; '.join(ev['reasons'][:3])})" if ev["reasons"] else ""))
+        for d in OPTIONAL_DEPENDS.get(stage, ()):
+            ev = self.evaluate(d)
+            if ev["status"] in ("missing", "valid") or (d == "s6" and ev["status"] in ("obsolete", "failed", "stale")):
+                continue
+            out.append(f"optional {d} is {ev['status']}"
+                       + (f" ({'; '.join(ev['reasons'][:3])})" if ev["reasons"] else ""))
+        return out
+
+    def status_rows(self) -> list[dict]:
+        return [dict(self.evaluate(s)) for s in STAGES]
+
+    def write_status_snapshot(self) -> None:
+        """``_state/status.json``: the last full evaluation (for the evidence exporter); informational."""
+        try:
+            self.write_json(self.state_dir / "status.json", {
+                "at": now_iso(), "argv": sys.argv[1:], "driver_sha256": self.driver_sha256,
+                "meaning": STATUS_MEANING, "depends": DEPENDS, "optional_depends": OPTIONAL_DEPENDS,
+                "stages": {s: self.evaluate(s) for s in STAGES}})
+        except Exception as exc:  # noqa: BLE001 - informational only
+            self.log(f"status snapshot not written: {type(exc).__name__}: {exc}")
+
+    # ------------------------------------------------------------------ artifact integrity (database)
+    def artifact_problems(self, stage: str, rep: dict) -> list[str]:
+        """What the report refers to must still exist unchanged: dataset version frozen with the same manifest,
+        feature sets ready with the same spec, runs with the recorded status, identity and checkpoint (grid runs
+        succeeded), the test release present. A malformed report is a problem, never a crash."""
+        from dermpath.db import session_scope
+        from dermpath.ml.engine_models import FeatureSet, TestRelease
+        from dermpath.ml.models import TrainingRun
+        from dermpath.models import DatasetVersion
+
+        probs: list[str] = []
+
+        def check_set(db, fs_id, spec=None, label=""):
+            if not fs_id:
+                probs.append(f"{label}: no feature set id recorded")
+                return
+            fs = db.get(FeatureSet, fs_id)
+            if fs is None:
+                probs.append(f"{label}: feature set {fs_id} is not in the database")
+            elif fs.status != "ready":
+                probs.append(f"{label}: feature set {fs_id} is {fs.status}, not ready")
+            elif spec and fs.spec_sha256 != spec:
+                probs.append(f"{label}: feature set {fs_id} spec sha256 differs from the report")
+
+        def check_run(db, r, label=""):
+            if not isinstance(r, dict) or not r.get("run_id"):
+                probs.append(f"{label}: malformed run record")
+                return
+            run = db.get(TrainingRun, r["run_id"])
+            if run is None:
+                probs.append(f"{label}: run {r['run_id']} is not in the database")
+                return
+            if r.get("status") == "succeeded":
+                if run.status != "succeeded":
+                    probs.append(f"{label}: run {run.id} is {run.status} now (recorded succeeded)")
+                if r.get("identity_sha256") and run.identity_sha256 != r["identity_sha256"]:
+                    probs.append(f"{label}: run {run.id} identity sha256 differs from the report")
+                ck = (r.get("checkpoint") or {}).get("sha256")
+                if ck and run.checkpoint_sha256 != ck:
+                    probs.append(f"{label}: run {run.id} checkpoint sha256 differs from the report")
+
+        try:
+            with session_scope() as db:
+                if stage == "s1":
+                    d = rep.get("dataset") or {}
+                    dv = db.get(DatasetVersion, d.get("dataset_version_id")) if d.get("dataset_version_id") else None
+                    if dv is None:
+                        probs.append(f"dataset version {d.get('dataset_version_id')} is not in the database")
+                    elif dv.status != "frozen":
+                        probs.append(f"dataset version {dv.id} is {dv.status}, not frozen")
+                    elif dv.manifest_sha256 != d.get("manifest_sha256"):
+                        probs.append(f"dataset version {dv.id} manifest sha256 differs from the report")
+                elif stage == "s2":
+                    for e, v in (rep.get("encoders") or {}).items():
+                        c = (v or {}).get("created") or {}
+                        check_set(db, c.get("feature_set_id"), c.get("spec_sha256"), f"s2 {e}")
+                elif stage == "s3":
+                    runs = rep.get("runs")
+                    if not isinstance(runs, list):
+                        probs.append("the report has no run list")
+                    else:
+                        for e, v in (rep.get("feature_sets") or {}).items():
+                            check_set(db, (v or {}).get("supervised_feature_set_id"), None, f"s3 {e}")
+                        for r in runs:
+                            check_run(db, r, "s3")
+                            if isinstance(r, dict) and r.get("role") == "grid" and r.get("status") != "succeeded":
+                                probs.append(f"s3: grid run {r.get('run_id')} ({r.get('encoder')} {r.get('head')} "
+                                             f"seed {r.get('seed')}) did not succeed: the four-way comparison is "
+                                             "incomplete")
+                elif stage in ("s4", "s4b"):
+                    groups = (rep.get("arms") or {}) if stage == "s4" else {"budget": rep.get("encoders") or {}}
+                    for arm, by in groups.items():
+                        for e, entry in (by or {}).items():
+                            if not isinstance(entry, dict):
+                                probs.append(f"{stage} {arm} {e}: malformed entry")
+                                continue
+                            if entry.get("run"):
+                                check_run(db, entry["run"], f"{stage} {arm} {e}")
+                            fsid = (((entry.get("feature_set") or {}).get("created") or {}).get("feature_set_id"))
+                            if entry.get("status") == "succeeded" and fsid:
+                                check_set(db, fsid, None, f"{stage} {arm} {e}")
+                elif stage == "s6":
+                    rid = rep.get("test_release_id")
+                    if not rid or db.get(TestRelease, rid) is None:
+                        probs.append(f"test release {rid} is not in the database")
+        except Exception as exc:  # noqa: BLE001
+            probs.append(f"artifact check raised {type(exc).__name__}: {str(exc)[:200]}")
+        return probs
 
     # ------------------------------------------------------------------ jobs
     def run_jobs(self, job_ids: list[str], types: list[str], label: str) -> dict:
@@ -672,7 +1581,7 @@ class Driver:
         return p
 
     def create_run(self, *, dv_id: str, encoder: str, head: str, params: dict, name: str, fs_id: str,
-                   family_id: str | None, role: str | None) -> tuple[str, str]:
+                   family_id: str | None, role: str | None, seed: int | None = None) -> tuple[str, str]:
         from dermpath.db import session_scope
         from dermpath.ml.service import create_experiment
         from dermpath.models import Project
@@ -680,10 +1589,19 @@ class Driver:
         with session_scope() as db:
             self.authorize(db, "experiment.write")
             run, job = create_experiment(db, self.actor, db.get(Project, PROJECT_ID), dataset_version_id=dv_id,
-                                         encoder_id=encoder, head=head, params=params, seed=SEED, name=name[:200],
+                                         encoder_id=encoder, head=head, params=params,
+                                         seed=self.seeds[0] if seed is None else int(seed), name=name[:200],
                                          execution_mode=SUPERVISED, feature_set_id=fs_id,
                                          evaluation_protocol="dev_cv", family_id=family_id, family_role=role)
             return run.id, job.id
+
+    def run_status(self, run_id: str) -> str | None:
+        from dermpath.db import session_scope
+        from dermpath.ml.models import TrainingRun
+
+        with session_scope() as db:
+            run = db.get(TrainingRun, run_id)
+            return run.status if run is not None else None
 
     def run_train_jobs(self, run_ids: list[str], label: str) -> dict:
         from dermpath.db import session_scope
@@ -718,7 +1636,17 @@ class Driver:
         protocol = d.get("protocol_summary") or {}
         lc = protocol.get("learning_curve")
         sc = d.get("split_counts") or {}
+        fold_map = (protocol.get("cv") or {}).get("fold_of_patient_code")
+        unscored = [u for u in (d.get("unscored_bags") or []) if isinstance(u, dict) and u.get("split") == "oof"]
         rec = {"run_id": run_id, "name": d["name"], "encoder": d["encoder_id"], "head": d["head"],
+               "seed": d.get("seed"),
+               "fold_assignment_sha256": sha256_json(fold_map) if fold_map else None,
+               "n_folds_recorded": len(set(fold_map.values())) if isinstance(fold_map, dict) else None,
+               "preprocessing": protocol.get("preprocessing"),
+               "preprocessing_fold_safety": d.get("preprocessing_fold_safety"),
+               "unscorable_oof": {"bags": len(unscored), "patients": len({u.get("patient_code") or u.get("patient_id")
+                                                                           for u in unscored}),
+                                  "reasons": sorted({str(u.get("reason"))[:200] for u in unscored})},
                "status": d["status"], "error": d["error"], "feature_set_id": d["feature_set_id"],
                "family_id": d["family_id"], "identity_sha256": d["identity_sha256"],
                "test_items_used": test_used, "prediction_splits": splits_scored,
@@ -731,8 +1659,12 @@ class Driver:
                "train_patients": (lc or {}).get("n_patients") if lc else
                sum((sc.get(k) or {}).get("patients", 0) for k in ("train", "val")),
                "learning_curve": lc, "effective_sampling": d.get("effective_sampling"),
-               "training_summary": {k: (d.get("training_summary") or {}).get(k) for k in (
-                   "head", "epochs_run", "best_epoch", "n_iter", "converged", "train_bags", "fit_bags")},
+               "training_summary": {**{k: v for k, v in (d.get("training_summary") or {}).items()
+                                       if k in ("head", "epochs_run", "best_epoch", "n_iter", "converged",
+                                                "train_bags", "fit_bags", "final_model", "fit_semantics",
+                                                "final_fit_epochs")
+                                       or any(t in k for t in ("effective", "early_stopping", "refit", "inner"))},
+                                    **abmil_fit_counts(d.get("training_summary") or {})},
                "folds": [{k: f.get(k) for k in ("fold", "status", "fit_bags", "held_out_bags", "fit_patients",
                                                 "held_out_patients", "reason")}
                          for f in ((protocol.get("cv") or {}).get("folds_summary") or [])],
@@ -755,6 +1687,18 @@ class Driver:
     def oof_auroc(rec: dict) -> float | None:
         return (((rec.get("oof") or {}).get("threshold_free") or {}).get("auroc") or {}).get("value")
 
+    @staticmethod
+    def _engine_cv_validity(db, run) -> dict | None:
+        """The engine's fold-safety verdict for a recorded run (None when this engine version has none)."""
+        try:
+            from dermpath.ml.training import run_preprocessing_validity
+        except ImportError:
+            return None
+        try:
+            return run_preprocessing_validity(db, run)
+        except Exception:  # noqa: BLE001 - no verdict is not a verdict of validity; the caller decides
+            return None
+
     def compare(self, run_ids: dict[str, str], *, split: str = "oof") -> dict:
         """Paired patient-level bootstrap on the stored development predictions of finished runs (identical bag
         set: bags unscorable under any model are dropped and listed). Family seed shared by every comparison."""
@@ -768,7 +1712,10 @@ class Driver:
 
         entry = {"models": sorted(run_ids), "run_ids": dict(run_ids), "split": split, "n_boot": self.n_boot,
                  "bootstrap_seed": self.boot_seed, "min_patients": self.boot_min_patients}
+        if split not in DEVELOPMENT_SPLITS:
+            raise StageError(f"the driver compares development predictions only, not {split!r}")
         sets, manifest = [], None
+        accounting: dict = {}
         with session_scope() as db:
             for name, rid in sorted(run_ids.items()):
                 run = db.get(TrainingRun, rid)
@@ -778,8 +1725,19 @@ class Driver:
                     return entry
                 if manifest is None:
                     manifest = db.get(DatasetVersion, run.dataset_version_id).manifest_json
+                validity = self._engine_cv_validity(db, run)
+                if validity is not None and validity.get("valid_for_cv_comparison") is False:
+                    entry.update(status="invalid_for_cv_comparison",
+                                 reason=f"{name} ({rid}): its learned preprocessing is not fold-safe: "
+                                        + "; ".join(validity.get("problems") or [])[:600])
+                    return entry
                 preds = db.scalars(select(Prediction).where(Prediction.run_id == rid, Prediction.split == split)
                                    .order_by(Prediction.bag_id)).all()
+                unsc = [u for u in ((run.metrics_json or {}).get("unscored_bags") or [])
+                        if isinstance(u, dict) and u.get("split") == split]
+                accounting[name] = {"scored": {p.bag_id: p.patient_code or p.coded_patient_id for p in preds},
+                                    "unscorable": {u["bag_id"]: u.get("patient_code") or u.get("patient_id")
+                                                   for u in unsc if u.get("bag_id")}}
                 sets.append(ScoreSet(name=name, bag_ids=[p.bag_id for p in preds],
                                      patients=[p.patient_code or p.coded_patient_id for p in preds],
                                      labels=[p.label for p in preds], scores=[p.score for p in preds],
@@ -798,6 +1756,8 @@ class Driver:
                                        manifest_sha256=ss.manifest_sha256, split_fingerprint=ss.split_fingerprint))
         entry.update(reference_standard_fields(manifest))
         entry["excluded_bags_unscorable_under_some_model"] = excluded
+        entry["subject_accounting"] = paired_accounting(accounting)
+        entry["unscorable_bags_by_model"] = {n: sorted(a["unscorable"]) for n, a in accounting.items()}
         try:
             res = paired_comparison(restricted, n_boot=self.n_boot, seed=self.boot_seed,
                                     min_patients=self.boot_min_patients)
@@ -1150,7 +2110,7 @@ class Driver:
                 self.authorize(db, "experiment.write")
                 run, _ = create_experiment(db, self.actor, db.get(Project, PROJECT_ID), dataset_version_id=dv_id,
                                            encoder_id=encoder, head="meanpool_logreg",
-                                           params=self.base_run_params("meanpool_logreg", encoder), seed=SEED,
+                                           params=self.base_run_params("meanpool_logreg", encoder), seed=self.seeds[0],
                                            name="reuse probe (rolled back)", execution_mode=SUPERVISED,
                                            feature_set_id=technical_fs_id, evaluation_protocol="dev_cv")
                 res = {"accepted": True, "note": "the engine accepted the technical set for a supervised run "
@@ -1164,6 +2124,22 @@ class Driver:
                            "pin the technical set; supervised sets with the IDENTICAL policy are created instead and "
                            "their artifacts come from the content-addressed cache (no re-embedding)"}
         return res
+
+    def s3_variants(self) -> list[dict]:
+        """The pre-declared S3 plan: the encoder x head grid for EVERY seed, learning curves (meanpool_logreg)
+        for the first seed only. Folds do not depend on the seed, so every variant shares them."""
+        out = [{"encoder": e, "head": h, "fraction": 1.0, "repeat": 0, "role": "grid", "seed": s}
+               for s in self.seeds for e in ENCODERS for h in HEADS]
+        for e in ENCODERS:
+            for f in self.lc_fractions:
+                if f >= 1.0:
+                    continue
+                for r in range(self.lc_repeats):
+                    out.append({"encoder": e, "head": "meanpool_logreg", "fraction": f, "repeat": r,
+                                "role": "learning_curve", "seed": self.seeds[0]})
+        for v in out:
+            v["key"] = f"{v['encoder']}|{v['head']}|{v['fraction']}|{v['repeat']}|seed{v['seed']}"
+        return out
 
     def s3(self) -> dict:
         from sqlalchemy import func, select
@@ -1216,56 +2192,80 @@ class Driver:
                 st["family_id"] = fam.id
             self.save_state("s3", st)
         family_id = st["family_id"]
-        variants = [{"encoder": e, "head": h, "fraction": 1.0, "repeat": 0, "role": "grid"}
-                    for e in ENCODERS for h in HEADS]
-        for e in ENCODERS:
-            for f in self.lc_fractions:
-                if f >= 1.0:
-                    continue
-                for r in range(self.lc_repeats):
-                    variants.append({"encoder": e, "head": "meanpool_logreg", "fraction": f, "repeat": r,
-                                     "role": "learning_curve"})
+        variants = self.s3_variants()
+        st.setdefault("replaced_runs", [])
+        t_runs = time.perf_counter()
         for v in variants:
-            key = f"{v['encoder']}|{v['head']}|{v['fraction']}|{v['repeat']}"
+            key = v["key"]
             if key in st["runs"]:
-                continue
+                prev = self.run_status(st["runs"][key])
+                if prev not in ("failed", "canceled", "cancelled", None):
+                    continue  # resumable: queued, running or finished under the same fingerprint
+                st["replaced_runs"].append({"key": key, "run_id": st["runs"][key], "status": prev,
+                                            "at": now_iso(), "reason": "retried: the previous attempt did not finish"})
+                self.skip_work(f"s3 run {key}", "previous attempt replaced by a new run",
+                               replaced_run_id=st["runs"][key], previous_status=prev)
             extra = {"train_patient_fraction": v["fraction"], "subset_repeat": v["repeat"]} if v["fraction"] < 1 else {}
             params = self.base_run_params(v["head"], v["encoder"], **extra)
             lc = f" · train fraction {v['fraction']} r{v['repeat']}" if v["fraction"] < 1 else ""
             rid, _ = self.create_run(dv_id=dv_id, encoder=v["encoder"], head=v["head"], params=params,
-                                     name=f"S3 · {v['encoder']} · {v['head']}{lc}",
+                                     name=f"S3 · {v['encoder']} · {v['head']} · seed {v['seed']}{lc}",
                                      fs_id=sets[v["encoder"]]["supervised_feature_set_id"], family_id=family_id,
-                                     role=v["role"])
+                                     role=v["role"], seed=v["seed"])
             st["runs"][key] = rid
             self.save_state("s3", st)
-        self.log(f"s3: training {len(st['runs'])} run(s) (dev_cv, {self.cv_folds} folds)")
-        self.run_train_jobs(list(st["runs"].values()), "s3 runs")
+        self.log(f"s3: training {len(st['runs'])} run(s) (dev_cv, {self.cv_folds} folds, seeds {self.seeds})")
+        self.run_train_jobs([st["runs"][v["key"]] for v in variants], "s3 runs")
+        train_wall = time.perf_counter() - t_runs
         records = []
         for v in variants:
-            key = f"{v['encoder']}|{v['head']}|{v['fraction']}|{v['repeat']}"
-            rec = self.run_record(st["runs"][key])
+            rec = self.run_record(st["runs"][v["key"]])
             rec.update(role=v["role"], fraction=v["fraction"], repeat=v["repeat"])
+            rec["seed"] = v["seed"] if rec.get("seed") is None else rec["seed"]
             records.append(rec)
         failed = [r for r in records if r["status"] != "succeeded"]
         for r in failed:
-            self.warnings.append(f"s3: run {r['run_id']} ({r['encoder']} {r['head']} f={r['fraction']} "
-                                 f"r={r['repeat']}) {r['status']}: {str(r['error'])[:300]}")
-        grid = {(r["encoder"], r["head"]): r for r in records if r["role"] == "grid"}
-        # ---- paired comparisons on OOF
-        comparisons = {"encoder_effects": [], "head_effects": []}
-        for h in HEADS:
-            comparisons["encoder_effects"].append({"fixed": {"head": h}, **self.compare(
-                {e: grid[(e, h)]["run_id"] for e in ENCODERS})})
-        for e in ENCODERS:
-            comparisons["head_effects"].append({"fixed": {"encoder": e}, **self.compare(
-                {h: grid[(e, h)]["run_id"] for h in HEADS})})
+            self.warnings.append(f"s3: run {r['run_id']} ({r['encoder']} {r['head']} seed {r['seed']} "
+                                 f"f={r['fraction']} r={r['repeat']}) {r['status']}: {str(r['error'])[:300]}")
+        grid_all = {(r["encoder"], r["head"], r["seed"]): r for r in records if r["role"] == "grid"}
+        grid = {(e, h): grid_all[(e, h, self.seeds[0])] for e in ENCODERS for h in HEADS}
+        folds = fold_consistency([r for r in records])
+        if not folds["identical"]:
+            self.warnings.append(f"s3: outer folds are NOT identical across runs ({folds['distinct']} distinct fold "
+                                 "assignments); paired comparisons across heads or seeds are not on fixed folds")
+        # ---- paired comparisons on OOF, per pre-declared seed (folds fixed across heads and seeds)
+        per_seed: dict = {}
+        for seed in self.seeds:
+            g = {(e, h): grid_all[(e, h, seed)] for e in ENCODERS for h in HEADS}
+            cs = {"encoder_effects": [], "head_effects": [], "four_way": None}
+            for h in HEADS:
+                cs["encoder_effects"].append({"fixed": {"head": h}, "seed": seed, **self.compare(
+                    {e: g[(e, h)]["run_id"] for e in ENCODERS})})
+            for e in ENCODERS:
+                cs["head_effects"].append({"fixed": {"encoder": e}, "seed": seed, **self.compare(
+                    {h: g[(e, h)]["run_id"] for h in HEADS})})
+            cs["four_way"] = {"seed": seed, **self.compare({f"{e}|{h}": g[(e, h)]["run_id"]
+                                                            for e in ENCODERS for h in HEADS})}
+            per_seed[seed] = cs
+        comparisons = {"encoder_effects": per_seed[self.seeds[0]]["encoder_effects"],
+                       "head_effects": per_seed[self.seeds[0]]["head_effects"],
+                       "four_way": per_seed[self.seeds[0]]["four_way"],
+                       "primary_seed": self.seeds[0], "by_seed": {str(s): v for s, v in per_seed.items()},
+                       "across_seeds": {
+                           "encoder_effects": comparison_seed_summary({s: v["encoder_effects"]
+                                                                       for s, v in per_seed.items()}),
+                           "head_effects": comparison_seed_summary({s: v["head_effects"]
+                                                                    for s, v in per_seed.items()}),
+                           "four_way": comparison_seed_summary({s: [v["four_way"]] for s, v in per_seed.items()})},
+                       "note": "paired on bags scored by every compared model (subject_accounting lists the "
+                               "unscorable bags per model); " + SEED_NOTE}
         # ---- learning curves
         curves = []
         for e in ENCODERS:
             points = []
             for f in self.lc_fractions:
                 rows = [r for r in records if r["encoder"] == e and r["head"] == "meanpool_logreg"
-                        and r["fraction"] == f]
+                        and r["fraction"] == f and r["seed"] == self.seeds[0]]
                 vals = [self.oof_auroc(r) for r in rows if r["status"] == "succeeded" and self.oof_auroc(r) is not None]
                 points.append({"fraction": f, "n_repeats": len(rows), "n_succeeded": len(vals),
                                "train_patients": stats(r["train_patients"] for r in rows),
@@ -1280,10 +2280,15 @@ class Driver:
                            "note": "nested stratified subsets of development patients restrict each fold's fitting "
                                    "part and the refit; every point is scored on the same full out-of-fold set"})
         # ---- pre-declared test candidate (written BEFORE any test access)
-        eligible = [r for r in grid.values() if r["status"] == "succeeded" and self.oof_auroc(r) is not None]
+        seeds_view = seed_summary(records, self.seeds)
+        mean_auroc = {(m["encoder"], m["head"]): (m["auroc"] or {}).get("mean") for m in seeds_view["per_model"]
+                      if not m["seeds_missing_or_failed"]}
+        eligible = [r for (e, h), r in grid.items() if r["status"] == "succeeded" and self.oof_auroc(r) is not None
+                    and mean_auroc.get((e, h)) is not None]
         if not eligible:
-            raise StageError("s3: no grid run succeeded with a defined OOF AUROC; no candidate can be declared")
-        order = sorted(eligible, key=lambda r: (-self.oof_auroc(r), HEADS.index(r["head"]),
+            raise StageError("s3: no encoder x head combination succeeded for every pre-declared seed with a defined "
+                             "OOF AUROC; no candidate can be declared")
+        order = sorted(eligible, key=lambda r: (-mean_auroc[(r["encoder"], r["head"])], HEADS.index(r["head"]),
                                                 ENCODERS.index(r["encoder"])))
         best = order[0]
         with session_scope() as db:
@@ -1292,10 +2297,13 @@ class Driver:
             "rule": CANDIDATE_RULE,
             "uses": "development (out-of-fold) predictions only; the test split was never read",
             "declared_at": now_iso(),
+            "seeds": self.seeds,
             "test_releases_in_project_at_declaration": n_releases,
-            "ranking": [{"encoder": r["encoder"], "head": r["head"], "run_id": r["run_id"],
-                         "oof_auroc": self.oof_auroc(r)} for r in order],
-            "tie": len(order) > 1 and self.oof_auroc(order[1]) == self.oof_auroc(best),
+            "ranking": [{"encoder": r["encoder"], "head": r["head"], "run_id": r["run_id"], "seed": r["seed"],
+                         "mean_oof_auroc_over_seeds": mean_auroc[(r["encoder"], r["head"])],
+                         "oof_auroc_first_seed": self.oof_auroc(r)} for r in order],
+            "tie": len(order) > 1 and (mean_auroc[(order[1]["encoder"], order[1]["head"])]
+                                       == mean_auroc[(best["encoder"], best["head"])]),
             "chosen": {"encoder": best["encoder"], "head": best["head"], "run_id": best["run_id"],
                        "feature_set_id": best["feature_set_id"], "identity_sha256": best["identity_sha256"],
                        "checkpoint_sha256": (best.get("checkpoint") or {}).get("sha256"),
@@ -1315,9 +2323,15 @@ class Driver:
         return {
             "protocol": {"evaluation_protocol": "dev_cv", "cv_folds": self.cv_folds,
                          "folds": "patient-grouped stratified over the development pool (train ∪ val); they depend "
-                                  "on the pool and k only, so every run shares them",
+                                  "on the pool and k only, so every run (every head, encoder and seed) shares them",
+                         "fold_consistency": folds,
                          "threshold_rule": "youden", "calibration": "platt", "class_weight": "balanced",
-                         "test": "untouched (only a recorded test release reads it)", "seed": SEED},
+                         "test": "untouched (only a recorded test release reads it)", "seeds": self.seeds,
+                         "seeds_source": self.seeds_source, "seed": self.seeds[0],
+                         "learning_curve_seed": self.seeds[0]},
+            "seed_summary": seeds_view,
+            "costs": {"training_wall_seconds": round(train_wall, 3), "runs": len(records),
+                      "runs_failed": len(failed), "replaced_runs": st.get("replaced_runs") or []},
             "base_params": {e: {h: self.base_run_params(h, e) for h in HEADS} for e in ENCODERS},
             "optimisation_budgets": budgets,
             "feature_sets": sets,
@@ -1456,6 +2470,129 @@ class Driver:
         except Exception:  # noqa: BLE001 - best effort
             pass
 
+    def fold_safety_precheck(self, enc: str, overrides: dict) -> dict | None:
+        """The engine's own fold-safety verdict for the declared stain plan under dev_cv (pure; nothing is
+        written). ``None`` when this engine version has no such rule (the run creation and the worker still
+        refuse)."""
+        try:
+            from dermpath.ml.training import preprocessing_fold_safety
+        except ImportError:
+            return None
+        params = self.base_run_params("meanpool_logreg", enc, **overrides)
+        try:
+            return preprocessing_fold_safety({"method": params.get("stain_normalization"), "deferred": True},
+                                             protocol="dev_cv", params=params)
+        except Exception:  # noqa: BLE001 - no verdict; the creation path decides
+            return None
+
+    @staticmethod
+    def s4_arms() -> list[tuple[str, dict, tuple]]:
+        return [("a_sampling_uniform", {"sampling_strategy": "uniform"}, ENCODERS),
+                ("b_stain_macenko", {"stain_normalization": "macenko-v1"}, ENCODERS)]
+
+    def ablation_arm(self, arm: str, enc: str, overrides: dict, *, dv_id: str, manifest: dict, baseline: dict,
+                     family_id: str, st: dict) -> dict:
+        """One ablation arm (meanpool_logreg, first pre-declared seed) compared with the s3 baseline of the same
+        encoder on identical out-of-fold bags.
+
+        Item 3: under dev_cv a macenko arm is evidence only when its preprocessing is fold-safe. When the engine
+        refuses it (``fold_unsafe_preprocessing`` at creation or in the worker) the arm is ``blocked``; when a run
+        succeeds without declaring fold-specific fitting (a shared reference fitted on the development pool, which
+        the held-out folds belong to) it is ``invalid_for_cv_comparison``. Neither is ever counted as a result."""
+        entry: dict = {"arm": arm, "encoder": enc, "overrides": overrides,
+                       "baseline_run_id": (baseline.get(enc) or {}).get("run_id")}
+        stain = str(overrides.get("stain_normalization") or "")
+        needs_fold_safety = stain.startswith("macenko")
+
+        def blocked(code, message, where):
+            entry.update(status="blocked", code=code or "fold_unsafe_preprocessing", reason=str(message)[:1000],
+                         blocked_at=where, comparison={"status": "not_computed",
+                                                       "reason": "arm blocked: fold-unsafe preprocessing under dev_cv"},
+                         counts_as_evidence=False)
+            self.warnings.append(f"s4: {arm} {enc} BLOCKED ({entry['code']}, {where}): not evidence")
+            self.skip_work(f"s4 {arm} {enc}", f"blocked by the engine: {entry['code']}", where=where)
+            return entry
+
+        key = f"{arm}|{enc}"
+        if needs_fold_safety and key not in st["runs"]:
+            pre = self.fold_safety_precheck(enc, overrides)
+            if pre is not None and pre.get("status") == "fold_unsafe":
+                self.skip_work(f"s4 {arm} {enc} feature-set build", "not built: the engine's fold-safety rule refuses "
+                                                                     "this arm from its declared plan, before any "
+                                                                     "extraction (no wasted compute)")
+                entry["engine_fold_safety"] = {k: pre.get(k) for k in ("status", "code", "problems", "remedy",
+                                                                       "provenance", "protocol")}
+                return blocked(pre.get("code"), "; ".join(pre.get("problems") or []) or "fold_unsafe", "precheck")
+        self.log(f"s4: {arm} · {enc}: feature set")
+        try:
+            sup = self.supervised_set(enc, dv_id, label=f"S4 {arm}", **overrides)
+        except Exception as exc:  # noqa: BLE001 - only a fold-safety refusal is a result here
+            if needs_fold_safety and is_fold_unsafe(getattr(exc, "code", None), getattr(exc, "message", str(exc))):
+                return blocked(getattr(exc, "code", None), getattr(exc, "message", str(exc)), "feature_set")
+            raise
+        entry["feature_set"] = sup
+        stain_policy = ((sup.get("feature_set") or {}).get("feature_set") or {}).get("stain_policy") or {}
+        fit = stain_policy.get("reference_fit") or {}
+        if fit:
+            split_of = {it["slide_id"]: it.get("split") for it in (manifest or {}).get("items") or []}
+            ids = list(fit.get("train_slide_ids") or [])
+            entry["stain_reference_fit_check"] = {
+                "fitted_on_slides": len(ids), "splits": sorted({split_of.get(s) for s in ids}, key=str),
+                "all_train_split": bool(ids) and all(split_of.get(s) == "train" for s in ids),
+                "fitted_on": fit.get("fitted_on"),
+                "note": "under dev_cv every development slide is held out in some fold: a reference fitted on the "
+                        "train split is shared by folds whose held-out slides it saw"}
+            if not entry["stain_reference_fit_check"]["all_train_split"]:
+                self.warnings.append(f"s4: {arm} {enc}: the stain reference was not fitted on train slides only")
+        if (sup.get("build") or {}).get("status") != "ready":
+            entry["status"] = "feature_set_failed"
+            entry["error"] = (sup.get("build") or {}).get("error")
+            if needs_fold_safety and is_fold_unsafe(None, entry["error"]):
+                return blocked(None, entry["error"], "feature_set_build")
+            self.warnings.append(f"s4: {arm} {enc} feature set failed: {str(entry['error'])[:300]}")
+            return entry
+        if key in st["runs"] and needs_fold_safety:
+            entry["existing_run_from_state"] = st["runs"][key]
+        if key not in st["runs"]:
+            params = self.base_run_params("meanpool_logreg", enc, **overrides)
+            try:
+                rid, _ = self.create_run(dv_id=dv_id, encoder=enc, head="meanpool_logreg", params=params,
+                                         name=f"S4 {arm} · {enc} · meanpool_logreg",
+                                         fs_id=sup["created"]["feature_set_id"], family_id=family_id, role=arm,
+                                         seed=self.seeds[0])
+            except Exception as exc:  # noqa: BLE001
+                if needs_fold_safety and is_fold_unsafe(getattr(exc, "code", None),
+                                                        getattr(exc, "message", str(exc))):
+                    return blocked(getattr(exc, "code", None), getattr(exc, "message", str(exc)), "experiment")
+                raise
+            st["runs"][key] = rid
+            self.save_state("s4", st)
+        self.run_train_jobs([st["runs"][key]], f"s4 {arm} {enc}")
+        rec = self.run_record(st["runs"][key])
+        entry["run"] = rec
+        entry["status"] = rec["status"]
+        if rec["status"] != "succeeded":
+            if needs_fold_safety and is_fold_unsafe(None, rec.get("error")):
+                return blocked(None, rec.get("error"), "worker")
+            self.warnings.append(f"s4: {arm} {enc} run {rec['status']}: {str(rec.get('error'))[:300]}")
+            entry["comparison"] = {"status": "not_computed", "reason": f"run {rec['status']}"}
+            return entry
+        valid, why = cv_comparison_validity(rec, stain_policy) if needs_fold_safety else (True, "")
+        entry["cv_comparison_validity"] = {"valid": valid, "why": why} if needs_fold_safety else None
+        if not valid:
+            entry["status"] = "invalid_for_cv_comparison"
+            entry["counts_as_evidence"] = False
+            entry["reason"] = ("macenko under dev_cv without fold-safe fitting: the stain reference was fitted once on "
+                               "development slides that the held-out folds contain (preprocessing leakage, not "
+                               f"test-label leakage; numerical effect unknown). {why}")
+            entry["comparison"] = {"status": "invalid", "reason": entry["reason"]}
+            self.warnings.append(f"s4: {arm} {enc} result INVALID for CV comparison (shared dataset-fitted stain "
+                                 "reference)")
+            return entry
+        entry["counts_as_evidence"] = True
+        entry["comparison"] = self.compare({"ablation": rec["run_id"], "baseline": entry["baseline_run_id"]})
+        return entry
+
     def s4(self) -> dict:
         from dermpath.db import session_scope
         from dermpath.ml.engine_models import ComparisonFamily
@@ -1469,7 +2606,8 @@ class Driver:
         st = self.state("s4")
         st.setdefault("runs", {})
         st.setdefault("sets", {})
-        baseline = {r["encoder"]: r for r in s3["runs"] if r["role"] == "grid" and r["head"] == "meanpool_logreg"}
+        baseline = {r["encoder"]: r for r in s3["runs"] if r["role"] == "grid" and r["head"] == "meanpool_logreg"
+                    and r.get("seed", SEED) == self.seeds[0]}
         if not st.get("family_id"):
             with session_scope() as db:
                 self.authorize(db, "experiment.write")
@@ -1478,60 +2616,20 @@ class Driver:
                                     plan={"schema": REPORT_SCHEMA, "stage": "s4", "n_boot": self.n_boot,
                                           "boot_min_patients": self.boot_min_patients,
                                           "comparisons": "each ablation vs the s3 meanpool_logreg baseline of the same "
-                                                         "encoder, out-of-fold, identical folds"})
+                                                         "encoder (first pre-declared seed), out-of-fold, identical "
+                                                         "folds"})
                 for e, r in baseline.items():
                     add_family_member(db, self.actor, fam, db.get(TrainingRun, r["run_id"]), role="s3_baseline")
                 st["family_id"] = fam.id
             self.save_state("s4", st)
         family_id = st["family_id"]
-        arms = [("a_sampling_uniform", {"sampling_strategy": "uniform"}, ENCODERS),
-                ("b_stain_macenko", {"stain_normalization": "macenko-v1"}, ENCODERS)]
         results: dict = {}
-
-        def arm_run(arm: str, enc: str, overrides: dict) -> dict:
-            entry: dict = {"arm": arm, "encoder": enc, "overrides": overrides,
-                           "baseline_run_id": baseline[enc]["run_id"]}
-            self.log(f"s4: {arm} · {enc}: feature set")
-            sup = self.supervised_set(enc, dv_id, label=f"S4 {arm}", **overrides)
-            entry["feature_set"] = sup
-            fit = ((sup.get("feature_set") or {}).get("feature_set") or {}).get("stain_policy") or {}
-            fit = fit.get("reference_fit") or {}
-            if fit:
-                split_of = {it["slide_id"]: it.get("split") for it in manifest["items"]}
-                ids = list(fit.get("train_slide_ids") or [])
-                entry["stain_reference_fit_check"] = {
-                    "fitted_on_slides": len(ids), "splits": sorted({split_of.get(s) for s in ids}, key=str),
-                    "all_train_split": bool(ids) and all(split_of.get(s) == "train" for s in ids),
-                    "fitted_on": fit.get("fitted_on")}
-                if not entry["stain_reference_fit_check"]["all_train_split"]:
-                    self.warnings.append(f"s4: {arm} {enc}: the stain reference was not fitted on train slides only")
-            if sup["build"]["status"] != "ready":
-                entry["status"] = "feature_set_failed"
-                entry["error"] = sup["build"].get("error")
-                self.warnings.append(f"s4: {arm} {enc} feature set failed: {str(entry['error'])[:300]}")
-                return entry
-            key = f"{arm}|{enc}"
-            if key not in st["runs"]:
-                params = self.base_run_params("meanpool_logreg", enc, **overrides)
-                rid, _ = self.create_run(dv_id=dv_id, encoder=enc, head="meanpool_logreg", params=params,
-                                         name=f"S4 {arm} · {enc} · meanpool_logreg",
-                                         fs_id=sup["created"]["feature_set_id"], family_id=family_id, role=arm)
-                st["runs"][key] = rid
-                self.save_state("s4", st)
-            self.run_train_jobs([st["runs"][key]], f"s4 {arm} {enc}")
-            rec = self.run_record(st["runs"][key])
-            entry["run"] = rec
-            entry["status"] = rec["status"]
-            entry["comparison"] = self.compare({"ablation": rec["run_id"], "baseline": baseline[enc]["run_id"]})
-            if rec["status"] != "succeeded":
-                self.warnings.append(f"s4: {arm} {enc} run {rec['status']}: {str(rec['error'])[:300]}")
-            return entry
-
-        for arm, overrides, encs in arms:
+        common = {"dv_id": dv_id, "manifest": manifest, "baseline": baseline, "family_id": family_id, "st": st}
+        for arm, overrides, encs in self.s4_arms():
             results[arm] = {}
             for enc in encs:
                 try:
-                    results[arm][enc] = arm_run(arm, enc, overrides)
+                    results[arm][enc] = self.ablation_arm(arm, enc, overrides, **common)
                 except StageError:
                     raise
                 except Exception as exc:  # noqa: BLE001 - one failed arm is a result; the others still run
@@ -1579,18 +2677,165 @@ class Driver:
             downstream = {"status": "skipped", "reason": "--skip-precision-downstream"}
         else:
             try:
-                downstream = arm_run("c_precision_fp16", MIDNIGHT, {"precision": "fp16"})
+                downstream = self.ablation_arm("c_precision_fp16", MIDNIGHT, {"precision": "fp16"}, **common)
             except Exception as exc:  # noqa: BLE001
                 downstream = {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
         precision["downstream_fp16"] = downstream
         with session_scope() as db:
             fam = db.get(ComparisonFamily, family_id)
-            fam_status = fam.status
+            fam_status = fam.status if fam is not None else None
+        arm_status = {arm: {e: (v or {}).get("status") for e, v in by.items()} for arm, by in results.items()}
         return {"family": {"family_id": family_id, "status": fam_status, "bootstrap_seed": self.boot_seed},
-                "head": "meanpool_logreg", "baselines": {e: r["run_id"] for e, r in baseline.items()},
-                "arms": results, "coverage_side_by_side": coverage, "precision": precision,
+                "head": "meanpool_logreg", "seed": self.seeds[0],
+                "baselines": {e: r["run_id"] for e, r in baseline.items()},
+                "arms": results, "arm_status": arm_status,
+                "not_evidence": [{"arm": arm, "encoder": e, "status": s,
+                                  "reason": ((results[arm].get(e) or {}).get("reason")
+                                             or (results[arm].get(e) or {}).get("error"))}
+                                 for arm, by in arm_status.items() for e, s in by.items() if s != "succeeded"],
+                "coverage_side_by_side": coverage, "precision": precision,
                 "macenko_note": "macenko-v1 references are fitted at build time on train-split slides of the dataset "
-                                "only (never validation or test); the development pool here is the train split",
+                                "(never test). Under dev_cv the train split IS the development pool, so every held-out "
+                                "fold contributed to a shared reference: such a result is not fold-safe. The arm is "
+                                "blocked when the engine refuses it, and invalid for CV comparison when a run "
+                                "succeeded without declaring fold-specific fitting.",
+                **reference_standard_fields(manifest)}
+
+    # ------------------------------------------------------------------ s4b
+    @staticmethod
+    def dev_resources(summary: dict | None, dev: set) -> dict | None:
+        """Runtime, memory and storage of the DEVELOPMENT slides of one feature set (fresh extractions only for
+        timing; cache hits re-verify hashes and are not extraction cost)."""
+        if not summary:
+            return None
+        rows = [r for r in summary.get("per_slide") or [] if r.get("slide_id") in dev and r.get("status") == "done"]
+        fresh = [r for r in rows if not r.get("cache_hit")]
+        patches = sum(int(r.get("n_patches") or 0) for r in fresh)
+        secs = sum(float(r.get("total_seconds") or 0.0) for r in fresh)
+        return {"slides": len(rows), "fresh_extractions": len(fresh), "cache_hits": len(rows) - len(fresh),
+                "patches_per_slide": stats(r.get("n_patches") for r in rows),
+                "seconds_per_slide_fresh": stats(r.get("total_seconds") for r in fresh),
+                "embed_seconds_per_slide_fresh": stats(r.get("embed_seconds") for r in fresh),
+                "read_seconds_per_slide_fresh": stats(r.get("read_seconds") for r in fresh),
+                "seconds_per_patch_fresh": ratio(secs, patches),
+                "peak_rss_bytes_max": max((int(r.get("peak_rss_bytes") or 0) for r in rows), default=None),
+                "peak_rss_delta_bytes": stats(r.get("peak_rss_delta_bytes") for r in fresh),
+                "storage_bytes_per_slide": stats(r.get("artifact_bytes") for r in rows),
+                "original_extraction_seconds_per_slide": stats(((r.get("original_extraction") or {})
+                                                                .get("total_seconds")) for r in rows),
+                "note": "fresh = extracted by this build; original_extraction = the content-addressed artifact's own "
+                        "first extraction (also for cache hits)"}
+
+    def dev_predictions(self, run_id: str) -> list[dict]:
+        from sqlalchemy import select
+
+        from dermpath.db import session_scope
+        from dermpath.ml.models import Prediction
+
+        with session_scope() as db:
+            self.authorize(db, "experiment.read")
+            preds = db.scalars(select(Prediction).where(Prediction.run_id == run_id, Prediction.split == "oof")
+                               .order_by(Prediction.bag_id)).all()
+            return [{"bag_id": p.bag_id, "patient": p.patient_code or p.coded_patient_id, "label": p.label,
+                     "score": p.score, "threshold": p.threshold, "split": p.split} for p in preds]
+
+    def s4b(self) -> dict:
+        """Item 7: does the current sampling budget miss tissue? Development data only (out-of-fold), the
+        current budget against ONE pre-declared higher budget, meanpool_logreg with the first seed."""
+        from dermpath.db import session_scope
+        from dermpath.ml.evaluation import add_family_member, create_family, reference_standard_fields
+        from dermpath.ml.models import TrainingRun
+        from dermpath.models import Project
+
+        dv_id, _ = self.dataset()
+        s3 = self.require("s3")
+        manifest = self.manifest(dv_id)
+        dev = set(self.dev_slide_ids(manifest))
+        all_slides = {it["slide_id"] for it in manifest["items"]}
+        st = self.state("s4b")
+        st.setdefault("runs", {})
+        baseline = {r["encoder"]: r for r in s3["runs"] if r["role"] == "grid" and r["head"] == SAMPLING_HEAD
+                    and r.get("seed", SEED) == self.seeds[0]}
+        for e in ENCODERS:
+            if e not in self.sampling_encoders:
+                self.skip_work(f"s4b {e}", "encoder not selected (--sampling-encoders)")
+        self.skip_work("s4b abmil", "not part of the pre-declared budget comparison: ABMIL caps the instances per bag "
+                                    "(max_instances_per_bag), which would conflate two settings")
+        if not st.get("family_id"):
+            with session_scope() as db:
+                self.authorize(db, "experiment.write")
+                fam = create_family(db, self.actor, db.get(Project, PROJECT_ID), name="S4b COBRA sampling budget",
+                                    dataset_version_id=dv_id, bootstrap_seed=self.boot_seed,
+                                    plan={"schema": REPORT_SCHEMA, "stage": "s4b", "n_boot": self.n_boot,
+                                          "budgets": [self.max_patches, self.sampling_budget],
+                                          "comparisons": "higher budget vs the s3 baseline of the same encoder, "
+                                                         "out-of-fold, identical folds, development data only"})
+                for e, r in baseline.items():
+                    if e in self.sampling_encoders:
+                        add_family_member(db, self.actor, fam, db.get(TrainingRun, r["run_id"]),
+                                          role="s3_baseline_current_budget")
+                st["family_id"] = fam.id
+            self.save_state("s4b", st)
+        out: dict = {}
+        for enc in self.sampling_encoders:
+            base = baseline.get(enc)
+            entry: dict = {"encoder": enc, "head": SAMPLING_HEAD, "seed": self.seeds[0],
+                           "budgets": {"current": self.max_patches, "higher": self.sampling_budget},
+                           "baseline_run_id": (base or {}).get("run_id")}
+            out[enc] = entry
+            if not base or base.get("status") != "succeeded":
+                entry.update(status="not_run", reason="the s3 baseline run of this encoder did not succeed")
+                self.skip_work(f"s4b {enc}", entry["reason"])
+                continue
+            self.log(f"s4b: {enc}: feature set at {self.sampling_budget} patches per slide")
+            t0 = time.perf_counter()
+            sup = self.supervised_set(enc, dv_id, label=f"S4b budget {self.sampling_budget}",
+                                      max_patches_per_slide=self.sampling_budget)
+            entry["feature_set"] = sup
+            if sup["build"]["status"] != "ready":
+                entry.update(status="feature_set_failed", error=sup["build"].get("error"))
+                self.warnings.append(f"s4b: {enc} feature set failed: {str(entry['error'])[:300]}")
+                continue
+            if enc not in st["runs"]:
+                params = self.base_run_params(SAMPLING_HEAD, enc, max_patches_per_slide=self.sampling_budget)
+                rid, _ = self.create_run(dv_id=dv_id, encoder=enc, head=SAMPLING_HEAD, params=params,
+                                         name=f"S4b budget {self.sampling_budget} · {enc} · {SAMPLING_HEAD}",
+                                         fs_id=sup["created"]["feature_set_id"], family_id=st["family_id"],
+                                         role="sampling_budget_higher", seed=self.seeds[0])
+                st["runs"][enc] = rid
+                self.save_state("s4b", st)
+            self.run_train_jobs([st["runs"][enc]], f"s4b {enc}")
+            rec = self.run_record(st["runs"][enc])
+            entry["run"] = rec
+            entry["status"] = rec["status"]
+            base_fs = (((s3.get("feature_sets") or {}).get(enc) or {}).get("supervised_set") or {}).get("feature_set")
+            hi_fs = sup.get("feature_set")
+            entry["coverage"] = paired_coverage((base_fs or {}).get("per_slide") or [],
+                                                (hi_fs or {}).get("per_slide") or [], dev)
+            entry["resources"] = {
+                "current": self.dev_resources(base_fs, dev), "higher": self.dev_resources(hi_fs, dev),
+                "higher_build_wall_seconds_all_slides": sup["build"].get("wall_seconds"),
+                "test_slides_extracted_label_free": len(all_slides - dev),
+                "note": "the feature-set build extracts every slide of the dataset label-free (test included, design "
+                        "§5); only development slides are summarised and compared here"}
+            entry["costs"] = {"wall_seconds": round(time.perf_counter() - t0, 3), "process_peak_rss_bytes":
+                              peak_rss_bytes()}
+            if rec["status"] != "succeeded":
+                entry["comparison"] = {"status": "not_computed", "reason": f"run {rec['status']}"}
+                self.warnings.append(f"s4b: {enc} run {rec['status']}: {str(rec.get('error'))[:300]}")
+                continue
+            entry["test_untouched"] = set(rec.get("prediction_splits") or []) <= {"train", "oof"}
+            entry["prediction_changes"] = prediction_changes(self.dev_predictions(base["run_id"]),
+                                                             self.dev_predictions(rec["run_id"]))
+            entry["comparison"] = self.compare({"higher_budget": rec["run_id"], "current_budget": base["run_id"]})
+        return {"budgets": {"current": self.max_patches, "higher": self.sampling_budget,
+                            "higher_source": self.sampling_budget_source,
+                            "declared": "before any budget comparison was run (driver constant "
+                                        "SAMPLING_BUDGET_DEFAULT, 2026-10-28) unless --sampling-budget was given"},
+                "head": SAMPLING_HEAD, "seed": self.seeds[0], "family_id": st.get("family_id"),
+                "development_only": True, "encoders": out,
+                "note": "development data only (out-of-fold predictions; the test split is never read). Coverage is "
+                        "tissue coverage, not lesion coverage; no attention map is read as lesion localisation.",
                 **reference_standard_fields(manifest)}
 
     # ------------------------------------------------------------------ s5
@@ -1635,11 +2880,18 @@ class Driver:
                 fs = (entry.get("feature_set") or {}).get("feature_set")
                 if fs and (fs["aggregate"].get("fresh_extractions") or 0) > 0:
                     add(f"s4 {arm}", enc, fs)
+        s4b = self.load_report("s4b") if self.report_path("s4b").is_file() else None
+        if s4b:
+            for enc, entry in (s4b.get("encoders") or {}).items():
+                fs = ((entry or {}).get("feature_set") or {}).get("feature_set")
+                if fs and (fs["aggregate"].get("fresh_extractions") or 0) > 0:
+                    add(f"s4b budget {(s4b.get('budgets') or {}).get('higher')}", enc, fs)
         training = []
         if s3:
             for r in s3["runs"]:
                 t = r.get("timings_seconds") or {}
                 training.append({"run_id": r["run_id"], "encoder": r["encoder"], "head": r["head"],
+                                 "seed": r.get("seed"),
                                  "fraction": r["fraction"], "training_seconds": t.get("training"),
                                  "total_seconds": t.get("total"),
                                  "development_slides": ((r.get("oof") or {}).get("n_items") or 0)
@@ -1710,6 +2962,17 @@ class Driver:
         if cand.get("rule") != CANDIDATE_RULE:
             raise StageError("the s3 candidate rule differs from the driver's pre-declared rule")
         run_id = cand["chosen"]["run_id"]
+        # Defence in depth (the run loop gates s6 first): explicit opt-in naming exactly this candidate.
+        if not self.release_test:
+            raise StageError("a test release is never automatic: --release-test <pre-declared candidate run id> and "
+                             "--release-reason are required")
+        if self.release_test != run_id:
+            raise StageError(f"--release-test {self.release_test} is not the pre-declared candidate {run_id} of the "
+                             "current s3 report")
+        operator_reason = (self.args.release_reason or "").strip()
+        if not operator_reason:
+            raise StageError("--release-reason is required for a test release")
+        release_reason = f"{RELEASE_REASON}; operator reason: {operator_reason}"
         st = self.state("s6")
         justification = (self.args.justification or "").strip() or None
         history = list(st.get("invocations") or [])
@@ -1740,16 +3003,21 @@ class Driver:
                                  "refusing to continue without --force s6 and --justification",
                                  releases=[r.id for r in prior])
         else:
+            if status_before.get("justification_required") and not justification:
+                raise StageError("these test patients were already looked at by an earlier release in this project; "
+                                 "another look needs --justification (nothing was released)",
+                                 prior_releases_on_manifest=status_before.get("prior_releases_on_manifest"),
+                                 prior_releases_on_test_patients=status_before.get("prior_releases_on_test_patients"))
             self.log(f"s6: test release of run {run_id} ({cand['chosen']['encoder']} · {cand['chosen']['head']})")
             with session_scope() as db:
                 run = db.get(TrainingRun, run_id)
                 self.authorize(db, "dataset.test_access")
-                rel, job = create_test_release(db, self.actor, run, reason=RELEASE_REASON,
-                                               justification=justification if forced else None, candidate="bundle")
+                rel, job = create_test_release(db, self.actor, run, reason=release_reason,
+                                               justification=justification, candidate="bundle")
                 rel_id, job_id = rel.id, job.id
             st.update(release_id=rel_id, job_id=job_id, released_at=now_iso())
             self.save_state("s6", st)
-            action = "new test release recorded" + (" (forced, with justification)" if forced else "")
+            action = "new test release recorded" + (" (with justification)" if justification else "")
         with session_scope() as db:
             from dermpath.ml.engine_models import TestRelease
 
@@ -1769,7 +3037,10 @@ class Driver:
         return {
             "candidate": cand, "s3_report": {"path": str(s3_path), "sha256": sha256_file(s3_path),
                                              "candidate_declared_at": cand.get("declared_at")},
-            "action": action, "reason": RELEASE_REASON, "justification": justification,
+            "action": action, "reason": release_reason, "operator_reason": operator_reason,
+            "justification": justification,
+            "opt_in": {"release_test": self.release_test, "candidate_matches": self.release_test == run_id,
+                       "note": "s6 runs only on an explicit --release-test naming the pre-declared candidate"},
             "registry": registry, "test_release_status_before": status_before, "test_release": release,
             "release_number": body.get("release_number"), "test_release_id": body.get("test_release_id"),
             "prior_releases_on_manifest": body.get("prior_releases_on_manifest"),
@@ -1795,14 +3066,24 @@ class Driver:
         from dermpath.ml.evaluation import errors_response
         from dermpath.ml.models import TrainingRun
 
-        s3, s6 = self.require("s3"), self.load_report("s6")
+        s3 = self.require("s3")
+        s6_ev = self.evaluate("s6")
+        s6 = self.load_report("s6") if s6_ev["status"] == "valid" else None
+        cand_run = ((s3.get("pre_declared_test_candidate") or {}).get("chosen") or {}).get("run_id")
+        if s6 is not None and ((s6.get("candidate") or {}).get("chosen") or {}).get("run_id") != cand_run:
+            s6 = None
+        test_note = (None if s6 is not None else
+                     "no test release recorded" if s6_ev["status"] == "missing" else
+                     f"s6 is {s6_ev['status']}: its test errors belong to another candidate or cannot be verified "
+                     "and are not mixed with this development analysis (history in test_release_history/)")
         runs = []
         totals: dict[str, int] = {}
         grid_totals: dict[str, int] = {}
         for r in s3["runs"]:
             if r["status"] != "succeeded":
                 runs.append({"run_id": r["run_id"], "encoder": r["encoder"], "head": r["head"], "role": r["role"],
-                             "fraction": r["fraction"], "repeat": r["repeat"], "status": r["status"],
+                             "fraction": r["fraction"], "repeat": r["repeat"], "seed": r.get("seed"),
+                             "status": r["status"],
                              "error": r["error"]})
                 continue
             with session_scope() as db:
@@ -1814,7 +3095,8 @@ class Driver:
                 if r["role"] == "grid":
                     grid_totals[k] = grid_totals.get(k, 0) + int(v or 0)
             runs.append({"run_id": r["run_id"], "encoder": r["encoder"], "head": r["head"], "role": r["role"],
-                         "fraction": r["fraction"], "repeat": r["repeat"], "status": r["status"],
+                         "fraction": r["fraction"], "repeat": r["repeat"], "seed": r.get("seed"),
+                             "status": r["status"],
                          "counts": er["counts"], "categories": cats.get("counts"),
                          "counts_by_error_type": cats.get("counts_by_error_type"),
                          "not_assessable": cats.get("not_assessable"),
@@ -1860,7 +3142,8 @@ class Driver:
             return [{"category": k, "count": v, "share_of_category_tags": (v / tot) if tot else None}
                     for k, v in sorted(d.items(), key=lambda kv: (-kv[1], kv[0])) if v]
 
-        return {"oof_runs": runs, "test_errors_of_candidate": test, "learning_curve_slopes": slopes,
+        return {"oof_runs": runs, "test_errors_of_candidate": test, "test_errors_note": test_note,
+                "learning_curve_slopes": slopes,
                 "dominant_categories": {"grid_runs_oof": ranked(grid_totals), "all_s3_runs_oof": ranked(totals),
                                         "test_candidate": ranked((test or {}).get("counts") or {})},
                 "note": "Categories are possible contributing factors, never causes; a bag can carry several. "
@@ -1871,13 +3154,42 @@ class Driver:
                 "reference_standard_notice": s3.get("reference_standard_notice")}
 
     # ------------------------------------------------------------------ s8
+    def test_release_history(self) -> list[dict]:
+        """Every recorded test look (immutable copies in ``test_release_history/``), newest last."""
+        out = []
+        hist = self.reports_dir / "test_release_history"
+        cur = self.evaluate("s6")
+        cur_sha = sha256_file(self.report_path("s6")) if self.report_path("s6").is_file() else None
+        for p in sorted(hist.glob("s6.*.json")) if hist.is_dir() else []:
+            r = self.read_json_safe(p) or {}
+            digest = sha256_file(p)
+            current = digest == cur_sha
+            out.append({"file": p.name, "sha256": digest, "test_release_id": r.get("test_release_id"),
+                        "release_number": r.get("release_number"), "finished_at": r.get("finished_at"),
+                        "candidate": {k: ((r.get("candidate") or {}).get("chosen") or {}).get(k)
+                                      for k in ("encoder", "head", "run_id")},
+                        "reason": r.get("reason"), "justification": r.get("justification"),
+                        "is_current_s6": current,
+                        "status": cur["status"] if current else "historical (superseded by a later release)"})
+        return out
+
     def s8(self) -> dict:
-        reps = {s: self.load_report(s) for s in STAGES if s != "s8"}
+        evs = {s: self.evaluate(s) for s in STAGES if s != "s8"}
+        bad = {s: ev for s, ev in evs.items() if ev["status"] in ("stale", "invalid", "failed")
+               and not (s == "s6" and ev["status"] in ("failed", "stale"))}
+        if bad:
+            raise StageError("s8 refuses to assemble a summary from stages that are not valid for this command line: "
+                             + "; ".join(f"{s} {ev['status']} ({(ev['reasons'] or [''])[0][:160]})"
+                                         for s, ev in bad.items()),
+                             stages={s: {"status": ev["status"], "reasons": ev["reasons"]} for s, ev in bad.items()})
+        s6_valid = evs["s6"]["status"] == "valid"
+        reps = {s: (self.load_report(s) if evs[s]["status"] == "valid" else None) for s in evs}
         links = {}
         for s, r in reps.items():
             p = self.report_path(s)
-            links[s] = {"title": TITLES[s], "path": str(p), "exists": r is not None,
-                        "sha256": sha256_file(p) if r is not None else None,
+            links[s] = {"title": TITLES[s], "path": str(p), "exists": p.is_file(), "status": evs[s]["status"],
+                        "sha256": sha256_file(p) if p.is_file() else None,
+                        "fingerprint_sha256": evs[s].get("recorded_fingerprint_sha256"),
                         "elapsed_seconds": (r or {}).get("elapsed_seconds"),
                         "finished_at": (r or {}).get("finished_at"), "warnings": len((r or {}).get("warnings") or [])}
         key: dict = {}
@@ -1903,22 +3215,50 @@ class Driver:
                                 for e, v in reps["s2"]["encoders"].items()}
         if reps["s3"]:
             s3 = reps["s3"]
-            key["baselines_oof"] = [{"encoder": r["encoder"], "head": r["head"], "status": r["status"],
+            key["baselines_oof"] = [{"encoder": r["encoder"], "head": r["head"], "seed": r.get("seed"),
+                                     "status": r["status"],
                                      "auroc": ((r.get("oof") or {}).get("threshold_free") or {}).get("auroc"),
                                      "auprc": ((r.get("oof") or {}).get("threshold_free") or {}).get("auprc"),
                                      "sensitivity": ((r.get("oof") or {}).get("at_operating_point") or {})
                                      .get("sensitivity"),
                                      "specificity": ((r.get("oof") or {}).get("at_operating_point") or {})
-                                     .get("specificity")}
+                                     .get("specificity"),
+                                     "n_unscorable": (r.get("oof") or {}).get("n_unscorable")}
                                     for r in s3["runs"] if r["role"] == "grid"]
-            key["comparisons_oof"] = {g: [{"fixed": c.get("fixed"), "status": c.get("status"),
-                                           "deltas": [{"a": d["a"], "b": d["b"], "auroc": d.get("auroc"),
-                                                       "auprc": d.get("auprc")} for d in c.get("deltas") or []]}
-                                          for c in cs] for g, cs in s3["comparisons"].items()}
+
+            def compact(c):
+                return {"fixed": c.get("fixed"), "seed": c.get("seed"), "status": c.get("status"),
+                        "subject_accounting": c.get("subject_accounting"),
+                        "deltas": [{"a": d["a"], "b": d["b"], "auroc": d.get("auroc"), "auprc": d.get("auprc")}
+                                   for d in c.get("deltas") or []]}
+
+            comps = s3.get("comparisons") or {}
+            key["comparisons_oof"] = {g: [compact(c) for c in comps.get(g) or []]
+                                      for g in ("encoder_effects", "head_effects")}
+            if comps.get("four_way"):
+                key["comparisons_oof"]["four_way"] = compact(comps["four_way"])
+            key["comparisons_oof"]["primary_seed"] = comps.get("primary_seed")
+            key["comparisons_across_seeds"] = comps.get("across_seeds")
+            key["seed_summary"] = s3.get("seed_summary")
+            key["fold_consistency"] = (s3.get("protocol") or {}).get("fold_consistency")
             key["test_candidate"] = {k: s3["pre_declared_test_candidate"].get(k) for k in ("rule", "declared_at")} | {
                 "chosen": {k: s3["pre_declared_test_candidate"]["chosen"].get(k)
                            for k in ("encoder", "head", "run_id")}}
+        if reps["s4b"]:
+            key["sampling_budget"] = {
+                "budgets": reps["s4b"].get("budgets"),
+                "encoders": {e: {"status": v.get("status"), "coverage_delta": (v.get("coverage") or {}).get("delta"),
+                                 "slides_with_fewer_unsampled_fragments": (v.get("coverage") or {}).get(
+                                     "slides_with_fewer_unsampled_fragments"),
+                                 "seconds_per_slide_fresh": {
+                                     b: ((v.get("resources") or {}).get(b) or {}).get("seconds_per_slide_fresh")
+                                     for b in ("current", "higher")},
+                                 "prediction_changes": v.get("prediction_changes"),
+                                 "deltas": [{"a": d["a"], "b": d["b"], "auroc": d.get("auroc")}
+                                            for d in (v.get("comparison") or {}).get("deltas") or []]}
+                             for e, v in (reps["s4b"].get("encoders") or {}).items()}}
         if reps["s4"]:
+            key["ablations_not_evidence"] = reps["s4"].get("not_evidence")
             key["ablations_oof"] = {arm: {e: {"status": v.get("status"),
                                               "deltas": [{"a": d["a"], "b": d["b"], "auroc": d.get("auroc")}
                                                          for d in (v.get("comparison") or {}).get("deltas") or []]}
@@ -1964,78 +3304,203 @@ class Driver:
             caveats.insert(0, "DRY RUN on a throwaway database with tiny budgets: these numbers prove the plumbing "
                               "only and say nothing about performance.")
         stage_warnings = {s: (r or {}).get("warnings") or [] for s, r in reps.items()}
+        history = self.test_release_history()
+        if history and not s6_valid:
+            caveats.append("A test release was recorded for an earlier candidate (obsolete for the current "
+                           "development stage): its test patients have been looked at; any further release needs a "
+                           "justification and counts as another look.")
+        blockers = []
+        s0 = reps.get("s0") or {}
+        for e, ident in ((s0.get("encoders") or {}).get("benchmark_encoders") or {}).items():
+            if (ident or {}).get("status") != "available":
+                blockers.append({"what": f"encoder {e}", "status": (ident or {}).get("status"),
+                                 "detail": (ident or {}).get("status_detail")})
+        devs = s0.get("devices") or {}
+        if devs and not devs.get("cuda") and "mps" not in (devs.get("available") or []):
+            blockers.append({"what": "accelerator", "status": "cpu_only",
+                             "detail": "no CUDA or MPS device: foundation-model extraction runs on the CPU"})
+        for item in ((reps.get("s4") or {}).get("not_evidence") or []):
+            if item.get("status") == "blocked":
+                blockers.append({"what": f"s4 {item['arm']} {item['encoder']}", "status": "blocked",
+                                 "detail": item.get("reason")})
+        skipped = {s: (r or {}).get("skipped_work") or [] for s, r in reps.items() if (r or {}).get("skipped_work")}
         return {"stages": links, "elapsed_seconds_per_stage": {s: v["elapsed_seconds"] for s, v in links.items()},
                 "elapsed_seconds_total": sum(v["elapsed_seconds"] or 0 for v in links.values()),
                 "key_numbers": key, "caveats": caveats, "stage_warnings": stage_warnings,
-                "missing_stages": [s for s, r in reps.items() if r is None]}
+                "stage_status": {s: {"status": ev["status"], "reasons": ev["reasons"]} for s, ev in evs.items()},
+                "test_release_history": history, "blockers": blockers, "skipped_work": skipped,
+                "missing_stages": [s for s, ev in evs.items() if ev["status"] == "missing"]}
 
     # =============================================================================================== orchestration
     def status(self) -> int:
-        for s in STAGES:
-            r = self.load_report(s)
-            err = self.state_dir / f"{s}.error.json"
-            print(f"{s}  {TITLES[s]:<70} {'done ' + str(r.get('finished_at')) if r else 'pending'}"
-                  f"{'  (last error recorded)' if err.is_file() else ''}")
+        rows = self.status_rows()
+        if self.args.json:
+            print(json.dumps(jsonable({"reports_dir": str(self.reports_dir), "meaning": STATUS_MEANING,
+                                       "depends": DEPENDS, "optional_depends": OPTIONAL_DEPENDS, "stages": rows}),
+                             indent=2, sort_keys=True))
+            return 0
+        for r in rows:
+            when = f"  ({r['finished_at']})" if r.get("finished_at") else ""
+            print(f"{r['stage']:<4} {r['status']:<8} {TITLES[r['stage']]}{when}")
+            if r["status"] != "valid":
+                for why in r["reasons"][:12]:
+                    print(f"       - {why}")
+        print("\nvalid: reused as is; s6 runs only with --release-test (never automatically).")
+        return 0
+
+    def s6_gate(self, forced: bool) -> tuple[str, str]:
+        """``(decision, message)`` with decision ``skip`` | ``run`` | ``refuse``. A test look happens only on an
+        explicit request naming the pre-declared candidate of a VALID s3 report; never because development code,
+        configuration or budgets changed."""
+        ev = self.evaluate("s6")
+        if not self.release_test:
+            return "skip", (f"s6: not run (status {ev['status']}): a test release is never automatic; pass "
+                            "--release-test <pre-declared candidate run id> and --release-reason to request one")
+        s3 = self.evaluate("s3")
+        if s3["status"] != "valid":
+            return "refuse", (f"s3 is {s3['status']} ({'; '.join(s3['reasons'][:3])}): a test release needs the "
+                              "pre-declared candidate of a valid development stage")
+        cand = self.candidate_identity() or {}
+        if not cand.get("run_id"):
+            return "refuse", "the s3 report declares no test candidate"
+        if self.release_test != cand["run_id"]:
+            return "refuse", (f"--release-test {self.release_test} is not the pre-declared candidate {cand['run_id']} "
+                              f"({cand.get('encoder')} · {cand.get('head')}, declared {cand.get('declared_at')}) of "
+                              "the current s3 report; nothing was released")
+        if not (self.args.release_reason or "").strip():
+            return "refuse", "--release-reason is required for a test release"
+        justification = (self.args.justification or "").strip()
+        if ev["status"] == "valid" and not forced:
+            return "skip", ("s6: the pre-declared candidate was already released and its record is valid: no second "
+                            "look (use --force s6 with --justification to re-read the stored result)")
+        if forced and not justification:
+            return "refuse", "--force s6 needs --justification (another access to test results)"
+        hist = self.reports_dir / "test_release_history"
+        looked = self.report_path("s6").is_file() or (hist.is_dir() and any(hist.glob("s6.*.json")))
+        if looked and ev["status"] != "valid" and not justification:
+            return "refuse", (f"a test release was already recorded (s6 is {ev['status']}): a release for this "
+                              "candidate is another look at the same test patients and needs --justification")
+        blockers = self.upstream_blockers("s6")
+        if blockers:
+            return "refuse", f"upstream not valid: {'; '.join(blockers)}"
+        return "run", "explicit, pre-declared test release requested"
+
+    def record_refusal(self, stage: str, message: str) -> None:
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        with open(self.state_dir / f"{stage}.refusals.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"at": now_iso(), "argv": sys.argv[1:], "message": message}, sort_keys=True) + "\n")
+
+    def execute(self, stage: str, forced: bool, ev: dict) -> int:
+        fp = self.stage_fingerprint(stage)
+        self.prepare_state(stage, fp, forced)
+        self.log(f"{stage}: {TITLES[stage]} (fingerprint {fp['sha256'][:12]})")
+        self.t_stage = time.perf_counter()
+        self.warnings = []
+        self.skipped = []
+        started = now_iso()
+        try:
+            body = self.s6(forced) if stage == "s6" else getattr(self, stage)()
+        except Exception as exc:  # noqa: BLE001 - recorded, then the run stops (later stages depend on it)
+            err = {"stage": stage, "at": now_iso(), "error": f"{type(exc).__name__}: {exc}",
+                   "details": getattr(exc, "details", None), "traceback": traceback.format_exc(),
+                   "fingerprint_sha256": fp["sha256"]}
+            try:
+                from dermpath.errors import ApiError
+
+                if isinstance(exc, ApiError):
+                    err["api_error"] = {"code": exc.code, "message": exc.message, "details": exc.details}
+            except Exception:  # noqa: BLE001
+                pass
+            self.write_json(self.error_path(stage), err)
+            self._memo.clear()
+            self.log(f"{stage}: FAILED: {err['error'][:500]} (details in {self.error_path(stage)})")
+            return 1
+        if self.report_path(stage).is_file():
+            why = "forced re-run (--force)" if forced else (
+                f"re-run because the stage was {ev['status']}: " + "; ".join(ev["reasons"][:10]))
+            self.supersede(self.report_path(stage), stage, why)
+        path = self.write_report(stage, body, started, fp)
+        self.error_path(stage).unlink(missing_ok=True)
+        self._memo.clear()
+        self.log(f"{stage}: done in {time.perf_counter() - self.t_stage:.1f}s -> {path}")
+        stale = [s for s in STAGES if s != stage and self.report_path(s).is_file()
+                 and (stage in DEPENDS[s] or stage in OPTIONAL_DEPENDS.get(s, ()))
+                 and self.evaluate(s)["status"] != "valid"]
+        if stale:
+            self.log(f"{stage}: dependent stage(s) now not valid: {', '.join(stale)} (re-run them; an obsolete s6 "
+                     "stays history)")
         return 0
 
     def run(self) -> int:
         self.actor = self.lead()
         rc = 0
+        if self.release_test and "s6" not in self.only:
+            self.log("--release-test was given but s6 is not selected (--only): no test release")
         for stage in STAGES:
             if stage not in self.only:
                 continue
             forced = stage in self.force
-            if self.report_path(stage).is_file() and not forced:
-                self.log(f"{stage}: skipped (report exists: {self.report_path(stage)}; --force {stage} re-runs it)")
+            if stage == "s6":
+                decision, msg = self.s6_gate(forced)
+                if decision == "skip":
+                    self.log(msg)
+                    continue
+                if decision == "refuse":
+                    self.log(f"s6: REFUSED: {msg}")
+                    self.record_refusal("s6", msg)
+                    rc = 1
+                    continue  # nothing was looked at; development stages are independent of s6
+                if self.execute("s6", forced, self.evaluate("s6")):
+                    rc = 1
                 continue
-            if stage == "s6" and forced and self.report_path("s6").is_file() and not (self.args.justification or
-                                                                                      "").strip():
-                self.log("s6: refused: a test release was already reported; re-running s6 needs --force s6 AND "
-                         "--justification \"<why another look at the test patients is warranted>\"")
-                return 1
-            missing = [d for d in REQUIRES[stage] if not self.report_path(d).is_file()]
-            if missing:
-                self.log(f"{stage}: cannot run: missing report(s) {missing}")
-                return 1
-            self.log(f"{stage}: {TITLES[stage]}")
-            self.t_stage = time.perf_counter()
-            self.warnings = []
-            started = now_iso()
-            if forced and stage in ("s3", "s4"):
-                self.reset_state(stage)  # a forced s3/s4 starts a new family with new runs
-            try:
-                body = self.s6(forced) if stage == "s6" else getattr(self, stage)()
-            except Exception as exc:  # noqa: BLE001 - recorded, then the run stops (later stages depend on it)
-                err = {"stage": stage, "at": now_iso(), "error": f"{type(exc).__name__}: {exc}",
-                       "details": getattr(exc, "details", None), "traceback": traceback.format_exc()}
-                try:
-                    from dermpath.errors import ApiError
-
-                    if isinstance(exc, ApiError):
-                        err["api_error"] = {"code": exc.code, "message": exc.message, "details": exc.details}
-                except Exception:  # noqa: BLE001
-                    pass
-                self.write_json(self.state_dir / f"{stage}.error.json", err)
-                self.log(f"{stage}: FAILED: {err['error'][:500]} (details in {self.state_dir / (stage + '.error.json')})")
+            ev = self.evaluate(stage)
+            if ev["status"] == "valid" and not forced:
+                self.log(f"{stage}: reused (valid: fingerprint {ev['fingerprint_sha256'][:12]}, report sha256, "
+                         "upstream and artifacts verified)")
+                continue
+            blockers = self.upstream_blockers(stage)
+            if blockers:
+                self.log(f"{stage}: cannot run: upstream not valid: {'; '.join(blockers)}")
                 rc = 1
                 break
-            if forced:
-                self.archive(stage)
-            path = self.write_report(stage, body, started)
-            (self.state_dir / f"{stage}.error.json").unlink(missing_ok=True)
-            self.log(f"{stage}: done in {time.perf_counter() - self.t_stage:.1f}s -> {path}")
+            if ev["status"] not in ("missing",) and not forced:
+                self.log(f"{stage}: re-running ({ev['status']}): " + "; ".join(ev["reasons"][:6]))
+            if self.execute(stage, forced, ev):
+                rc = 1
+                break
+        self.write_status_snapshot()
         return rc
+
+
+def usage_error(args) -> str | None:
+    """Command-line combinations refused before anything is opened (exit 2)."""
+    for n, v in (("--max-patches", args.max_patches), ("--cv-folds", args.cv_folds), ("--lc-repeats", args.lc_repeats),
+                 ("--n-boot", args.n_boot), ("--sampling-budget", args.sampling_budget)):
+        if v is not None and v < 1:
+            return f"{n} must be at least 1"
+    if args.cv_folds is not None and args.cv_folds < 2:
+        return "--cv-folds must be at least 2"
+    only = parse_stage_list(args.only) if args.only else []
+    force = parse_stage_list(args.force) if args.force else []
+    release = (args.release_test or "").strip()
+    if not args.status:
+        if args.only and only == ["s6"] and not release:
+            return ("s6 alone was requested without --release-test: a test release is never automatic; pass "
+                    "--release-test <pre-declared candidate run id> and --release-reason")
+        if "s6" in force and not release:
+            return "--force s6 needs --release-test <candidate run id> (and --justification)"
+        if "s6" in force and not (args.justification or "").strip():
+            return "--force s6 needs --justification"
+        if release and not (args.release_reason or "").strip():
+            return "--release-test needs --release-reason \"<why this test look now>\""
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    for n, v in (("--max-patches", args.max_patches), ("--cv-folds", args.cv_folds), ("--lc-repeats", args.lc_repeats),
-                 ("--n-boot", args.n_boot)):
-        if v is not None and v < 1:
-            print(f"error: {n} must be at least 1", file=sys.stderr)
-            return 2
-    if args.cv_folds is not None and args.cv_folds < 2:
-        print("error: --cv-folds must be at least 2", file=sys.stderr)
+    err = usage_error(args)
+    if err:
+        print(f"error: {err}", file=sys.stderr)
         return 2
     print("DermPath Research Workbench, COBRA experiment driver. RESEARCH USE ONLY: not a medical device; outputs "
           "are not diagnoses. Local database only; nothing is downloaded.", file=sys.stderr)

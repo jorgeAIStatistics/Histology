@@ -86,8 +86,9 @@ def splits(body: SplitIn, scope: Scope = Depends(entity_scope("dataset.write", D
 @router.get("/datasets/{id}/freeze-check")
 def freeze_check(scope: Scope = Depends(entity_scope("dataset.read", DatasetVersion)), db: Session = Depends(get_db)):
     """What freezing this draft would lock in that a person should look at first (read-only; freeze enforces it):
-    ``blockers`` refuse the freeze outright; the warning lists in ``acknowledgeable`` need an acknowledgement with
-    a reason; ``mixed_label_patients`` is informational."""
+    ``blockers`` refuse the freeze outright (``acquisition_exposed_in_evaluation`` among them: model-selected
+    material in val/test, with a resolution per patient); the warning lists in ``acknowledgeable`` need an
+    acknowledgement with a reason; ``mixed_label_patients`` and ``acquisition_exposure`` are informational."""
     w = ds.freeze_check(db, scope.obj)
     ids = {x["slide_id"] for x in w["open_qc_issues"]}
     for key in ("unreviewed_near_duplicates", "unsure_near_duplicates", "duplicates_across_splits"):
@@ -136,6 +137,15 @@ def dataset_audit(scope: Scope = Depends(entity_scope("dataset.read", DatasetVer
     if dv.status == "frozen" and dv.manifest_json:
         out["at_freeze"] = dv.manifest_json.get("audit")
     return out
+
+
+@router.get("/projects/{pid}/acquisition-exposure")
+def acquisition_exposure(scope: Scope = Depends(project_scope("dataset.read")), db: Session = Depends(get_db)):
+    """Model-selected review material of the project (owner's brief item 6): every patient exposed to
+    active-learning selection (with its sources: recorded proposals, legacy proposals made before exposures were
+    recorded, moved slides or cases, confirmed duplicates) and the historical conflicts of frozen versions whose
+    val/test holds such material. Read-only: frozen versions and their evaluations are never rewritten."""
+    return ds.project_acquisition_report(db, scope.project_id)
 
 
 @router.get("/datasets/{id}/staleness")

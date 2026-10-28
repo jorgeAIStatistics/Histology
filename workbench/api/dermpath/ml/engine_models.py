@@ -41,6 +41,25 @@ guard, as for the core tables):
   A bundle's ``bundle_sha256`` must equal :func:`bundle_sha256_of` of its
   ``content_json``, and the content must say ``research_use_only: true``.
 
+Inference prediction identity (owner brief item 2, 2026-10-28)
+--------------------------------------------------------------
+One ``inference_prediction`` row per (bundle, subject scope, slide, input-snapshot sha256)
+(``uq_inference_prediction_subject_snapshot``). ``provenance_status`` is ``complete`` when
+``input_snapshot_json`` is the canonical effective input snapshot that the extraction actually
+read (``input_snapshot_sha256`` is its identity, ``subject_scope`` is ``slide``: the CHECK
+constraints require both), and ``legacy_unverified`` for rows written before snapshots were
+passed to extraction (their recorded snapshot was taken separately from the extraction inputs).
+Legacy rows are listed for history and never reused; they are never rewritten.
+
+Schema version decision: ``SCHEMA_VERSION`` stays 2. The change is additive and is applied in
+place, idempotently, by :func:`migrate_inference_prediction` (a ``Base.metadata``
+``after_create`` hook, so it runs inside ``create_all`` at every startup and is a no-op once
+done): existing rows are copied verbatim and marked ``legacy_unverified`` by the column default,
+the old one-row-per-(bundle, slide) uniqueness is replaced, and the append-only triggers are
+recreated. A database at another version still fails at startup as before. The automatic
+migration is implemented for SQLite (the local default); on another backend it refuses at
+startup with the statements to apply (PostgreSQL is unverified here, as in ``dermpath.db``).
+
 Research use only: no table here holds a diagnosis, and inference outputs never hold a
 label.
 """
@@ -67,10 +86,11 @@ from sqlalchemy import (
     func,
     inspect,
     select,
+    text,
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
-from ..db import Base, UTCDateTime, utcnow
+from ..db import Base, SchemaVersion, UTCDateTime, utcnow
 from ..models import ImmutableRecordError, new_id
 
 EXECUTION_MODES = ("synthetic_pipeline_test", "real_image_technical", "supervised_experiment")
@@ -81,6 +101,11 @@ FAMILY_STATUSES = ("open", "locked", "test_released")
 RELEASE_CANDIDATE_KINDS = ("bundle", "family")
 ATTEMPT_OUTCOMES = ("succeeded", "failed", "retryable_error", "canceled", "lease_lost", "run_identity_changed")
 AL_STRATEGIES = ("uncertainty", "diversity", "random")
+#: ``inference_prediction.provenance_status``: ``complete`` = the stored input snapshot is the one the
+#: extraction read (reusable for that exact identity); ``legacy_unverified`` = written before that rule
+#: (kept for history, never reused). The column default is the safe value.
+PREDICTION_PROVENANCE_STATUSES = ("complete", "legacy_unverified")
+PREDICTION_SUBJECT_SCOPES = ("slide",)  # case inference has no endpoint (it needs case-level provenance)
 
 #: Allowed ``(old, new)`` status transitions.
 FEATURE_SET_TRANSITIONS = frozenset({("building", "ready"), ("building", "failed"), ("failed", "building")})
@@ -339,10 +364,23 @@ class InferenceBundle(Base):
 
 
 class InferencePrediction(Base):
-    """A research output of a bundle on one slide. Append-only; never a label, never routed to care."""
+    """A research output of a bundle on one slide. Append-only; never a label, never routed to care.
+
+    One row per (bundle, subject scope, slide, input-snapshot sha256): a changed input is a new row, the
+    earlier rows stay (history). See the module docstring for ``provenance_status``."""
 
     __tablename__ = "inference_prediction"
-    __table_args__ = (UniqueConstraint("bundle_id", "slide_id", name="uq_inference_prediction_slide"),)
+    __table_args__ = (
+        UniqueConstraint("bundle_id", "subject_scope", "slide_id", "input_snapshot_sha256",
+                         name="uq_inference_prediction_subject_snapshot"),
+        CheckConstraint(sql_in("provenance_status", PREDICTION_PROVENANCE_STATUSES),
+                        name="ck_inference_prediction_provenance"),
+        CheckConstraint(f"subject_scope IS NULL OR {sql_in('subject_scope', PREDICTION_SUBJECT_SCOPES)}",
+                        name="ck_inference_prediction_subject_scope"),
+        CheckConstraint("provenance_status != 'complete' OR "
+                        "(input_snapshot_sha256 IS NOT NULL AND subject_scope IS NOT NULL)",
+                        name="ck_inference_prediction_complete_identity"),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
     project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), nullable=False, index=True)
@@ -364,6 +402,16 @@ class InferencePrediction(Base):
     research_use_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_by: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
+    # Identity of the subject and of the inputs (nullable: rows migrated from schema v2 have neither).
+    subject_scope: Mapped[str | None] = mapped_column(String(8))
+    input_snapshot_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    provenance_status: Mapped[str] = mapped_column(String(24), nullable=False, default="legacy_unverified",
+                                                   server_default="legacy_unverified")
+
+
+#: Columns added to ``inference_prediction`` after schema v2 (see :func:`migrate_inference_prediction`).
+PREDICTION_PROVENANCE_COLUMNS = ("subject_scope", "input_snapshot_sha256", "provenance_status")
+_V2_PREDICTION_UNIQUE = ("bundle_id", "slide_id")
 
 
 # --------------------------------------------------------------------------- active learning (§9)
@@ -483,8 +531,12 @@ def _check_new(session: Session, obj) -> None:
             raise ImmutableRecordError("an inference bundle must state research_use_only: true")
         if obj.bundle_sha256 != bundle_sha256_of(obj.content_json):
             raise ImmutableRecordError("bundle_sha256 does not match the canonical sha256 of content_json")
-    if isinstance(obj, InferencePrediction) and obj.research_use_only is False:
-        raise ImmutableRecordError("inference predictions are research use only")
+    if isinstance(obj, InferencePrediction):
+        if obj.research_use_only is False:
+            raise ImmutableRecordError("inference predictions are research use only")
+        if obj.provenance_status == "complete" and not (obj.input_snapshot_sha256 and obj.subject_scope):
+            raise ImmutableRecordError("a prediction with complete provenance needs its subject scope and its "
+                                       "input-snapshot sha256")
 
 
 def _check_dirty(session: Session, obj) -> None:
@@ -669,3 +721,81 @@ SQLITE_TRIGGERS = {
 for _table, _stmts in SQLITE_TRIGGERS.items():
     for _stmt in _stmts:
         event.listen(_table, "after_create", DDL(_stmt).execute_if(dialect="sqlite"))
+
+
+# --------------------------------------------------------------------------- in-place migration (schema v2 databases)
+
+_PREDICTION_MIGRATION_SQL = (
+    "ALTER TABLE inference_prediction ADD COLUMN subject_scope VARCHAR(8)",
+    "ALTER TABLE inference_prediction ADD COLUMN input_snapshot_sha256 VARCHAR(64)",
+    "ALTER TABLE inference_prediction ADD COLUMN provenance_status VARCHAR(24) NOT NULL DEFAULT 'legacy_unverified'",
+    "ALTER TABLE inference_prediction DROP CONSTRAINT uq_inference_prediction_slide",
+    "ALTER TABLE inference_prediction ADD CONSTRAINT uq_inference_prediction_subject_snapshot "
+    "UNIQUE (bundle_id, subject_scope, slide_id, input_snapshot_sha256)",
+    "CREATE INDEX ix_inference_prediction_input_snapshot_sha256 ON inference_prediction (input_snapshot_sha256)",
+)
+
+
+def _prediction_table_state(conn) -> tuple[list[str], bool] | None:
+    insp = inspect(conn)
+    if not insp.has_table("inference_prediction"):
+        return None
+    cols = [c["name"] for c in insp.get_columns("inference_prediction")]
+    uniques = {tuple(u["column_names"]) for u in insp.get_unique_constraints("inference_prediction")}
+    return cols, _V2_PREDICTION_UNIQUE in uniques
+
+
+def migrate_inference_prediction(conn) -> dict | None:
+    """Bring a schema-v2 ``inference_prediction`` table to the current definition, in place. Idempotent.
+
+    Returns ``None`` when there is nothing to do (a fresh database or one already migrated), else a summary.
+    SQLite cannot drop a table's inline UNIQUE constraint, so the table is rebuilt in one transaction: the
+    append-only triggers and the indexes are dropped, the table is renamed, the current definition is created
+    (with its indexes and triggers), every row is copied verbatim (``INSERT ... SELECT`` of the existing
+    columns; ``provenance_status`` takes its default ``legacy_unverified``, the identity columns stay NULL), and
+    the renamed table is dropped (its triggers are already gone, so nothing fires; no table references it).
+    Rows are never updated: the copy is the only write, and the stored values are unchanged."""
+    state = _prediction_table_state(conn)
+    if state is None:
+        return None
+    cols, v2_unique = state
+    missing = [c for c in PREDICTION_PROVENANCE_COLUMNS if c not in cols]
+    if not missing and not v2_unique:
+        return None
+    if conn.dialect.name != "sqlite":
+        raise RuntimeError(
+            "inference_prediction is at schema v2 and needs an additive migration (input-snapshot identity, "
+            "provenance status; existing rows become 'legacy_unverified'). The automatic migration is implemented "
+            "for SQLite only; apply, in one transaction: " + "; ".join(_PREDICTION_MIGRATION_SQL))
+    n_rows = int(conn.execute(text("SELECT count(*) FROM inference_prediction")).scalar() or 0)
+    table = InferencePrediction.__table__
+    old = "inference_prediction__schema_v2"
+    for (name,) in conn.execute(text("SELECT name FROM sqlite_master WHERE type = 'trigger' AND "
+                                     "tbl_name = 'inference_prediction'")).all():
+        conn.execute(text(f'DROP TRIGGER IF EXISTS "{name}"'))
+    for idx in inspect(conn).get_indexes("inference_prediction"):
+        conn.execute(text(f'DROP INDEX IF EXISTS "{idx["name"]}"'))
+    conn.execute(text(f'ALTER TABLE inference_prediction RENAME TO "{old}"'))
+    table.create(conn)  # the current definition, its indexes and (after_create) its append-only triggers
+    keep = ", ".join(f'"{c.name}"' for c in table.columns if c.name in cols)
+    conn.execute(text(f'INSERT INTO inference_prediction ({keep}) SELECT {keep} FROM "{old}"'))
+    copied = int(conn.execute(text("SELECT count(*) FROM inference_prediction")).scalar() or 0)
+    if copied != n_rows:  # pragma: no cover - same transaction
+        raise RuntimeError(f"inference_prediction migration copied {copied} of {n_rows} rows")
+    conn.execute(text(f'DROP TABLE "{old}"'))
+    summary = {"table": "inference_prediction", "rows_kept": n_rows, "added_columns": missing,
+               "replaced_unique": list(_V2_PREDICTION_UNIQUE) if v2_unique else None,
+               "rows_marked": "legacy_unverified" if "provenance_status" in missing else None}
+    version = conn.execute(select(SchemaVersion.__table__.c.version)
+                           .order_by(SchemaVersion.__table__.c.id.desc())).scalar()
+    if version is not None:  # a durable record of the in-place step (the version itself does not change)
+        conn.execute(SchemaVersion.__table__.insert().values(
+            version=version, applied_at=utcnow(),
+            description=(f"in place: inference_prediction snapshot identity; {n_rows} rows kept, marked "
+                         "legacy_unverified")[:200]))
+    return summary
+
+
+@event.listens_for(Base.metadata, "after_create")
+def _migrate_after_create(target, connection, **_kw) -> None:
+    migrate_inference_prediction(connection)

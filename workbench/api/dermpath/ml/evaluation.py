@@ -1311,8 +1311,16 @@ def family_dict(db: Session, fam: ComparisonFamily, *, actor_role: str | None = 
                                          "reason": "runs use different evaluation protocols (validation vs "
                                                    "out-of-fold), so their development sets differ"}
     else:
+        from .training import comparison_refusal
+
         split = "oof" if protocols == {"dev_cv"} else "val"
-        out["development_comparison"] = family_comparison(db, fam, runs, split, n_boot=nb, min_patients=mp)
+        # Runs invalid for cross-validated comparison (fold-unsafe learned preprocessing) or cross-validated on
+        # different outer folds are never paired (owner's brief items 3 and 7); their stored results are kept.
+        refusal = comparison_refusal(db, [r for r in runs if r.status == "succeeded"])
+        if refusal is not None:
+            out["development_comparison"] = {"status": "refused", "split": split, **refusal}
+        else:
+            out["development_comparison"] = family_comparison(db, fam, runs, split, n_boot=nb, min_patients=mp)
     if fam.status != "test_released":
         out["test_comparison"] = {"status": "locked", "reason": "test comparisons appear only after a test release of "
                                                                 "the whole locked family"}

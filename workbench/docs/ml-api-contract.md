@@ -1,5 +1,28 @@
 # ML API contract (shared by the ML backend and the frontend)
 
+## Changes (owner's brief items 2–7, 2026-10-28)
+Correctness fixes; design contract notes in `docs/ml-engine-design.md` §5, §6, §8 and §9 ("Implemented differently … 2026-10-28"). They take precedence over every section below wherever they differ. Research use only; the negative class is "BCC absent", never "benign".
+
+**Inference scope and input identity (items 2 and 5).**
+- `POST /bundles/{id}/infer` is idempotent per (bundle, slide, current input identity), not per bundle and slide: a changed QC mask, exclusion, calibration or re-ingested image gets a new job. It returns 202 `{job_id, status, bundle_id, slide_id, input_snapshot_sha256, prediction (for the current input identity, or null), other_predictions_for_slide, research_use_only}`.
+- New error 409 `scope_mismatch` (details `bundle_label_scope`, `endpoint_scope`): a bundle trained on case bags never scores a single slide. `GET /bundles/{id}` adds `inference_refusal_code`, `label_scope` and `subject_scope`; such a bundle shows `can_infer: false`.
+- Prediction items add `input_snapshot_sha256`, `subject_scope`, `provenance_status` (`complete` | `legacy_unverified`), `snapshot_verified` and `reusable`; historical rows add `provenance_note`, and rows of a non-slide bundle add `scope_warning`.
+- `infer_slide` job failures add `scope_mismatch: …`, `input_changed: …` (image bytes or mask no longer match the job's snapshot; nothing recorded), `input_snapshot_mismatch: …` and `stale_prediction_refused: …`.
+
+**Experiments, folds and preprocessing (items 3 and 7).**
+- `POST /projects/{pid}/experiments`: 409 `fold_unsafe_preprocessing` (details `evaluation_protocol`, `stain_normalization`, `train_patient_fraction`, `provenance`, `problems`, `remedy`) for `dev_cv` or `train_patient_fraction < 1` on a dataset-fitted `macenko-v1` reference; the train job fails permanently with `fold_unsafe_preprocessing: …` too. New param `cv_fold_seed` (int ≥ 0, default 0; `dev_cv`).
+- Run: `preprocessing_fold_safety` `{schema, status: no_learned_preprocessing | fold_safe | fold_unsafe | unknown, code, learned, kind, method, provenance, protocol, train_patient_fraction, problems, remedy, note, valid_for_cv_comparison, warning?}`; `identity.fold_assignment` (null for holdout); `protocol_summary.preprocessing` and `fold_assignment`; `protocol_summary.cv.fingerprint`, `fold_seed`, `learning_curve_rule`, and per fold `learning_curve`, `fit_part_patients`, `held_out_scorable_bags`; `unscored_bags` under `dev_cv` carry `fold`.
+- ABMIL `training_summary`: `fit_semantics`, `epoch_selection`, `final_fit`, `final_fit_epochs`; `fit_bags` and `train_bags` count the final model's fitting bags; `effective_sampling.epoch_selection`.
+- `operating_point.calibration`: `status` adds `not_fitted` and `insufficient_evidence` (the gate counts distinct patient / confirmed-duplicate groups per class, never bags), plus `evidence`, `evaluated_in_sample`, `evaluation_note`, `reliability_note`; `calibration.fitted_on.evidence`; `*_summary.calibration` adds `calibrated_in_sample`, `calibrated_note`, `calibration_status`.
+- `GET /comparison-families/{id}`: `development_comparison` is `refused` with `code: fold_unsafe_preprocessing` (a member invalid for cross-validated comparison) or `code: mixed_fold_assignment` (dev_cv members on different outer folds), with `run_ids` and `reason`; benchmark comparisons refuse the same way, and benchmark run records add `preprocessing_fold_safety` and ABMIL `training.epoch_selection` / `training.final_fit` counts.
+
+**Evaluation-cohort protection (item 6).**
+- `POST /datasets/{id}/freeze`: new 409 `acquisition_exposed_in_evaluation` (details `patients[{patient_code, coded_patient_id, split, sources, proposal_ids, first_exposed_at, held_by, historical_conflict, resolution}]`, `slides[]`, `historical_conflicts`); also a freeze-check blocker. A train patient exposed during a freeze gives 409 `draft_stale`.
+- `GET /datasets/{id}/freeze-check` and `GET /datasets/{id}/audit` add `acquisition_exposure`; manifests add `evaluation_cohorts`; split diagnostics add `development_only`.
+- New `GET /projects/{pid}/acquisition-exposure` (`dataset.read`, read-only).
+- Active learning: `POST /projects/{pid}/active-learning` returns 409 `scope_mismatch` (details `run_id`, `bundle_id`, `bundle_label_scope`, `endpoint_scope`) for a case-trained bundle, and an `active_learning` job that reaches the worker anyway fails with `scope_mismatch: …` and proposes nothing. The pool holds slides whose patient has no test or val assignment in ANY split family of the project; `pool_exclusions` adds `evaluation_patient_other_lineage`, `duplicate_of_evaluation_patient` and `evaluation_reserved_by_rule`. The batch `result` adds `dropped_at_commit` and `acquisition_exposure`. A candidate whose inputs changed (`input_changed`) or whose stored score cannot be reproduced (`stale_prediction_refused`) fails the batch.
+- Review priorities: items add `acquisition_exposed` and `evaluation_patient`; the body adds `cohort_note`.
+
 ## Changes (engine verification round, 2026-10-26)
 Fixes from the adversarial verification (`api/tests/test_verify_*.py`). They take precedence over the sections below wherever they differ.
 

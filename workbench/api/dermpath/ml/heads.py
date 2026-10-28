@@ -4,11 +4,13 @@
   on the training bags → scikit-learn ``LogisticRegression`` (lbfgs, seeded). The baseline a
   more complex head must beat.
 * ``abmil``: gated attention-based multiple-instance learning (Ilse et al., 2018) in
-  PyTorch on CPU, seeded, deterministic algorithms, one thread during training. Early
-  stopping uses an INNER patient-grouped stratified hold-out of the training bags
-  (:func:`dermpath.ml.cv.inner_holdout_split`, ``inner_val_fraction``); the validation split
-  is never seen by the fitter. Large bags can be subsampled per epoch
-  (``max_instances_per_bag``, seeded, recorded).
+  PyTorch on CPU, seeded, deterministic algorithms, one thread during training. Two phases
+  (:data:`ABMIL_FIT_SEMANTICS`): the epoch count is selected by early stopping on an INNER
+  patient-grouped stratified hold-out of the fitting bags
+  (:func:`dermpath.ml.cv.inner_holdout_split`, ``inner_val_fraction``), then a freshly
+  initialised model is fitted on EVERY fitting bag for exactly that many epochs; validation,
+  outer held-out folds and test are never seen by the fitter. Large bags can be subsampled
+  per epoch (``max_instances_per_bag``, seeded, recorded).
 
 Both heads honour ``class_weight`` (``balanced`` | ``none``); class weights, the scaler and
 the input normalisation are computed on the bags the head is fitted on, never on validation
@@ -278,7 +280,10 @@ class LoadedModel:
         if self.head == "meanpool_logreg":
             return self.score_mean(streaming_mean(parts)), None
         emb = parts[0] if len(parts) == 1 else np.concatenate([np.asarray(p) for p in parts])
-        x = (np.asarray(emb, dtype=np.float32) - self.arrays["input_mean"]) / self.arrays["input_std"]
+        # ABMIL needs the whole bag (attention spans every patch), but normalise it with ONE bag-sized float32
+        # temporary, in place, instead of two ((x - mean) / std); the values are identical.
+        x = np.subtract(np.asarray(emb, dtype=np.float32), self.arrays["input_mean"], dtype=np.float32)
+        np.divide(x, self.arrays["input_std"], out=x)
         with torch_single_thread() as torch, torch.no_grad():
             logit, att = self._torch_model(torch.from_numpy(np.ascontiguousarray(x, dtype=np.float32)))
             return float(torch.sigmoid(logit).item()), att.numpy().astype(np.float64)
@@ -388,20 +393,38 @@ def inner_split(train: list[Bag], params: dict, *, split_salt: str, seed: int = 
     return fit, stop, info
 
 
-def fit_abmil(train: list[Bag], params: dict, seed: int, progress: ProgressFn = _no_progress, *,
-              access: EmbeddingAccess = IN_MEMORY, split_salt: str = "", patient_label_rule: str = "any_positive",
-              duplicate_pairs=(), **_context) -> tuple[dict[str, np.ndarray], dict, dict]:
-    """Gated ABMIL with early stopping on an INNER hold-out of ``train`` (never on validation)."""
-    fit_bags, stop_bags, inner = inner_split(train, params, split_salt=split_salt, seed=seed,
-                                             patient_label_rule=patient_label_rule, duplicate_pairs=duplicate_pairs)
-    if {b.label for b in fit_bags} != {0, 1}:
-        # The inner hold-out would leave the fit part single-class: fit on every training bag
-        # and stop at max_epochs (recorded).
-        inner["warnings"].append("inner fit part lacks a class; early stopping disabled, all training bags fitted")
-        fit_bags, stop_bags = list(train), []
+#: What an ABMIL fit means (recorded in every ABMIL checkpoint's meta and summary).
+ABMIL_FIT_SEMANTICS = ("epoch count selected by early stopping on an inner patient-grouped stratified hold-out of the "
+                       "permitted fitting patients (never validation, an outer held-out fold or test); the model is "
+                       "then reinitialised with the same seed and fitted on EVERY permitted fitting bag for exactly "
+                       "that many epochs, with no early stopping; input normalisation and class weights come from "
+                       "every fitting bag")
+
+
+def _phase_counts(bags: Sequence[Bag]) -> dict:
+    """Bags and distinct patients (per class) used by one fitting phase."""
+    pos = {b.patient_id for b in bags if b.label == 1}
+    neg = {b.patient_id for b in bags if b.label == 0}
+    n1 = sum(1 for b in bags if b.label == 1)
+    return {"bags": len(bags), "patients": len({b.patient_id for b in bags}),
+            "bags_by_class": {"positive": n1, "negative": len(bags) - n1},
+            "patients_by_class": {"positive": len(pos), "negative": len(neg)}}
+
+
+def _sub_progress(progress: ProgressFn, start: float, stop: float) -> ProgressFn:
+    return lambda frac, message: progress(start + (stop - start) * max(0.0, min(1.0, frac)), message)
+
+
+def _abmil_epochs(fit_bags: list[Bag], stop_bags: list[Bag], params: dict, seed: int, *, epochs: int,
+                  access: EmbeddingAccess, early_stopping: bool, progress: ProgressFn, phase: str) -> dict:
+    """One freshly initialised ABMIL (``torch.manual_seed(seed)``) trained on ``fit_bags`` for at most ``epochs``
+    epochs. Normalisation and class weights come from ``fit_bags``. With ``early_stopping`` the weighted BCE on
+    ``stop_bags`` is monitored every epoch (``patience``) and the best epoch is reported; the returned state is the
+    best-epoch state then, else the state after the last epoch."""
     mean, std, n_inst = input_moments(fit_bags, access)
     cw = class_weights([b.label for b in fit_bags], params["class_weight"])
     k = params.get("max_instances_per_bag")
+    use_stop = bool(early_stopping and stop_bags)
     with deterministic_torch(seed) as torch:
         def tensor(b: Bag, idx: np.ndarray | None = None):
             e = access.embeddings(b)
@@ -423,10 +446,8 @@ def fit_abmil(train: list[Bag], params: dict, seed: int, progress: ProgressFn = 
 
         rng = np.random.default_rng(seed)
         best_state, best_loss, best_epoch, bad = None, float("inf"), None, 0
-        history, subsampled = [], 0
-        use_stop = len(stop_bags) > 0
-        epochs_run = 0
-        for epoch in range(params["max_epochs"]):
+        history, subsampled, epochs_run = [], 0, 0
+        for epoch in range(int(epochs)):
             model.train()
             total = 0.0
             for pos in rng.permutation(len(fit_bags)).tolist():
@@ -456,10 +477,12 @@ def fit_abmil(train: list[Bag], params: dict, seed: int, progress: ProgressFn = 
                     bad += 1
             if not np.isfinite(train_loss):
                 raise FloatingPointError("abmil: non-finite training loss")
-            history.append({"epoch": epoch + 1, "train_loss": round(train_loss, 6),
-                            "inner_holdout_loss": None if stop_loss is None else round(stop_loss, 6)})
-            progress((epoch + 1) / params["max_epochs"],
-                     f"abmil epoch {epoch + 1}/{params['max_epochs']}: train loss {train_loss:.4f}"
+            row = {"epoch": epoch + 1, "train_loss": round(train_loss, 6)}
+            if early_stopping:
+                row["inner_holdout_loss"] = None if stop_loss is None else round(stop_loss, 6)
+            history.append(row)
+            progress((epoch + 1) / max(int(epochs), 1),
+                     f"abmil {phase} epoch {epoch + 1}/{int(epochs)}: train loss {train_loss:.4f}"
                      + (f", inner hold-out loss {stop_loss:.4f}" if stop_loss is not None else ""))
             if use_stop and bad >= params["patience"]:
                 break
@@ -469,28 +492,119 @@ def fit_abmil(train: list[Bag], params: dict, seed: int, progress: ProgressFn = 
         arrays = {f"state.{k_}": v.detach().cpu().numpy().astype(np.float32) for k_, v in model.state_dict().items()}
     arrays["input_mean"] = mean.astype(np.float32)
     arrays["input_std"] = std.astype(np.float32)
-    meta = {"head": "abmil", "in_dim": int(mean.shape[0]), "hidden_dim": params["hidden_dim"],
+    return {"arrays": arrays, "in_dim": int(mean.shape[0]), "history": history, "epochs_run": epochs_run,
+            "best_epoch": best_epoch, "best_loss": None if best_epoch is None else round(best_loss, 6),
+            "subsampled": int(subsampled), "class_weights": cw, "input_instances": int(n_inst)}
+
+
+def select_abmil_epochs(fit_bags: list[Bag], stop_bags: list[Bag], params: dict, seed: int,
+                        progress: ProgressFn = _no_progress, *, access: EmbeddingAccess = IN_MEMORY) -> dict:
+    """Phase 1: choose the epoch count. Train on the inner fit part, early-stop on the inner hold-out (both drawn
+    from the permitted fitting patients only); the model itself is discarded. Returns ``best_epoch`` (and the
+    history, losses and counts)."""
+    res = _abmil_epochs(fit_bags, stop_bags, params, seed, epochs=int(params["max_epochs"]), access=access,
+                        early_stopping=True, progress=progress, phase="epoch selection")
+    return {k: res[k] for k in ("best_epoch", "best_loss", "epochs_run", "history", "subsampled", "class_weights",
+                                "input_instances")}
+
+
+def fit_abmil_fixed_epochs(bags: list[Bag], params: dict, seed: int, progress: ProgressFn = _no_progress, *,
+                           epochs: int, access: EmbeddingAccess = IN_MEMORY, **_context
+                           ) -> tuple[dict[str, np.ndarray], dict, dict]:
+    """Phase 2: a freshly initialised ABMIL fitted on EVERY bag in ``bags`` for exactly ``epochs`` epochs (no early
+    stopping). Normalisation and class weights come from ``bags``."""
+    if int(epochs) < 1:
+        raise ValueError("abmil: the fixed epoch count must be at least 1")
+    res = _abmil_epochs(list(bags), [], params, seed, epochs=int(epochs), access=access, early_stopping=False,
+                        progress=progress, phase="final fit")
+    k = params.get("max_instances_per_bag")
+    meta = {"head": "abmil", "in_dim": res["in_dim"], "hidden_dim": params["hidden_dim"],
             "attn_dim": params["attn_dim"], "dropout": params["dropout"], "architecture": "gated attention MIL",
-            "class_weight": params["class_weight"], "max_instances_per_bag": k}
-    summary = {"head": "abmil", "epochs_run": epochs_run, "max_epochs": params["max_epochs"],
-               "best_epoch": best_epoch, "best_inner_holdout_loss": None if best_epoch is None else round(best_loss, 6),
-               "patience": params["patience"], "class_weights": cw,
-               "early_stopping": ("on an inner patient-grouped stratified hold-out of the training bags "
-                                  "(weighted BCE); best epoch restored; validation never seen" if use_stop else
-                                  "not applied: no inner hold-out (all epochs used)"),
-               "inner_holdout": inner, "history": history, "train_bags": len(train), "fit_bags": len(fit_bags),
-               "input_normalisation": {"fitted_on": "fit part of the training bags", "instances": n_inst},
-               "instance_subsampling": {"max_instances_per_bag": k, "bag_epochs_subsampled": int(subsampled),
+            "class_weight": params["class_weight"], "max_instances_per_bag": k, "fit_semantics": ABMIL_FIT_SEMANTICS,
+            "final_fit_epochs": int(epochs)}
+    final = {**_phase_counts(bags), "epochs": int(epochs), "early_stopping": "none (fixed epoch count)",
+             "input_normalisation_instances": res["input_instances"], "history": res["history"],
+             "bag_epochs_subsampled": res["subsampled"]}
+    summary = {"head": "abmil", "fit_semantics": ABMIL_FIT_SEMANTICS, "final_fit": final,
+               "class_weights": res["class_weights"], "train_bags": len(bags), "fit_bags": len(bags)}
+    return res["arrays"], meta, summary
+
+
+def fit_abmil(train: list[Bag], params: dict, seed: int, progress: ProgressFn = _no_progress, *,
+              access: EmbeddingAccess = IN_MEMORY, split_salt: str = "", patient_label_rule: str = "any_positive",
+              duplicate_pairs=(), **_context) -> tuple[dict[str, np.ndarray], dict, dict]:
+    """Gated ABMIL (:data:`ABMIL_FIT_SEMANTICS`): the epoch count is selected on an INNER patient-grouped stratified
+    hold-out of ``train`` (never validation, never an outer held-out fold), then a fresh model is fitted on every
+    bag of ``train`` for that many epochs. Without a usable inner hold-out (each class has a single grouping unit)
+    no epoch selection is possible: the fresh model is fitted on every bag for ``max_epochs`` (recorded)."""
+    fit_bags, stop_bags, inner = inner_split(train, params, split_salt=split_salt, seed=seed,
+                                             patient_label_rule=patient_label_rule, duplicate_pairs=duplicate_pairs)
+    selection: dict = {"method": "inner patient-grouped stratified hold-out of the permitted fitting patients",
+                       "inner_val_fraction": params["inner_val_fraction"], "max_epochs": params["max_epochs"],
+                       "patience": params["patience"]}
+    if {b.label for b in fit_bags} != {0, 1} or not stop_bags:
+        reason = ("no inner hold-out: " + ("the inner fit part lacks a class" if {b.label for b in fit_bags} != {0, 1}
+                                           else "every class has a single grouping unit")
+                  + "; no epoch count could be selected, so every fitting bag is fitted for max_epochs")
+        inner["warnings"].append(reason)
+        selection.update({"status": "not_possible", "reason": reason, "fit": None, "holdout": None,
+                          "holdout_patient_keys": [], "best_epoch": None, "epochs_run": None,
+                          "best_inner_holdout_loss": None})
+        final_epochs, sel = int(params["max_epochs"]), None
+        fixed_progress = progress
+    else:
+        sel = select_abmil_epochs(fit_bags, stop_bags, params, seed, _sub_progress(progress, 0.0, 0.6),
+                                  access=access)
+        if sel["best_epoch"] is None:  # pragma: no cover - the first finite inner loss always improves on inf
+            raise FloatingPointError("abmil: no epoch improved the inner hold-out loss")
+        final_epochs = int(sel["best_epoch"])
+        selection.update({"status": "selected", "reason": None, "fit": _phase_counts(fit_bags),
+                          "holdout": _phase_counts(stop_bags),
+                          "holdout_patient_keys": sorted({b.patient_key for b in stop_bags}),
+                          "best_epoch": final_epochs, "epochs_run": sel["epochs_run"],
+                          "best_inner_holdout_loss": sel["best_loss"], "class_weights": sel["class_weights"],
+                          "input_normalisation_instances": sel["input_instances"],
+                          "bag_epochs_subsampled": sel["subsampled"]})
+        fixed_progress = _sub_progress(progress, 0.6, 1.0)
+    arrays, meta, fixed = fit_abmil_fixed_epochs(train, params, seed, fixed_progress, epochs=final_epochs,
+                                                 access=access)
+    final = fixed["final_fit"]
+    if sel is None:
+        final["early_stopping"] = "none (no inner hold-out was possible: max_epochs, recorded)"
+    else:
+        final["early_stopping"] = "none (fixed epoch count selected on the inner hold-out)"
+    k = params.get("max_instances_per_bag")
+    summary = {"head": "abmil", "fit_semantics": ABMIL_FIT_SEMANTICS,
+               "epochs_run": selection["epochs_run"], "max_epochs": params["max_epochs"],
+               "best_epoch": selection["best_epoch"], "best_inner_holdout_loss": selection["best_inner_holdout_loss"],
+               "patience": params["patience"], "class_weights": fixed["class_weights"],
+               "early_stopping": ("epoch count selected on an inner patient-grouped stratified hold-out of the "
+                                  "training bags (weighted BCE; validation never seen); the final model was "
+                                  "reinitialised and fitted on every training bag for that many epochs"
+                                  if sel is not None else
+                                  "not applied: no inner hold-out (every training bag fitted for max_epochs; "
+                                  "validation never seen)"),
+               "epoch_selection": selection, "final_fit": final, "final_fit_epochs": final_epochs,
+               "inner_holdout": inner, "history": sel["history"] if sel else [], "train_bags": len(train),
+               "fit_bags": len(train),
+               "input_normalisation": {"fitted_on": "every training bag of this fit (final refit)",
+                                       "instances": final["input_normalisation_instances"]},
+               "instance_subsampling": {"max_instances_per_bag": k,
+                                        "bag_epochs_subsampled": int(final["bag_epochs_subsampled"]
+                                                                     + (sel["subsampled"] if sel else 0)),
                                         "rule": SUBSAMPLING_RULE},
                "optimisation_budget": {"optimizer": "Adam", "lr": params["lr"], "weight_decay": params["weight_decay"],
                                        "max_epochs": params["max_epochs"], "patience": params["patience"],
-                                       "batch": "one bag per step", "hyperparameter_search": "none (prespecified)"}}
+                                       "batch": "one bag per step", "hyperparameter_search": "none (prespecified)",
+                                       "refit": "a second, fixed-length fit on every fitting bag (at most "
+                                                "max_epochs more epochs)"}}
     return arrays, meta, summary
 
 
 HEAD_FITTERS = {"meanpool_logreg": fit_meanpool_logreg, "abmil": fit_abmil}
 OPTIMISATION_BUDGETS = {
     "meanpool_logreg": "lbfgs to convergence (max_iter 5000, tol 1e-4) at a prespecified C; no hyperparameter search",
-    "abmil": ("Adam, one bag per step, at most max_epochs epochs with early stopping (patience) on an inner hold-out "
-              "of the training patients; prespecified hyperparameters; no hyperparameter search"),
+    "abmil": ("Adam, one bag per step: the epoch count is selected (at most max_epochs, early stopping with patience) "
+              "on an inner hold-out of the training patients, then a fresh model is fitted on every training patient "
+              "for that count; prespecified hyperparameters; no hyperparameter search"),
 }

@@ -5,8 +5,9 @@ subsets over a DEVELOPMENT pool (design §6). Pure functions, no DB.
   ``sha256(f"{salt}|{unit_key}")``, where ``unit_key`` joins the sorted patient keys supplied
   by the caller (patient codes, never uuids or row ids). Python's ``random`` module is never
   used, so assignments are identical across processes, Python versions and input orders.
-  Callers derive ``salt`` from the split family and the seed, e.g.
-  ``f"{family_salt}|cv|{seed}"``.
+  Callers derive ``salt`` from the split family, e.g. ``f"{family_salt}|cv|k={k}"`` for outer
+  folds (plus ``|fold_seed=<s>`` for a declared non-zero ``cv_fold_seed``; never the training
+  seed or the head, :func:`dermpath.ml.training.cv_salt`).
 * **Grouping units.** Patients joined by near-duplicate pairs that a person marked
   ``duplicate`` form one unit (union-find); a unit is always allocated whole, so no patient,
   and no confirmed duplicate, spans folds.
@@ -83,6 +84,30 @@ class _UnionFind:
         ra, rb = self.find(a), self.find(b)
         if ra != rb:
             self.parent[max(ra, rb)] = min(ra, rb)
+
+
+def duplicate_groups(patients: Iterable[str], *, patient_keys: Mapping[str, str],
+                     duplicate_pairs: Iterable[tuple[str, str]] = ()) -> dict[str, str]:
+    """Patient id -> content-stable key of its grouping unit: the sorted patient keys of the patients joined (by
+    union-find) through confirmed-duplicate pairs, joined by ``+`` (the ``unit_key`` of :func:`build_units`).
+    Pairs naming an absent patient are ignored. Used as the independence unit of evidence gates."""
+    pats = sorted({str(p) for p in patients})
+    missing = [p for p in pats if p not in patient_keys]
+    if missing:
+        raise ValueError(f"patient_keys has no key for {len(missing)} patient(s), e.g. {missing[:3]}")
+    uf = _UnionFind(pats)
+    for a, b in duplicate_pairs:
+        if a in uf.parent and b in uf.parent:
+            uf.union(a, b)
+    members: dict[str, list[str]] = defaultdict(list)
+    for p in pats:
+        members[uf.find(p)].append(p)
+    out = {}
+    for ms in members.values():
+        key = "+".join(sorted(str(patient_keys[p]) for p in ms))
+        for p in ms:
+            out[p] = key
+    return out
 
 
 def build_units(labels, patients: Sequence[str], *, patient_keys: Mapping[str, str],

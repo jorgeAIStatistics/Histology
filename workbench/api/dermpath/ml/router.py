@@ -45,7 +45,14 @@ from .evaluation import (
     test_release_status,
 )
 from .features import artifact_dict, legacy_refusal
-from .inference import build_bundle, bundle_dict, prediction_dict, request_inference, test_material_reason
+from .inference import (
+    build_bundle,
+    bundle_dict,
+    current_prediction,
+    prediction_dict,
+    request_inference,
+    test_material_reason,
+)
 from .models import FeatureArtifact, ModelVersion, TrainingRun
 from .review_priority import review_priorities
 from .service import cancel_experiment, create_experiment, model_dict, register_model, run_dict
@@ -337,15 +344,20 @@ def get_bundle(scope: Scope = Depends(entity_scope("experiment.read", InferenceB
 def infer(body: InferIn, scope: Scope = Depends(entity_scope("experiment.write", InferenceBundle,
                                                              entity_name="bundle")),
           db: Session = Depends(get_db)):
-    """Enqueue label-free research inference of this bundle on one slide (``infer_slide``)."""
+    """Enqueue label-free research inference of this bundle on one slide (``infer_slide``): one job per (bundle,
+    slide, current input identity). ``prediction`` is the stored prediction for the slide's CURRENT input snapshot
+    (null when the input changed since the last one, or for rows recorded without input-snapshot provenance).
+    A bundle trained on case bags is refused (409 ``scope_mismatch``)."""
     b = scope.obj
     job, _ = request_inference(db, scope.actor, b, body.slide_id)
-    existing = db.scalars(select(InferencePrediction).where(InferencePrediction.bundle_id == b.id,
-                                                            InferencePrediction.slide_id == body.slide_id)).first()
+    current, snapshot_sha = current_prediction(db, b, body.slide_id)
+    n_rows = len(db.scalars(select(InferencePrediction.id).where(
+        InferencePrediction.bundle_id == b.id, InferencePrediction.slide_id == body.slide_id)).all())
     db.commit()
     return {"job_id": job.id, "status": job.status, "bundle_id": b.id, "slide_id": body.slide_id,
-            "prediction": prediction_dict(existing, b.content_json) if existing else None,
-            "research_use_only": True}
+            "input_snapshot_sha256": snapshot_sha,
+            "prediction": prediction_dict(current, b.content_json) if current else None,
+            "other_predictions_for_slide": n_rows - (1 if current else 0), "research_use_only": True}
 
 
 @router.get("/bundles/{id}/predictions")

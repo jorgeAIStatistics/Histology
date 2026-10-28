@@ -25,6 +25,7 @@ from .engine_models import (
 from .evaluation import threshold_dict
 from .models import ModelVersion, TrainingRun
 from .training import (
+    FOLD_UNSAFE_CODE,
     compute_run_identity,
     derive_synthetic,
     identity_sha256,
@@ -33,6 +34,8 @@ from .training import (
     manifest_digest,
     manifest_split_fingerprint,
     mode_problems,
+    preprocessing_fold_safety,
+    run_preprocessing_validity,
 )
 
 DEFAULT_POSITIVE = "bcc_present"
@@ -54,6 +57,19 @@ def _feature_set_error(exc: Exception) -> Exception:
     if isinstance(exc, ValueError):
         return unprocessable("invalid_params", str(exc), errors=[{"loc": [], "msg": str(exc)}])
     return exc
+
+
+def _refuse_fold_unsafe(safety: dict, *, protocol: str, params: dict) -> None:
+    """409 ``fold_unsafe_preprocessing`` (owner's brief item 3): learned preprocessing not fitted on each model's
+    permitted fitting patients only. The worker refuses the same run again."""
+    if safety.get("status") != "fold_unsafe":
+        return
+    raise conflict(FOLD_UNSAFE_CODE,
+                   "The feature set's learned preprocessing (a stain reference fitted once on the dataset's train "
+                   "split) is not fold-safe for this protocol",
+                   evaluation_protocol=protocol, stain_normalization=params.get("stain_normalization"),
+                   train_patient_fraction=params.get("train_patient_fraction"), provenance=safety.get("provenance"),
+                   problems=safety.get("problems") or [], remedy=safety.get("remedy"))
 
 
 def _dev_patients(manifest: dict) -> int:
@@ -193,10 +209,18 @@ def create_experiment(db: Session, actor: Actor, project: Project, *, dataset_ve
     if protocol == "dev_cv" and _dev_patients(manifest) < int(resolved["cv_folds"]):
         raise conflict("cv_infeasible", f"dev_cv with {resolved['cv_folds']} folds needs at least as many "
                        "development (train + val) patients", development_patients=_dev_patients(manifest))
+    # Refused before any feature set or run is recorded: the declared stain plan is enough to know (only the
+    # dataset-fitted macenko-v1 reference exists). Checked again on the resolved feature set below and in the worker.
+    if resolved.get("stain_normalization", "none") != "none":
+        _refuse_fold_unsafe(preprocessing_fold_safety({"method": resolved["stain_normalization"], "deferred": True},
+                                                      protocol=protocol, params=resolved),
+                            protocol=protocol, params=resolved)
     synthetic, reasons = derive_synthetic(spec, data_mode)
     family = _check_family(db, project, dv, family_id)
     fs = resolve_feature_set(db, actor, project, dv, encoder_id=encoder_id, execution_mode=mode, params=resolved,
                              feature_set_id=feature_set_id)
+    _refuse_fold_unsafe(preprocessing_fold_safety(fs.stain_policy_json, protocol=protocol, params=resolved,
+                                                  manifest=manifest), protocol=protocol, params=resolved)
     label_scope = dv.config_json.get("label_scope", "slide")
     identity = compute_run_identity(encoder=encoder, feature_set=fs, manifest=manifest, dataset_version_id=dv.id,
                                     params=resolved, seed=seed, head=head, execution_mode=mode,
@@ -315,6 +339,7 @@ def run_dict(db: Session, run: TrainingRun) -> dict:
         "family_id": run.family_id,
         "identity_sha256": run.identity_sha256,
         "identity": run.identity_json,
+        "preprocessing_fold_safety": run_preprocessing_validity(db, run, dv),
         "attempts": int(attempts),
         "calibration": run.calibration_json if status == "succeeded" else None,
         "abstention": run.abstention_json if status == "succeeded" else None,

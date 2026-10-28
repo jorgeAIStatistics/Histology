@@ -31,10 +31,51 @@ equal the pinned sha); checks the returned artifact identity; scores with
 :func:`dermpath.ml.training.score_bags_with_checkpoint`; and appends an ``inference_prediction``
 row. It never reads or writes a label, and outputs are never routed to care. Pipeline-test bundles
 (synthetic encoder) cannot score new slides: their signal is label-derived by construction.
+
+Scope (owner brief item 2A). The bundle's ``classes.label_scope`` is enforced: only a bundle trained on
+SLIDE bags scores a slide. A case-trained bundle's output is a probability for a case's complete set of
+eligible slides, aggregated as in training; it is never computed on one slide and never reported as a
+slide probability. :func:`inference_refusal` returns ``scope_mismatch`` for it, so the single-slide API
+(409), the ``infer_slide`` worker and every slide acquisition path that scores through
+:func:`score_slide` (active learning) fail closed. Case inference would need its own endpoint (a frozen
+complete eligible slide set per case, case aggregation consistent with training, case-level provenance).
+
+One input snapshot (owner brief item 2B). The job takes ONE canonical effective input snapshot when it
+executes (:func:`effective_input_snapshot`: ``feature_sets.slide_snapshot`` over the live QC state, i.e.
+slide sha256 and object key, image kind and provenance, effective mpp and calibration, dimensions and
+level downsamples, the QC mask object key / sha256 / downsample and the excluded-region content), and
+passes exactly that dict to ``extract_slide(input_snapshot=...)``. The extraction reads only it and
+verifies the image bytes and the mask object against it (a mismatch is ``input_changed``: the job fails
+permanently and records nothing; it is never an "unscorable" outcome). The returned artifact must have
+been built from it (slide sha, mask sha, excluded-regions sha, calibration). The prediction stores the
+snapshot and its sha256 (``input_snapshot_sha256``, :func:`snapshot_sha256`), with
+``provenance_status = "complete"``; model and preprocessing identity stay pinned by the bundle.
+
+Reuse, versions and concurrency:
+
+* A stored prediction is reused only for the same bundle, subject (scope ``slide`` + slide id) and
+  input-snapshot sha256, with complete provenance whose stored snapshot still hashes to that identity.
+  A changed input is a NEW prediction row; earlier rows stay (history). Rows written before this rule
+  (``legacy_unverified``, see :mod:`dermpath.ml.engine_models`) are never reused or rewritten.
+* An embedding is returned only with features extracted from the same snapshot as the score: on reuse
+  the features are re-derived from the stored snapshot (a feature-cache hit) and must reproduce the
+  recorded feature identity (row count and a chunked sha256 of the scored rows), else the job fails
+  (``stale_prediction_refused``): an old score is never paired with a new embedding.
+* The API dedupes by ``infer:{bundle}:{slide}:{request-time snapshot sha256}`` (one job per input
+  identity; a changed input gets a new job). Workers insert under the unique constraint
+  (bundle, subject scope, slide, snapshot sha256); a worker that loses the race returns the winner's
+  row (after the same feature-identity check), so duplicate concurrent work yields one prediction.
+
+Memory (owner brief item 5): embeddings are never copied whole. The pooled embedding (only computed when
+asked: active learning's diversity) uses the head's chunked float64 :func:`dermpath.ml.heads.streaming_mean`
+(``MEAN_CHUNK_ROWS`` rows at a time; identical bits to what ``meanpool_logreg`` scores), and the feature
+identity hash streams the same chunks. ABMIL itself needs the whole bag in float32 (attention spans every
+patch); that is the head's requirement, not a copy made here.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import numpy as np
@@ -42,7 +83,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from .. import audit
-from ..datasets import IMPORTED_REFERENCE_NOTICE, item_data_mode, qc_snapshot
+from ..datasets import IMPORTED_REFERENCE_NOTICE, item_data_mode
 from ..db import session_scope
 from ..errors import conflict, not_found
 from ..jobs import queue
@@ -51,11 +92,12 @@ from ..models import Slide
 from ..storage import get_store
 from ..vocab import LABEL_DISPLAY
 from . import PIPELINE_TEST_BANNER
-from .artifacts import sha256_hex
+from . import heads as _heads
+from .artifacts import canonical_json, sha256_hex
 from .calibration import identity_calibration
 from .engine_models import FeatureSet, InferenceBundle, InferencePrediction, RunAttempt, bundle_sha256_of
 from .evaluation import NEGATIVE_NOTE, threshold_dict
-from .heads import CHECKPOINT_SCHEMA, Bag
+from .heads import CHECKPOINT_SCHEMA, Bag, streaming_mean
 from .metrics import no_abstention_policy
 from .models import FeatureArtifact, TrainingRun
 
@@ -67,6 +109,14 @@ PREDICTION_NOTICE = ("Research output of a registered bundle. Not a label, not a
                      "model confidence is not a validated out-of-distribution detector.")
 SYNTHETIC_REFUSAL = ("Pipeline-test bundles cannot score new slides: the synthetic encoder's class signal is derived "
                      "from reference labels by construction, so it has nothing label-free to offer.")
+#: The scope every slide path scores (single-slide inference, active-learning slide acquisition).
+SUBJECT_SCOPE = "slide"
+INPUT_SNAPSHOT_SCHEMA = "dermpath.inference_input_snapshot/1"
+EMBEDDINGS_IDENTITY_SCHEMA = "dermpath.embeddings_rows/1"
+PROVENANCE_COMPLETE = "complete"
+PROVENANCE_LEGACY = "legacy_unverified"
+#: Keys the prediction adds to its stored snapshot (outputs and identity; never part of the snapshot identity).
+SNAPSHOT_RECORD_KEYS = frozenset({"schema", "input_snapshot_sha256", "n_patches", "feature_artifact_id", "features"})
 
 
 # =========================================================================== bundles
@@ -229,11 +279,36 @@ def verify_bundle(bundle: InferenceBundle, *, check_object: bool = True) -> list
     return problems
 
 
+def scope_refusal(content: dict, subject_scope: str = SUBJECT_SCOPE) -> tuple[str, str] | None:
+    """``("scope_mismatch", message)`` when the bundle's training bag scope is not ``subject_scope``, else None.
+
+    Fails closed: a bundle that does not state its scope is refused too."""
+    scope = (content.get("classes") or {}).get("label_scope")
+    if scope == subject_scope:
+        return None
+    if scope == "case":
+        what = ("its model was trained on case-level bags (label_scope 'case'), so its output is a probability for a "
+                "case's complete set of eligible slides, aggregated as in training; it cannot score a single slide, "
+                "and a case probability is never reported as a slide probability")
+    else:
+        what = f"its model was trained on {scope!r} bags, not on single slides"
+    return "scope_mismatch", (
+        f"Scope mismatch: {what}. Single-slide inference and active-learning slide acquisition refuse this bundle. "
+        "Use a bundle registered from a run on a slide-scope dataset (label_scope 'slide'). Case-level inference "
+        "needs its own endpoint (a frozen complete eligible slide set per case, case aggregation consistent with "
+        "training, case-level provenance); it is not implemented.")
+
+
 def inference_refusal(content: dict, slide: Slide | None = None) -> tuple[str, str] | None:
-    """``(code, message)`` when this bundle may not score (this) slide, else None (label-free checks only)."""
+    """``(code, message)`` when this bundle may not score (this) slide, else None (label-free checks only).
+
+    Every caller scores SLIDES, so the bundle's training scope must be ``slide`` (:func:`scope_refusal`)."""
     enc = content.get("encoder") or {}
     if content.get("execution_mode") == "synthetic_pipeline_test" or (enc.get("spec") or {}).get("synthetic"):
         return "mode_mismatch", SYNTHETIC_REFUSAL
+    scope = scope_refusal(content)
+    if scope is not None:
+        return scope
     if slide is not None:
         if item_data_mode(slide.provenance, slide.image_kind) == "synthetic":
             return "mode_mismatch", ("Synthetic demo slides are refused for a real encoder outside the pipeline-test "
@@ -298,6 +373,8 @@ def bundle_dict(db, b: InferenceBundle, *, verify_object: bool = True) -> dict:
             "object_key": b.object_key, "verified": not problems, "problems": problems,
             "created_by": b.created_by, "created_at": b.created_at.isoformat(), "research_use_only": True,
             "can_infer": refusal is None, "inference_refusal": refusal[1] if refusal else None,
+            "inference_refusal_code": refusal[0] if refusal else None,
+            "label_scope": (c.get("classes") or {}).get("label_scope"), "subject_scope": SUBJECT_SCOPE,
             "n_predictions": n_pred, "synthetic": bool(c.get("synthetic")),
             "banner": PIPELINE_TEST_BANNER if c.get("synthetic") else None, "notice": BUNDLE_NOTICE, "content": c}
 
@@ -305,15 +382,55 @@ def bundle_dict(db, b: InferenceBundle, *, verify_object: bool = True) -> dict:
 # =========================================================================== inference
 
 
-def _provenance_snapshot(db, slide: Slide) -> dict:
-    """What the slide looked like when it was scored (provenance; the extraction verifies its own inputs)."""
-    return {"slide_sha256": slide.sha256, "object_key": slide.object_key, "mpp_x": slide.mpp_x, "mpp_y": slide.mpp_y,
-            "width": slide.width, "height": slide.height, "level_downsamples": slide.level_downsamples_json,
-            "provenance": slide.provenance, "image_kind": slide.image_kind, **qc_snapshot(db, slide.id)}
+def snapshot_sha256(snapshot: dict) -> str:
+    """Identity of a canonical effective input snapshot (the keys the prediction adds are not part of it)."""
+    ident = {k: v for k, v in (snapshot or {}).items() if k not in SNAPSHOT_RECORD_KEYS}
+    return sha256_hex(canonical_json({"schema": INPUT_SNAPSHOT_SCHEMA, "snapshot": ident}))
+
+
+def effective_input_snapshot(db, slide: Slide) -> tuple[dict, str]:
+    """``(snapshot, sha256)``: the slide's canonical effective input snapshot NOW, exactly the dict
+    :func:`dermpath.ml.feature_sets.extract_slide` reads (``slide_snapshot`` over ``live_qc``): slide sha256 and
+    object key, image kind, provenance and format, effective mpp and calibration, dimensions and level
+    downsamples, the QC mask (review id, object key, sha256, downsample) and the excluded regions (issue ids,
+    geometry, sha256). Never a label."""
+    from . import feature_sets as fsm
+
+    snap = fsm.slide_snapshot(slide, {**fsm.live_qc(db, slide.id), "qc_source": "live_qc_at_inference"})
+    return snap, snapshot_sha256(snap)
+
+
+def _stored_prediction(db, bundle_id: str, slide_id: str, snapshot_sha: str) -> InferencePrediction | None:
+    """The reusable prediction for exactly this (bundle, subject, input identity), or None.
+
+    Only complete provenance counts, and the stored snapshot must still hash to the identity."""
+    row = db.scalars(select(InferencePrediction).where(
+        InferencePrediction.bundle_id == bundle_id, InferencePrediction.subject_scope == SUBJECT_SCOPE,
+        InferencePrediction.slide_id == slide_id, InferencePrediction.input_snapshot_sha256 == snapshot_sha,
+        InferencePrediction.provenance_status == PROVENANCE_COMPLETE)).first()
+    if row is not None and snapshot_sha256(row.input_snapshot_json or {}) != snapshot_sha:
+        raise PermanentJobError(f"prediction_integrity: stored prediction {row.id} does not hash to its recorded "
+                                "input-snapshot sha256; it is not reused")
+    return row
+
+
+def current_prediction(db, bundle: InferenceBundle, slide_id: str) -> tuple[InferencePrediction | None, str | None]:
+    """``(prediction for the slide's current input identity or None, that identity)`` (read-only, for the API)."""
+    slide = db.get(Slide, slide_id)
+    if slide is None or slide.project_id != bundle.project_id:
+        return None, None
+    _snap, sha = effective_input_snapshot(db, slide)
+    try:
+        return _stored_prediction(db, bundle.id, slide_id, sha), sha
+    except PermanentJobError:
+        return None, sha
 
 
 def request_inference(db, actor, bundle: InferenceBundle, slide_id: str):
-    """Validate and enqueue ``infer_slide`` (idempotent per bundle and slide). Returns ``(job, created)``."""
+    """Validate and enqueue ``infer_slide``: one job per (bundle, slide, current input identity). Returns
+    ``(job, created)``. The job takes its own snapshot when it runs; this one only keys the deduplication, so a
+    changed input (QC mask, exclusions, calibration, re-ingested image) gets a new job and an unchanged one does
+    not."""
     slide = db.get(Slide, slide_id)
     if slide is None or slide.project_id != bundle.project_id:
         raise not_found("slide", slide_id)
@@ -323,7 +440,11 @@ def request_inference(db, actor, bundle: InferenceBundle, slide_id: str):
     refusal = inference_refusal(bundle.content_json or {}, slide) or test_material_refusal(
         db, db.get(TrainingRun, bundle.run_id), slide)
     if refusal is not None:
-        raise conflict(refusal[0], refusal[1], bundle_id=bundle.id, slide_id=slide_id)
+        extra = {}
+        if refusal[0] == "scope_mismatch":
+            extra = {"bundle_label_scope": ((bundle.content_json or {}).get("classes") or {}).get("label_scope"),
+                     "endpoint_scope": SUBJECT_SCOPE}
+        raise conflict(refusal[0], refusal[1], bundle_id=bundle.id, slide_id=slide_id, **extra)
     from .encoders import get_encoder
 
     enc_id = (bundle.content_json.get("encoder") or {}).get("id")
@@ -334,13 +455,15 @@ def request_inference(db, actor, bundle: InferenceBundle, slide_id: str):
     if status != "available":
         raise conflict("encoder_unavailable", f"Encoder {enc_id} is not available ({status})", encoder_id=enc_id,
                        status=status, status_detail=detail)
+    _snap, snap_sha = effective_input_snapshot(db, slide)
     job, created = queue.enqueue(db, INFER_JOB, {"bundle_id": bundle.id, "slide_id": slide.id},
-                                 idempotency_key=f"infer:{bundle.id}:{slide.id}", project_id=bundle.project_id,
-                                 created_by=actor.id)
+                                 idempotency_key=f"infer:{bundle.id}:{slide.id}:{snap_sha}",
+                                 project_id=bundle.project_id, created_by=actor.id)
     if created:
         audit.record_for(db, actor, project_id=bundle.project_id, action="inference.requested",
                          entity_type="inference_bundle", entity_id=bundle.id,
-                         after={"slide_id": slide.id, "slide_sha256": slide.sha256, "job_id": job.id})
+                         after={"slide_id": slide.id, "slide_sha256": slide.sha256, "job_id": job.id,
+                                "input_snapshot_sha256_at_request": snap_sha})
     return job, created
 
 
@@ -411,44 +534,78 @@ def _unscorable_errors() -> tuple[type, ...]:
     return (FeatureError, ScaleError, SamplingError, StainError)
 
 
-def score_slide(bundle_id: str, slide_id: str, ctx=None, *, created_by: str | None = None,
-                need_embedding: bool = True) -> tuple[dict, np.ndarray | None]:
-    """Score one slide through a bundle, label-free; reuse the stored prediction if there is one.
+def embedding_mean(emb: np.ndarray) -> np.ndarray:
+    """Mean embedding of one slide in float64, streamed in fixed ``heads.MEAN_CHUNK_ROWS`` chunks (bounded memory,
+    no whole-matrix copy; identical bits to the pooling ``meanpool_logreg`` scores). Raises ``ValueError`` when
+    there is no row."""
+    return streaming_mean([emb])
 
-    Returns ``(prediction dict, mean embedding or None)``; the mean embedding (for active-learning
-    diversity) comes from the label-free extraction, which the feature cache makes cheap on repeat."""
+
+def embeddings_content_sha256(emb: np.ndarray) -> str:
+    """sha256 over the scored rows (little-endian float32, row-major) plus their shape, streamed in the same fixed
+    chunks (a contiguous float32 chunk, such as a slice of the memory-mapped artifact, is hashed without a copy)."""
+    if emb.ndim != 2:
+        raise ValueError("embeddings must be 2-D (N, D)")
+    rows, dim = int(emb.shape[0]), int(emb.shape[1])
+    h = hashlib.sha256(f"{EMBEDDINGS_IDENTITY_SCHEMA}|<f4|{rows}x{dim}|".encode())
+    step = max(1, int(_heads.MEAN_CHUNK_ROWS))
+    for start in range(0, rows, step):
+        h.update(np.ascontiguousarray(emb[start:start + step], dtype="<f4"))
+    return h.hexdigest()
+
+
+def _feature_identity(sf, emb: np.ndarray) -> dict:
+    return {"n_patches": int(emb.shape[0]), "embedding_dim": int(emb.shape[1]),
+            "embeddings_content_sha256": embeddings_content_sha256(emb),
+            "feature_artifact_id": getattr(sf, "artifact_id", None), "cache_key": getattr(sf, "cache_key", None),
+            "extraction_env_sha256": getattr(sf, "extraction_env_sha256", None)}
+
+
+def _same_features(recorded: dict | None, now: dict | None) -> bool:
+    """Whether features extracted now from a stored prediction's snapshot are the ones it was scored on."""
+    if recorded is None or now is None:
+        return recorded is None and now is None  # both unextractable (the same deterministic refusal) or not
+    return all(recorded.get(k) == now.get(k) for k in ("n_patches", "embedding_dim", "embeddings_content_sha256"))
+
+
+def _stale_refusal(pred_id: str, recorded: dict | None, now: dict | None) -> PermanentJobError:
+    def show(f):
+        return "none (not extractable)" if f is None else (
+            f"{f.get('n_patches')} rows, sha256 {str(f.get('embeddings_content_sha256'))[:16]}…")
+
+    return PermanentJobError(
+        f"stale_prediction_refused: prediction {pred_id} for this input snapshot was scored on features "
+        f"[{show(recorded)}], but extraction from the same snapshot now gives [{show(now)}]; a stored score is never "
+        "returned with an embedding of other features (check the feature cache and the extraction environment)")
+
+
+def _snapshot_mismatches(art: FeatureArtifact | None, sf, snapshot: dict) -> list[str]:
+    """Differences between the job's snapshot and the inputs the returned features were built from."""
+    bad = []
+    fields = (getattr(sf, "meta", None) or {}).get("fields") or {}
+    for key in ("slide_sha256", "excluded_regions_sha256"):
+        if key in fields and fields[key] != snapshot.get(key):
+            bad.append(f"artifact key {key} {str(fields[key])[:16]} != snapshot {str(snapshot.get(key))[:16]}")
+    if art is not None:
+        for key, want in (("slide_sha256", snapshot.get("slide_sha256")),
+                          ("mask_sha256", snapshot.get("mask_sha256")),
+                          ("excluded_regions_sha256", snapshot.get("excluded_regions_sha256")),
+                          ("calibrated", bool(snapshot.get("calibrated")))):
+            got = bool(art.calibrated) if key == "calibrated" else getattr(art, key)
+            if got != want:
+                bad.append(f"artifact {art.id} {key} {str(got)[:16]} != snapshot {str(want)[:16]}")
+        if art.slide_id != snapshot.get("slide_id"):
+            bad.append(f"artifact {art.id} is of slide {art.slide_id}")
+    return bad
+
+
+def _extract(content: dict, slide_id: str, snapshot: dict, ctx):
+    """``(slide features or None, unscorable reason or None)`` from exactly ``snapshot``."""
     from . import feature_sets as fsm
-    from . import training
-    from .encoders import EncoderInputError, EncoderUnavailable, get_encoder
+    from .encoders import EncoderInputError, EncoderUnavailable
     from .fixture import SyntheticSignalForbidden
 
-    with session_scope() as db:
-        bundle = db.get(InferenceBundle, bundle_id)
-        slide = db.get(Slide, slide_id)
-        if bundle is None or slide is None or slide.project_id != bundle.project_id:
-            raise PermanentJobError(f"bundle {bundle_id} or slide {slide_id} does not exist in one project")
-        problems = verify_bundle(bundle)
-        if problems:
-            raise PermanentJobError("bundle_integrity: " + "; ".join(problems))
-        content = dict(bundle.content_json)
-        run = db.get(TrainingRun, bundle.run_id)
-        # Defence in depth: the worker re-checks what the request checked (test material needs a test release).
-        refusal = inference_refusal(content, slide) or test_material_refusal(db, run, slide)
-        if refusal is not None:
-            raise PermanentJobError(f"{refusal[0]}: {refusal[1]}")
-        _check_run_matches(run, content)
-        enc = content.get("encoder") or {}
-        adapter = get_encoder(enc.get("id"))
-        spec = getattr(adapter, "spec", None)
-        if adapter is None or spec is None or spec.spec_sha256() != enc.get("spec_sha256"):
-            raise PermanentJobError(f"encoder_spec_changed: the installed {enc.get('id')} adapter does not match the "
-                                    "bundle's encoder spec sha256 (a new adapter version needs a new bundle)")
-        snapshot = _provenance_snapshot(db, slide)
-        existing = db.scalars(select(InferencePrediction).where(InferencePrediction.bundle_id == bundle_id,
-                                                                InferencePrediction.slide_id == slide_id)).first()
-        existing_dict = prediction_dict(existing, content) if existing is not None else None
-    if existing_dict is not None and not need_embedding:
-        return existing_dict, None
+    enc = content.get("encoder") or {}
     pp, stain = _policies(content)
     env = content.get("extraction_env") or {}
     spec_json = enc.get("spec") or {}
@@ -463,13 +620,12 @@ def score_slide(bundle_id: str, slide_id: str, ctx=None, *, created_by: str | No
                                  what="bundle", remedy="register a bundle built in this environment")
     except fsm.FeatureError as exc:
         raise PermanentJobError(str(exc)) from exc
-    sf, reason = None, None
     try:
-        # input_snapshot=None: the extraction snapshots the slide's live row and QC state itself.
+        # The job's ONE snapshot: the extraction reads only it and verifies the image bytes and mask against it.
         sf = fsm.extract_slide(slide_id, encoder_id=enc["id"], weights_sha256=enc["weights_sha256"],
                                encoder_spec_sha256=enc["spec_sha256"], patch_policy=pp, sampling_policy=pp.sampling,
                                stain_policy=stain, device=extraction.get("device") or env.get("device_class") or "cpu",
-                               precision=env.get("precision") or "fp32", input_snapshot=None, ctx=ctx,
+                               precision=env.get("precision") or "fp32", input_snapshot=snapshot, ctx=ctx,
                                pixel_mode=extraction.get("pixel_mode") or "read",
                                batch_size=extraction.get("batch_size"),
                                weights_config_sha256=enc.get("config_sha256"),
@@ -484,23 +640,80 @@ def score_slide(bundle_id: str, slide_id: str, ctx=None, *, created_by: str | No
     except _integrity_errors() as exc:  # a corrupt artifact is a failure, never a recorded "unscorable" outcome
         raise PermanentJobError(f"feature_integrity: {exc}") from exc
     except _unscorable_errors() as exc:
-        reason = f"{type(exc).__name__}: {exc}"[:200]
-    mean = None
+        if str(exc).startswith("input_changed"):  # image identity / mask / snapshot failure: fail closed
+            raise PermanentJobError(f"{exc} (slide {slide_id}: the inputs no longer match the job's input snapshot; "
+                                    "nothing was recorded)") from exc
+        return None, f"{type(exc).__name__}: {exc}"[:200]
+    return sf, None
+
+
+def score_slide(bundle_id: str, slide_id: str, ctx=None, *, created_by: str | None = None,
+                need_embedding: bool = True) -> tuple[dict, np.ndarray | None]:
+    """Score one slide through a SLIDE-scope bundle, label-free, from ONE input snapshot taken now.
+
+    Returns ``(prediction dict, mean embedding or None)``. The stored prediction for this exact (bundle, slide,
+    input-snapshot) identity is reused; otherwise features are extracted from the snapshot, scored and recorded
+    as a new row. The mean embedding (active-learning diversity) is computed only when ``need_embedding``, in
+    bounded memory, and always from the same features as the returned score (see the module docstring)."""
+    from . import training
+    from .encoders import get_encoder
+
+    with session_scope() as db:
+        bundle = db.get(InferenceBundle, bundle_id)
+        slide = db.get(Slide, slide_id)
+        if bundle is None or slide is None or slide.project_id != bundle.project_id:
+            raise PermanentJobError(f"bundle {bundle_id} or slide {slide_id} does not exist in one project")
+        problems = verify_bundle(bundle)
+        if problems:
+            raise PermanentJobError("bundle_integrity: " + "; ".join(problems))
+        content = dict(bundle.content_json)
+        run = db.get(TrainingRun, bundle.run_id)
+        # Defence in depth: the worker re-checks what the request checked (scope, test material, modes).
+        refusal = inference_refusal(content, slide) or test_material_refusal(db, run, slide)
+        if refusal is not None:
+            raise PermanentJobError(f"{refusal[0]}: {refusal[1]}")
+        _check_run_matches(run, content)
+        enc = content.get("encoder") or {}
+        adapter = get_encoder(enc.get("id"))
+        spec = getattr(adapter, "spec", None)
+        if adapter is None or spec is None or spec.spec_sha256() != enc.get("spec_sha256"):
+            raise PermanentJobError(f"encoder_spec_changed: the installed {enc.get('id')} adapter does not match the "
+                                    "bundle's encoder spec sha256 (a new adapter version needs a new bundle)")
+        snapshot, snap_sha = effective_input_snapshot(db, slide)  # the job's one canonical input snapshot
+        existing = _stored_prediction(db, bundle_id, slide_id, snap_sha)
+        existing_dict = prediction_dict(existing, content) if existing is not None else None
+        recorded = (existing.input_snapshot_json or {}).get("features") if existing is not None else None
+    if existing_dict is not None and not need_embedding:
+        return existing_dict, None
+    sf, reason = _extract(content, slide_id, snapshot, ctx)
+    emb = features = coverage = None
+    art_id = getattr(sf, "artifact_id", None) if sf is not None else None
     if sf is not None:
         _verify_features(sf, content, slide_id)
-        emb = np.asarray(sf.embeddings, dtype=np.float32)
+        emb = sf.embeddings  # memory-mapped float32 for stored artifacts: never copied whole
+        if getattr(emb, "ndim", None) != 2:
+            raise PermanentJobError(f"feature_integrity: embeddings of slide {slide_id} are not 2-D")
+        with session_scope() as db:
+            art = db.get(FeatureArtifact, art_id) if art_id else None
+            bad = _snapshot_mismatches(art, sf, snapshot)
+            coverage = art.coverage_json if art is not None else None
+        if bad:
+            raise PermanentJobError(f"input_snapshot_mismatch for slide {slide_id}: the features were not built from "
+                                    "the job's input snapshot: " + "; ".join(bad))
+        features = _feature_identity(sf, emb)
         if emb.shape[0] == 0:
             reason = "no tissue patches after QC exclusions"
-        else:
-            mean = emb.astype(np.float64).mean(axis=0)
+    mean = embedding_mean(emb) if (need_embedding and reason is None and emb is not None) else None
     if existing_dict is not None:
+        if not _same_features(recorded, features):
+            raise _stale_refusal(existing_dict["id"], recorded, features)
         return existing_dict, mean
     score = cal = pred = None
     abstained = False
     if reason is None:
         bag = Bag(bag_id=slide_id, kind="slide", slide_ids=[slide_id], case_id=None, patient_id="", patient_code=None,
                   label_value=None, label=None, label_version_ids=[], attributes={},
-                  artifact_ids=[sf.artifact_id] if getattr(sf, "artifact_id", None) else [], embeddings=emb)
+                  artifact_ids=[art_id] if art_id else [], embeddings=emb)
         with session_scope() as db:
             run = db.get(TrainingRun, content["run_id"])
             try:
@@ -511,29 +724,36 @@ def score_slide(bundle_id: str, slide_id: str, ctx=None, *, created_by: str | No
         cal = None if cal is None else float(cal)
         if pred != int(score >= float(content["threshold"]["value"])):
             raise PermanentJobError("decision disagrees with score >= the bundle threshold")
+    record = {**snapshot, "schema": INPUT_SNAPSHOT_SCHEMA, "input_snapshot_sha256": snap_sha,
+              "n_patches": features["n_patches"] if features else 0, "feature_artifact_id": art_id,
+              "features": features}
     with session_scope() as db:
-        existing = db.scalars(select(InferencePrediction).where(InferencePrediction.bundle_id == bundle_id,
-                                                                InferencePrediction.slide_id == slide_id)).first()
-        if existing is not None:  # another attempt recorded it first
-            return prediction_dict(existing, content), mean
-        art_id = getattr(sf, "artifact_id", None) if sf is not None else None
-        art = db.get(FeatureArtifact, art_id) if art_id else None
         p = InferencePrediction(project_id=content["project_id"], bundle_id=bundle_id, slide_id=slide_id,
-                                slide_sha256=snapshot["slide_sha256"], feature_artifact_id=art.id if art else None,
+                                slide_sha256=snapshot["slide_sha256"], feature_artifact_id=art_id,
                                 job_id=getattr(ctx, "job_id", None), score=score, calibrated_score=cal,
                                 threshold=float(content["threshold"]["value"]), predicted=pred,
                                 abstained=bool(abstained), unscorable_reason=reason,
-                                coverage_json=art.coverage_json if art is not None else None,
-                                input_snapshot_json={**snapshot, "n_patches": int(getattr(sf, "n_patches", 0) or 0)
-                                                     if sf is not None else 0,
-                                                     "feature_artifact_id": art_id},
-                                research_use_only=True, created_by=created_by or audit.SYSTEM_WORKER)
-        db.add(p)
-        db.flush()
+                                coverage_json=coverage, input_snapshot_json=record,
+                                subject_scope=SUBJECT_SCOPE, input_snapshot_sha256=snap_sha,
+                                provenance_status=PROVENANCE_COMPLETE, research_use_only=True,
+                                created_by=created_by or audit.SYSTEM_WORKER)
+        try:
+            with db.begin_nested():
+                db.add(p)
+                db.flush()
+        except IntegrityError:  # another worker recorded this (bundle, slide, snapshot) first: one row
+            winner = _stored_prediction(db, bundle_id, slide_id, snap_sha)
+            if winner is None:
+                raise
+            if not _same_features((winner.input_snapshot_json or {}).get("features"), features):
+                raise _stale_refusal(winner.id, (winner.input_snapshot_json or {}).get("features"),
+                                     features) from None
+            return prediction_dict(winner, content), mean
         audit.record(db, action="inference.recorded", entity_type="inference_prediction", entity_id=p.id,
                      actor_id=audit.SYSTEM_WORKER, actor_role="system", project_id=content["project_id"],
                      after={"bundle_id": bundle_id, "slide_id": slide_id, "score": score, "abstained": bool(abstained),
-                            "unscorable_reason": reason, "research_use_only": True})
+                            "unscorable_reason": reason, "input_snapshot_sha256": snap_sha,
+                            "provenance_status": PROVENANCE_COMPLETE, "research_use_only": True})
         if ctx is not None:
             ctx.assert_lease(db)
         return prediction_dict(p, content), mean
@@ -543,7 +763,8 @@ def infer_slide(bundle_id: str, slide_id: str, ctx=None) -> dict:
     created_by = getattr(ctx, "created_by", None)
     pred, _ = score_slide(bundle_id, slide_id, ctx, created_by=created_by, need_embedding=False)
     return {"bundle_id": bundle_id, "slide_id": slide_id, "inference_prediction_id": pred["id"],
-            "score": pred["score"], "abstained": pred["abstained"], "unscorable_reason": pred["unscorable_reason"]}
+            "input_snapshot_sha256": pred["input_snapshot_sha256"], "score": pred["score"],
+            "abstained": pred["abstained"], "unscorable_reason": pred["unscorable_reason"]}
 
 
 @register(INFER_JOB, description="Label-free research inference of a registered bundle on one slide")
@@ -559,17 +780,29 @@ def prediction_dict(p: InferencePrediction, content: dict) -> dict:
     classes = content.get("classes") or {}
     pos, neg = classes.get("positive_class"), classes.get("negative_class")
     predicted = None if p.predicted is None else (pos if p.predicted else neg)
-    return {"id": p.id, "bundle_id": p.bundle_id, "slide_id": p.slide_id, "slide_sha256": p.slide_sha256,
-            "score": p.score, "calibrated_score": p.calibrated_score, "threshold": p.threshold,
-            "predicted": p.predicted, "predicted_class": predicted,
-            "predicted_display": LABEL_DISPLAY.get(predicted, predicted) if predicted else None,
-            "abstained": bool(p.abstained), "unscorable_reason": p.unscorable_reason,
-            "feature_artifact_id": p.feature_artifact_id, "coverage": p.coverage_json,
-            "input_snapshot": p.input_snapshot_json, "job_id": p.job_id, "created_by": p.created_by,
-            "created_at": p.created_at.isoformat() if p.created_at else None, "research_use_only": True,
-            "is_label": False, "bag_scope": "slide" + (" (the model was trained on case bags)"
-                                                      if classes.get("label_scope") == "case" else ""),
-            "notice": PREDICTION_NOTICE}
+    status = p.provenance_status or PROVENANCE_LEGACY
+    verified = bool(status == PROVENANCE_COMPLETE and p.input_snapshot_sha256
+                    and snapshot_sha256(p.input_snapshot_json or {}) == p.input_snapshot_sha256)
+    label_scope = classes.get("label_scope")
+    out = {"id": p.id, "bundle_id": p.bundle_id, "slide_id": p.slide_id, "slide_sha256": p.slide_sha256,
+           "score": p.score, "calibrated_score": p.calibrated_score, "threshold": p.threshold,
+           "predicted": p.predicted, "predicted_class": predicted,
+           "predicted_display": LABEL_DISPLAY.get(predicted, predicted) if predicted else None,
+           "abstained": bool(p.abstained), "unscorable_reason": p.unscorable_reason,
+           "feature_artifact_id": p.feature_artifact_id, "coverage": p.coverage_json,
+           "input_snapshot": p.input_snapshot_json, "input_snapshot_sha256": p.input_snapshot_sha256,
+           "subject_scope": p.subject_scope or SUBJECT_SCOPE, "provenance_status": status,
+           "snapshot_verified": verified, "reusable": verified and label_scope == SUBJECT_SCOPE,
+           "job_id": p.job_id, "created_by": p.created_by,
+           "created_at": p.created_at.isoformat() if p.created_at else None, "research_use_only": True,
+           "is_label": False, "bag_scope": SUBJECT_SCOPE, "notice": PREDICTION_NOTICE}
+    if status != PROVENANCE_COMPLETE:
+        out["provenance_note"] = ("Recorded before inference passed one input snapshot to extraction: the stored "
+                                  "snapshot may not be the extraction's input. Kept for history; never reused.")
+    if label_scope != SUBJECT_SCOPE:
+        out["scope_warning"] = (f"Historical row: a bundle trained on {label_scope!r} bags scored this single slide. "
+                                "This is not a slide-level probability; such bundles are now refused.")
+    return out
 
 
 # Workers import dermpath.ml.inference (dermpath.ml.jobs ENGINE_HANDLER_MODULES); importing active learning here

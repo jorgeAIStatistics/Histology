@@ -23,6 +23,13 @@ Guarantees
 * ``temporal``: a patient goes by their LATEST case date; ``val_cutoff < test_cutoff``; unused
   ``seed``/``ratios`` are rejected. ``external_site``: a patient with ANY case at a test site is
   test; sites can be validated against the known ones; ``ratios.test`` is rejected.
+* **Development-only patients** (``development_only``): patients exposed to model-driven acquisition
+  (active-learning proposals and their confirmed duplicate partners) are model-selected review
+  material, never clean evaluation material. A unit holding one is allocated to ``train`` before the
+  partition rule runs (it counts toward train's targets, so the others still meet the ratios), under
+  every partition. An inherited (or sealed) split is never moved: such a unit is reported in
+  ``diag["development_only"]["held_in_evaluation"]`` and the dataset freeze refuses it. With no
+  development-only patients the allocation is exactly the ``/3`` allocation.
 """
 
 from __future__ import annotations
@@ -383,7 +390,8 @@ def _by_date(p: _Patient, test_cut: date, val_cut: date | None) -> str:
 def allocate(patients: Sequence[Mapping], split: Mapping, *, salt: str = "",
              existing: Mapping[str, str] | None = None, groups: Iterable[tuple[str, str]] = (),
              classes: Sequence[str] | None = None, known_sites: Iterable[str] | None = None,
-             positive_class: str = DEFAULT_POSITIVE_CLASS) -> tuple[dict[str, str], dict]:
+             positive_class: str = DEFAULT_POSITIVE_CLASS,
+             development_only: Iterable[str] | None = None) -> tuple[dict[str, str], dict]:
     """Patient infos + split config → ``({patient_id: split}, diagnostics)``.
 
     ``patients``: mappings with ``id``, ``code`` (the content-stable key; defaults to ``id``), either ``label``
@@ -393,7 +401,9 @@ def allocate(patients: Sequence[Mapping], split: Mapping, *, salt: str = "",
     ``salt``: the split family salt. ``existing``: ``{patient_id: split}`` already held in the family (inherited,
     never moved). ``groups``: patient-id pairs that must share a split. ``classes``: task classes whose presence
     per split is checked besides those in the cohort. ``known_sites``: when given, ``test_sites`` must be among them
-    (422 ``unknown_site``).
+    (422 ``unknown_site``). ``development_only``: patient ids that must never be val or test (model-selected
+    material, see the module docstring); their units go to train unless an inherited split holds them, and
+    ``diag["development_only"]`` reports both (absent when the argument is None).
     """
     split = normalise_split(split)
     partition, rule = split["partition"], split["patient_label_rule"]
@@ -421,6 +431,15 @@ def allocate(patients: Sequence[Mapping], split: Mapping, *, salt: str = "",
             unit_split[i] = inherited[first.id]
             conflicts.append({"patient_codes": sorted(p.code for p in u),
                               "inherited_splits": {p.code: inherited[p.id] for p in u if p.id in inherited}})
+
+    # Development-only units (model-selected material) go to train before the partition rule; an inherited split
+    # wins (nobody moves) and is reported, so freeze can refuse it.
+    dev_only = {str(x) for x in (development_only or ())} & set(by_id)
+    dev_pinned: list[str] = []
+    for i, u in enumerate(units):
+        if i not in unit_split and any(p.id in dev_only for p in u):
+            unit_split[i] = "train"
+            dev_pinned += [p.code for p in u if p.id in dev_only]
 
     diag: dict = {"algorithm": ALGORITHM, "partition": partition, "patient_label_rule": rule,
                   "positive_class": positive_class, "ordering": "sha256(f'{family_salt}|{seed}|{patient_code}')"}
@@ -509,6 +528,19 @@ def allocate(patients: Sequence[Mapping], split: Mapping, *, salt: str = "",
     if family:
         diag["family"] = {"inherited": len(inherited), "new": len(pts) - len(inherited),
                           "dropped": len(set(existing or {}) - set(by_id))}
+    if development_only is not None:
+        diag["development_only"] = {
+            "rule": "patients exposed to model-driven acquisition (active-learning proposals and their confirmed "
+                    "duplicate partners) are model-selected review material: allocated to train, never val or test; "
+                    "an inherited or sealed split is never moved and is reported here",
+            "patients": len(dev_only),
+            "pinned_to_train": sorted(dev_pinned)[:_DIAG_LIST_CAP],
+            "already_train": sorted(p.code for p in pts if p.id in dev_only and mapping[p.id] == "train"
+                                    and p.code not in dev_pinned)[:_DIAG_LIST_CAP],
+            "held_in_evaluation": sorted(({"patient_code": p.code, "split": mapping[p.id]} for p in pts
+                                          if p.id in dev_only and mapping[p.id] != "train"),
+                                         key=lambda d: d["patient_code"])[:_DIAG_LIST_CAP],
+        }
     return mapping, diag
 
 

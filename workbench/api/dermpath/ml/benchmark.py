@@ -240,7 +240,24 @@ def _metric_entry(entry: dict | None) -> dict | None:
             if k in entry}
 
 
-def _run_record(run: TrainingRun, variant: dict) -> dict:
+def _abmil_fit_counts(training: dict) -> dict:
+    """Counts-only view of an ABMIL fit (no patient keys, no per-epoch history): the inner hold-out that selected
+    the epoch count and the final refit on every fitting bag (``fit_bags`` is the final model's fitting bags)."""
+    out = {}
+    sel, fin = training.get("epoch_selection"), training.get("final_fit")
+    if isinstance(sel, dict):
+        out["epoch_selection"] = {"status": sel.get("status"), "best_epoch": sel.get("best_epoch"),
+                                  "epochs_run": sel.get("epochs_run"),
+                                  **{part: {k: (sel.get(part) or {}).get(k)
+                                            for k in ("bags", "patients", "bags_by_class", "patients_by_class")}
+                                     if sel.get(part) else None for part in ("fit", "holdout")}}
+    if isinstance(fin, dict):
+        out["final_fit"] = {k: fin.get(k) for k in ("bags", "patients", "bags_by_class", "patients_by_class", "epochs",
+                                                    "early_stopping")}
+    return out
+
+
+def _run_record(run: TrainingRun, variant: dict, db=None) -> dict:
     m = run.metrics_json or {}
     dev_split = (run.threshold_json or {}).get("selected_on")
     s = m.get(f"{dev_split}_summary") or {}
@@ -261,6 +278,11 @@ def _run_record(run: TrainingRun, variant: dict) -> dict:
         rec["train_patients"] = lc["n_patients"] if lc else sum((sc.get(k) or {}).get("patients", 0) for k in pool)
         rec["training"] = {k: (m.get("training") or {}).get(k) for k in ("epochs_run", "best_epoch", "n_iter",
                                                                         "converged", "train_bags", "fit_bags")}
+        rec["training"].update(_abmil_fit_counts(m.get("training") or {}))
+    if db is not None:
+        from .training import run_preprocessing_validity
+
+        rec["preprocessing_fold_safety"] = run_preprocessing_validity(db, run)
     return rec
 
 
@@ -299,6 +321,12 @@ def _compare(db, dv, runs: dict[str, TrainingRun], *, fixed: dict, n_boot: int, 
     if len(done) < 2:
         return {**entry, "status": "insufficient_members", "reason": "a paired comparison needs at least two "
                 "finished runs"}
+    from .training import comparison_refusal
+
+    # Fold-unsafe learned preprocessing or different outer folds: never paired (owner's brief items 3 and 7).
+    refusal = comparison_refusal(db, list(done.values()))
+    if refusal is not None:
+        return {**entry, "status": "refused", **refusal}
     sets, excluded = _restrict([_score_set(db, r, name, dv) for name, r in sorted(done.items())])
     try:
         res = paired_comparison(sets, n_boot=n_boot, seed=seed, min_patients=min_patients)
@@ -508,7 +536,7 @@ def _report(cfg: dict, mode: str, dv_id: str, fs_ids: dict, policy: dict, family
             run = db.get(TrainingRun, rid)
             by_key[_key(v)] = run
             records.append(_run_record(run, {k: v[k] for k in ("encoder", "head", "seed", "fraction", "repeat",
-                                                               "role")}))
+                                                               "role")}, db))
         comparisons = {"encoder_effects": [], "head_effects": []}
         if fam is not None:
             seed = int(fam.bootstrap_seed)

@@ -12,6 +12,13 @@ Two kinds of signal, both on development data only:
   standard it is measured against; under ``imported_reference`` (an external dataset's labels, not
   expert reads) it is worded as a discordance with the imported reference and carries the notice.
 
+Cohort flags (owner's brief item 6). This queue is itself MODEL-SELECTED review: items carry
+``acquisition_exposed`` (the patient was chosen by active learning: model-selected review material,
+development only) and ``evaluation_patient`` (a discordance on the VALIDATION split: relabelling an
+evaluation patient because a model disagreed moves that label toward the model and biases its
+validation metrics, so adjudicate blind to model outputs). Flags inform; nothing is excluded or
+resolved by them.
+
 Ranking (transparent tiers, then the largest relative margin to the threshold, then the number of
 discordant runs, then the oldest disagreement, then the target id):
 
@@ -25,7 +32,7 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
-from ..datasets import IMPORTED_REFERENCE_NOTICE
+from ..datasets import IMPORTED_REFERENCE_NOTICE, acquisition_exposure
 from ..db import utcnow
 from ..models import Case, DatasetVersion, Disagreement, Slide, SplitFamily, SplitFamilyAssignment
 from ..vocab import LABEL_DISPLAY
@@ -46,6 +53,9 @@ IMPORTED_TIER_LABELS = {1: "reader disagreement and confident discordance with t
                         4: "discordance with the imported reference"}
 NOTICE = ("Ranked for human review only. Nothing is resolved, relabelled or adjudicated automatically; model "
           "discordance is not evidence that the reference label is wrong, and model scores are never expert truth.")
+COHORT_NOTE = ("This queue is model-selected review. Relabelling validation patients because a model disagreed "
+               "biases validation metrics toward that model: adjudicate them blind to model outputs. Patients chosen "
+               "by active learning (acquisition_exposed) are development material only.")
 
 
 def _margin(score: float, threshold: float) -> float:
@@ -78,6 +88,7 @@ def _patient_of(db, scope: str, slide_id: str | None, case_id: str | None) -> st
 
 def review_priorities(db, project_id: str, *, run_id: str | None = None, limit: int = 200) -> dict:
     sealed = _sealed_patients(db, project_id)
+    exposed = set(acquisition_exposure(db, project_id)["patients"])
     now = utcnow()
     items: dict[tuple[str, str], dict] = {}
 
@@ -88,7 +99,8 @@ def review_priorities(db, project_id: str, *, run_id: str | None = None, limit: 
             items[key] = {"target": {"scope": scope, "target_id": target, "slide_ids": slide_ids, "case_id": case_id,
                                      "coded_patient_id": patient_id, "patient_code": patient_code},
                           "reader_disagreement": None, "model_discordances": [],
-                          "sealed_test_patient": bool(patient_id and patient_id in sealed)}
+                          "sealed_test_patient": bool(patient_id and patient_id in sealed),
+                          "acquisition_exposed": bool(patient_id and patient_id in exposed)}
         return items[key]
 
     for d in db.scalars(select(Disagreement).where(Disagreement.project_id == project_id,
@@ -160,8 +172,16 @@ def review_priorities(db, project_id: str, *, run_id: str | None = None, limit: 
                            f"{max_margin:.2f}" + (f" (confident: {caveat})" if confident else ""))
         if it["sealed_test_patient"]:
             reasons.append("patient sealed by a test release: adjudicate blind to model outputs")
+        evaluation_patient = any(x["split"] == "val" for x in dis)
+        if evaluation_patient:
+            reasons.append("validation patient: a relabel prompted by a model discordance biases validation metrics "
+                           "toward the model; adjudicate blind to model outputs")
+        if it["acquisition_exposed"]:
+            reasons.append("patient selected by active learning: model-selected review material (development "
+                           "only, never validation or test)")
         tier_label = IMPORTED_TIER_LABELS.get(tier, TIERS[tier]) if imported_only else TIERS[tier]
-        out.append({**it, "tier": tier, "tier_label": tier_label, "max_relative_margin": max_margin,
+        out.append({**it, "evaluation_patient": evaluation_patient, "tier": tier, "tier_label": tier_label,
+                    "max_relative_margin": max_margin,
                     "n_discordant_runs": len({x["run_id"] for x in dis}), "reasons": reasons,
                     "synthetic": any(x["synthetic"] for x in dis), "resolved": False, "action": "human review"})
     out.sort(key=lambda r: (r["tier"], -r["max_relative_margin"], -r["n_discordant_runs"],
@@ -181,4 +201,5 @@ def review_priorities(db, project_id: str, *, run_id: str | None = None, limit: 
                         "model_discordances": f"stored predictions on {', '.join(DEVELOPMENT_SPLITS)} of finished runs "
                                               "(never train, never test)"},
             "confident_margin": CONFIDENT_MARGIN, "resolves_automatically": False, "notice": NOTICE,
+            "cohort_note": COHORT_NOTE,
             "synthetic": synthetic, "banner": PIPELINE_TEST_BANNER if synthetic else None}

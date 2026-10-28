@@ -42,7 +42,11 @@ only exception is ``synthetic_pipeline_test``, where :func:`_fixture_labels` der
 fixture labels from the frozen manifest and they reach embeddings only through
 :func:`dermpath.ml.fixture.fixture_context`. For ``macenko-v1`` the stain reference is fitted
 first, on train-split slides of the dataset only, and stored with the set
-(``stain_reference_key`` / ``stain_reference_sha256``). The set becomes ``ready`` in a
+(``stain_reference_key`` / ``stain_reference_sha256``). It is ONE reference per set, shared by
+every model trained on it, so it is learned preprocessing that is not fold-specific
+(:func:`learned_preprocessing`): ``dev_cv`` and learning-curve runs on such a set are refused
+(``fold_unsafe_preprocessing``, :func:`dermpath.ml.training.preprocessing_fold_safety`), while
+``holdout`` runs verify that its slides are training material. The set becomes ``ready`` in a
 transaction after its items. On a ready set the build is a repair pass: an artifact whose
 objects are missing or corrupt is re-extracted into a new generation row.
 
@@ -490,6 +494,38 @@ def _stain_from_json(data: dict) -> stainlib.StainPolicy:
         return DeferredMacenkoPolicy(method=data["method"], source_estimate=data.get("source_estimate", "per_slide"),
                                      fit=dict(data.get("reference_fit") or {}))
     return stainlib.StainPolicy.from_json(data)
+
+
+#: Provenance categories of LEARNED (data-fitted) preprocessing. ``dataset_fitted_train_split``: the macenko-v1
+#: reference fitted at build time on train-split slides of the set's dataset version (the only one implemented; one
+#: reference per feature set, shared by every model trained on it). An independently fixed external reference would
+#: be a separate category; it is not implemented. Anything else that is learned has unknown provenance and is treated
+#: as dataset-fitted (fail closed).
+LEARNED_PREPROCESSING_PROVENANCES = ("dataset_fitted_train_split", "unknown_treated_as_dataset_fitted")
+
+
+def learned_preprocessing(stain_policy_json: dict | None) -> dict:
+    """What a feature set's stain policy (its ``stain_policy_json``, the declared plan) fits on data.
+
+    ``none`` fits nothing. Fixed-encoder extraction is never learned preprocessing: it is label-free and fitted on
+    nothing, so extracting every slide (evaluation slides included) is allowed. ``macenko-v1`` fits ONE reference per
+    set on train-split slides (``reference_fit.train_slide_ids``), which is not fold-specific: see
+    :func:`dermpath.ml.training.preprocessing_fold_safety`."""
+    sp = dict(stain_policy_json or {})
+    method = sp.get("method") or "none"
+    if method == "none":
+        return {"learned": False, "kind": "none", "method": "none", "provenance": "none", "fitted_on_slide_ids": []}
+    fit = dict(sp.get("reference_fit") or {})
+    if sp.get("deferred") or fit:
+        return {"learned": True, "kind": "stain_reference", "method": method,
+                "provenance": LEARNED_PREPROCESSING_PROVENANCES[0],
+                "fitted_on": fit.get("fitted_on") or "train-split slides of the dataset version",
+                "dataset_version_id": fit.get("dataset_version_id"),
+                "fitted_on_slide_ids": sorted(fit.get("train_slide_ids") or []),
+                "selection_key": fit.get("selection_key"), "shared_by_every_model_on_the_set": True}
+    return {"learned": True, "kind": "stain_reference", "method": method,
+            "provenance": LEARNED_PREPROCESSING_PROVENANCES[1], "fitted_on_slide_ids": [],
+            "shared_by_every_model_on_the_set": True}
 
 
 # --------------------------------------------------------------------------- input snapshot

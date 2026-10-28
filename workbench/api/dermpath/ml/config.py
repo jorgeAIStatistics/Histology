@@ -124,6 +124,10 @@ class ExperimentParams(BaseModel):
     # ---- development protocols
     inner_val_fraction: float = Field(0.2, gt=0.0, lt=1.0)  # ABMIL early stopping (inner split of train)
     cv_folds: int = Field(5, ge=2, le=20)  # dev_cv only
+    # dev_cv only: declared seed of the outer-fold assignment (recorded in the run identity). Folds depend on the
+    # development pool's patient / duplicate-group content, k and this seed only (never the head, the training
+    # seed or the feature set); 0 keeps the salt of runs made before the parameter existed.
+    cv_fold_seed: int = Field(0, ge=0, le=2**31 - 1)
     # learning curves: nested stratified subset of TRAIN patients (dev pool fitting in dev_cv)
     train_patient_fraction: float = Field(1.0, gt=0.0, le=1.0)
     subset_repeat: int = Field(0, ge=0, le=1000)

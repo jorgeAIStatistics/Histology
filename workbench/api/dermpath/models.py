@@ -14,6 +14,7 @@ triggers created with ``execute_if(dialect="sqlite")``):
   only while no version of the lineage is frozen. ``SplitFamilyAssignment`` rows are
   insert-only except for sealing, which is recorded once.
 * ``AnnotationVersion`` rows are never deleted; only ``superseded_by`` may be set once.
+* ``AcquisitionExposure`` rows (patients exposed to model-driven acquisition) are append-only.
 
 ML TABLES ---------------------------------------------------------------------
 FeatureArtifact, TrainingRun, Prediction, Evaluation and ModelVersion are NOT defined
@@ -34,6 +35,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     Date,
     Float,
     ForeignKey,
@@ -576,6 +578,59 @@ class NearDuplicateReview(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
 
 
+#: Kinds of acquisition exposure. ``model_selected``: the patient's material was chosen for expert review by an
+#: active-learning batch (model scores, plus its random share), so it is a model-selected review cohort.
+ACQUISITION_EXPOSURE_KINDS = ("model_selected",)
+#: ``selected``: the patient whose slide was proposed; ``duplicate_partner``: a patient joined to it by a
+#: ``duplicate`` near-duplicate decision in force when the proposal was committed (the same material).
+ACQUISITION_EXPOSURE_RELATIONS = ("selected", "duplicate_partner")
+
+
+class AcquisitionExposure(Base):
+    """A coded patient exposed to MODEL-DRIVEN ACQUISITION (owner's brief item 6; design §9).
+
+    Written by the active-learning job in the SAME transaction as the ``al_proposal`` row it belongs to: one
+    ``selected`` row for the patient whose slide was proposed (with the patient's slides and cases at that moment),
+    and one ``duplicate_partner`` row per patient joined to it by a ``duplicate`` near-duplicate decision then in
+    force. Exposed material is model-selected review material: the split allocator pins it to train and freeze
+    refuses a version whose val or test holds it (``409 acquisition_exposed_in_evaluation``); see
+    :func:`dermpath.datasets.acquisition_exposure` for the effective exposure (which adds legacy proposals, slides
+    moved to another patient and duplicates confirmed later). Append-only: a later ``distinct`` decision or a
+    lineage correction never erases the fact that a model selected the material.
+    """
+
+    __tablename__ = "acquisition_exposure"
+    __table_args__ = (
+        UniqueConstraint("proposal_id", "coded_patient_id", name="uq_acquisition_exposure_proposal_patient"),
+        CheckConstraint("kind IN ('model_selected')", name="ck_acquisition_exposure_kind"),
+        CheckConstraint("relation IN ('selected', 'duplicate_partner')", name="ck_acquisition_exposure_relation"),
+        Index("ix_acquisition_exposure_project_patient", "project_id", "coded_patient_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("project.id"), nullable=False, index=True)
+    coded_patient_id: Mapped[str] = mapped_column(ForeignKey("coded_patient.id"), nullable=False)
+    patient_code: Mapped[str | None] = mapped_column(String(32))
+    kind: Mapped[str] = mapped_column(String(24), nullable=False, default="model_selected")
+    relation: Mapped[str] = mapped_column(String(24), nullable=False, default="selected")
+    # The patient whose slide the batch proposed (equal to coded_patient_id for relation "selected").
+    selected_patient_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    # al_proposal.id and its batch (ML engine tables; no foreign key, so core tables never depend on them).
+    proposal_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    batch_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    run_id: Mapped[str | None] = mapped_column(String(32))
+    bundle_id: Mapped[str | None] = mapped_column(String(32))
+    dataset_version_id: Mapped[str | None] = mapped_column(String(32))
+    proposed_slide_id: Mapped[str] = mapped_column(ForeignKey("slide.id"), nullable=False)
+    # Linked material at commit: every slide and case of this patient in the project (sorted ids).
+    slide_ids_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    case_ids_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # [{"slide_a", "slide_b", "decision_id"}]: the duplicate decisions that join this patient to the selected one.
+    duplicate_links_json: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, nullable=False)
+
+
 # --------------------------------------------------------------------------- platform
 
 
@@ -644,9 +699,9 @@ class AuditEvent(Base):
 
 # --------------------------------------------------------------------------- immutability guards
 
-_APPEND_ONLY = (AuditEvent, LabelVersion, ReviewAssessment)
+_APPEND_ONLY = (AuditEvent, LabelVersion, ReviewAssessment, AcquisitionExposure)
 _NO_BULK = (AuditEvent, LabelVersion, ReviewAssessment, DatasetVersion, DatasetItem, SplitAssignment, SplitFamily,
-            SplitFamilyAssignment)
+            SplitFamilyAssignment, AcquisitionExposure)
 _SEAL_FIELDS = {"sealed_at", "sealed_reason", "sealed_by"}
 
 
@@ -795,6 +850,12 @@ _SQLITE_TRIGGERS = {
         "BEGIN SELECT RAISE(ABORT, 'split family assignments never change; only sealing is recorded, once'); END",
         "CREATE TRIGGER IF NOT EXISTS split_family_assignment_no_delete BEFORE DELETE ON split_family_assignment "
         "BEGIN SELECT RAISE(ABORT, 'split family assignments are never deleted'); END",
+    ],
+    AcquisitionExposure.__table__: [
+        "CREATE TRIGGER IF NOT EXISTS acquisition_exposure_no_update BEFORE UPDATE ON acquisition_exposure "
+        "BEGIN SELECT RAISE(ABORT, 'acquisition_exposure is append-only'); END",
+        "CREATE TRIGGER IF NOT EXISTS acquisition_exposure_no_delete BEFORE DELETE ON acquisition_exposure "
+        "BEGIN SELECT RAISE(ABORT, 'acquisition_exposure is append-only'); END",
     ],
     SplitAssignment.__table__: [
         "CREATE TRIGGER IF NOT EXISTS split_frozen_insert BEFORE INSERT ON split_assignment "

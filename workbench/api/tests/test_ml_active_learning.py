@@ -223,7 +223,12 @@ def test_batch_is_persisted_never_labels_and_excludes_previous_proposals(clients
 
 def test_candidates_are_scored_out_of_sample_through_the_bundle(clients, ids, monkeypatch):
     """Scoring path: a real-mode bundle scores each candidate label-free (inference predictions) and the batch
-    mixes uncertainty, diversity and random."""
+    mixes uncertainty, diversity and random.
+
+    Deliberate change (owner's brief item 2B, tests/test_inference_snapshot_identity.py): the infer job passes ONE
+    canonical input snapshot to extraction (it used to pass ``input_snapshot=None``, so extraction took a second,
+    live snapshot that could differ from the recorded provenance). The assertion on the extraction calls now
+    requires that snapshot (a dict for the candidate's own slide) instead of None."""
     calls = install_fakes(monkeypatch)
     from dermpath.db import session_scope
     from dermpath.ml import active_learning
@@ -250,7 +255,9 @@ def test_candidates_are_scored_out_of_sample_through_the_bundle(clients, ids, mo
     assert [o.status for o in out] == ["succeeded"], [o.error for o in out]
     batch = lead.get(f"/api/v1/active-learning/batches/{r.json()['batch_id']}").json()
     assert batch["composition"] == {"uncertainty": 2, "diversity": 2, "random": 2}
-    assert len(calls.extract) == 8 and all(c["input_snapshot"] is None for c in calls.extract)
+    assert len(calls.extract) == 8 and all(isinstance(c["input_snapshot"], dict)
+                                           and c["input_snapshot"]["slide_id"] == c["slide_id"]
+                                           for c in calls.extract)
     unc = [i for i in batch["items"] if i["strategy"] == "uncertainty"]
     assert all(i["components"]["model_score"] is not None and i["uncertainty"] is not None for i in unc)
     assert all(i["components"]["inference_prediction_id"] for i in batch["items"])

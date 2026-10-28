@@ -114,6 +114,10 @@ def test_bundle_is_built_at_registration_immutable_and_content_addressed(clients
 
 
 def test_infer_job_is_label_free_identity_verified_and_never_writes_a_label(clients, ids, monkeypatch):
+    """Deliberate change (owner brief item 2B, 2026-10-28): this test used to assert ``input_snapshot is None``,
+    i.e. that the extraction took its own live snapshot while the prediction recorded a separate one. That was the
+    defect (recorded provenance could differ from the extraction's inputs). The job now passes ONE canonical
+    snapshot to the extraction and the prediction records exactly it (``tests/test_inference_snapshot_identity.py``)."""
     calls = install_fakes(monkeypatch)
     from dermpath import labels
     from dermpath.db import session_scope
@@ -147,7 +151,9 @@ def test_infer_job_is_label_free_identity_verified_and_never_writes_a_label(clie
     assert call["weights_sha256"] == bundle["encoder"]["weights_sha256"]
     assert call["encoder_spec_sha256"] == bundle["encoder"]["spec_sha256"]
     assert call["policy_sha256"] == bundle["patch_policy"]["policy_sha256"]
-    assert call["input_snapshot"] is None and call["device"] == "cpu"
+    snap = call["input_snapshot"]  # the job's one snapshot, label-free
+    assert isinstance(snap, dict) and snap["slide_id"] == sid and call["device"] == "cpu"
+    assert not [k for k in snap if "label" in k or "fixture" in k]
     assert call["extra"] and not [k for k in call["extra"] if "label" in k or "fixture" in k]
     preds = lead.get(f"/api/v1/bundles/{bid}/predictions").json()["items"]
     assert len(preds) == 1
@@ -158,11 +164,12 @@ def test_infer_job_is_label_free_identity_verified_and_never_writes_a_label(clie
     if p["predicted_class"] == "bcc_absent_not_benign":
         assert "NOT the same as benign" in p["predicted_display"]
     assert p["input_snapshot"]["slide_sha256"] == hashlib.sha256(sid.encode()).hexdigest()
+    assert {k: p["input_snapshot"][k] for k in snap} == snap and p["provenance_status"] == "complete"
     cols = {c.name for c in InferencePrediction.__table__.columns}
     assert not {"label", "label_value", "label_version_id"} & cols
     with session_scope() as db:
         assert db.scalar(select(func.count(LabelVersion.id))) == n_labels  # never a label
-    # A second request returns the stored prediction (append-only, one per bundle and slide).
+    # A second request returns the stored prediction (append-only, one per bundle, slide and input snapshot).
     r = lead.post(f"/api/v1/bundles/{bid}/infer", json={"slide_id": sid}).json()
     assert r["prediction"]["id"] == p["id"]
 

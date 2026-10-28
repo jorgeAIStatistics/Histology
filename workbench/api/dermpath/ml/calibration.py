@@ -15,6 +15,16 @@ calibration that is later applied to them. Fitted parameters are plain JSON (ver
 :data:`CALIBRATION_SCHEMA`, hashed by ``params_sha256``) and :func:`apply_calibration` needs
 only numpy. Calibrated scores are still model outputs: calibration on development data does
 not guarantee calibration on another population.
+
+Evidence gate (owner's brief item 7). Bags of one patient, and of patients a person confirmed
+as near-duplicates, are not independent evidence, so the gate counts DISTINCT ``groups`` per
+class (the caller passes one group key per item: the patient, or the union of patients joined
+by confirmed duplicates; a patient with bags of both classes counts once in each). Below
+``min_per_class`` groups in either class the fit raises :class:`InsufficientCalibrationEvidence`
+(``evidence`` holds the counts). Without ``groups`` every item counts as its own unit and the
+fit records ``unit: items``; the engine always passes groups. A calibration measured on the
+same scores it was fitted on is in-sample, and a fitted map is not a validated clinical
+probability (:data:`RELIABILITY_NOTE`).
 """
 
 from __future__ import annotations
@@ -31,7 +41,13 @@ METHODS = ("none", "platt", "isotonic")
 FIT_SPLITS = ("val", "oof", "calibration")  # development roles a calibration may be fitted on
 SCORE_INPUTS = ("logit", "score")
 LOGIT_EPS = 1e-6
+#: Minimum independent units (patient groups when ``groups`` is given, else items) per class.
 MIN_PER_CLASS = 5
+EVIDENCE_UNIT_GROUPS = "patient_groups"
+EVIDENCE_UNIT_ITEMS = "items"
+RELIABILITY_NOTE = ("a fitted calibration map is not a validated clinical probability: it was fitted on development "
+                    "scores of this cohort, any calibration measured on those same scores is in-sample, and nothing "
+                    "shows it transfers to another population, site or scanner")
 _NEWTON_MAX_ITER = 100
 _NEWTON_MIN_STEP = 1e-10
 _NEWTON_SIGMA = 1e-12
@@ -44,6 +60,32 @@ class CalibrationError(ValueError):
 
 class CalibrationOnTestRefused(CalibrationError):
     """An item marked ``test`` was offered to a calibration fit."""
+
+
+class InsufficientCalibrationEvidence(CalibrationError):
+    """Fewer than ``min_per_class`` independent units (patient groups) in a class. ``evidence`` holds the counts."""
+
+    def __init__(self, message: str, evidence: dict) -> None:
+        super().__init__(message)
+        self.evidence = evidence
+
+
+def calibration_evidence(labels, groups=None, *, min_per_class: int = MIN_PER_CLASS) -> dict:
+    """Independent units per class: distinct ``groups`` (patient / confirmed-duplicate group keys, one per item)
+    with at least one item of the class, or items when ``groups`` is None."""
+    y = binary_labels(labels)
+    n_pos_items = int(y.sum())
+    out = {"positive_items": n_pos_items, "negative_items": int(y.size - n_pos_items),
+           "min_per_class": int(min_per_class)}
+    if groups is None:
+        return {"unit": EVIDENCE_UNIT_ITEMS, "positive_units": n_pos_items, "negative_units": int(y.size - n_pos_items),
+                **out}
+    g = [str(v) for v in groups]
+    if len(g) != y.size:
+        raise CalibrationError(f"groups has {len(g)} entries for {y.size} item(s)")
+    pos = {gi for gi, yi in zip(g, y.tolist()) if yi == 1}
+    neg = {gi for gi, yi in zip(g, y.tolist()) if yi == 0}
+    return {"unit": EVIDENCE_UNIT_GROUPS, "positive_units": len(pos), "negative_units": len(neg), **out}
 
 
 def _sigmoid(z: np.ndarray) -> np.ndarray:
@@ -135,12 +177,15 @@ def identity_calibration() -> dict:
 
 
 def fit_calibration(scores, labels, *, method: str, item_splits: Sequence[str], score_input: str = "logit",
-                    min_per_class: int = MIN_PER_CLASS, eps: float = LOGIT_EPS) -> dict:
+                    min_per_class: int = MIN_PER_CLASS, eps: float = LOGIT_EPS, groups: Sequence | None = None) -> dict:
     """Fit a calibration map on DEVELOPMENT scores (val or out-of-fold).
 
     ``item_splits`` gives every item's role and is required: any ``test`` item raises
     :class:`CalibrationOnTestRefused`, any role outside :data:`FIT_SPLITS` raises
-    :class:`CalibrationError`. Both classes need at least ``min_per_class`` items.
+    :class:`CalibrationError`. Both classes need at least ``min_per_class`` independent units:
+    distinct ``groups`` (one key per item: the patient or its confirmed-duplicate group) when
+    given, else items; below that :class:`InsufficientCalibrationEvidence`. The counts are
+    recorded in ``fitted_on.evidence``.
     ``score_input`` (Platt only): ``logit`` fits on logit(score) (scores in [0, 1], clipped to
     [eps, 1 − eps]); ``score`` fits on the raw score."""
     if method not in METHODS:
@@ -151,13 +196,17 @@ def fit_calibration(scores, labels, *, method: str, item_splits: Sequence[str], 
     if len(splits) != y.size:
         raise CalibrationError(f"item_splits has {len(splits)} entries for {y.size} item(s)")
     roles = assert_development_only(splits)
+    evidence = calibration_evidence(y, groups, min_per_class=min_per_class)
     if method == "none":
         return identity_calibration()
     n_pos, n_neg = int(y.sum()), int(y.size - y.sum())
-    if n_pos < int(min_per_class) or n_neg < int(min_per_class):
-        raise CalibrationError(f"insufficient evidence to fit {method} calibration: {n_pos} positive and {n_neg} "
-                               f"negative item(s); each class needs at least {int(min_per_class)}")
-    fitted_on = _fit_summary(s, y, roles)
+    if evidence["positive_units"] < int(min_per_class) or evidence["negative_units"] < int(min_per_class):
+        unit = ("patient group(s) (patients joined by confirmed duplicates count once)"
+                if evidence["unit"] == EVIDENCE_UNIT_GROUPS else "item(s)")
+        raise InsufficientCalibrationEvidence(
+            f"insufficient evidence to fit {method} calibration: {evidence['positive_units']} positive and "
+            f"{evidence['negative_units']} negative {unit}; each class needs at least {int(min_per_class)}", evidence)
+    fitted_on = {**_fit_summary(s, y, roles), "evidence": evidence}
     if method == "platt":
         if score_input not in SCORE_INPUTS:
             raise CalibrationError(f"score_input must be one of {', '.join(SCORE_INPUTS)}")

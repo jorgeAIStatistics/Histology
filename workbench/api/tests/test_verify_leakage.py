@@ -512,8 +512,14 @@ def test_dev_cv_never_scores_a_patient_or_its_confirmed_duplicate_with_a_model_t
     """OOF integrity (design §6): every development bag is scored out-of-fold by a model whose fitting data hold
     neither its patient nor any patient joined to it by a confirmed duplicate; each fitter (and its scaler and
     class weights) reads only its fitting bags; learning-curve subsets restrict fitting only; the refit uses the
-    development pool."""
-    from dermpath.ml.training import run_dev_cv
+    development pool.
+
+    Deliberate change (owner's brief item 7, fold stability; tests/test_cv_fold_stability.py): a learning-curve
+    fraction is now drawn WITHIN each fold (the nested stratified subset of that fold's own fitting part), so a
+    fold model's fitting bags no longer depend on its held-out patients. They are therefore no longer required to be
+    a subset of the final model's subset of the whole pool (the old ``f["bags"] <= allowed`` assertion encoded the
+    previous pool-wide subset); at fraction 1 every fold still fits a subset of the pool the final model uses."""
+    from dermpath.ml.training import learning_curve_subset, run_dev_cv
 
     bags = _bags(_items(), scope)
     pats = sorted({b.patient_id for b in bags}, key=lambda p: next(b.patient_code for b in bags if b.patient_id == p))
@@ -521,11 +527,10 @@ def test_dev_cv_never_scores_a_patient_or_its_confirmed_duplicate_with_a_model_t
     unit = _units(bags, pairs)
     ctx = {"split_salt": "verify-leakage", "patient_label_rule": "any_positive", "duplicate_pairs": pairs}
     access = _RecordingAccess()
+    params = _params(cv_folds=5, train_patient_fraction=fraction, **({"subset_repeat": 0} if fraction < 1 else {}))
     with pytest.MonkeyPatch.context() as mp:
         fits = _spy_fits(mp, access)
-        out = run_dev_cv(bags, head="meanpool_logreg", params=_params(cv_folds=5, train_patient_fraction=fraction,
-                                                                      **({"subset_repeat": 0} if fraction < 1 else {})),
-                         seed=4, access=access, context=ctx)
+        out = run_dev_cv(bags, head="meanpool_logreg", params=params, seed=4, access=access, context=ctx)
     assert len(fits) == 5 + 1
     scored = [sb.bag.bag_id for sb in out.dev] + [u["bag_id"] for u in out.unscored]
     assert sorted(scored) == sorted(b.bag_id for b in bags) and len(scored) == len(set(scored))
@@ -533,9 +538,13 @@ def test_dev_cv_never_scores_a_patient_or_its_confirmed_duplicate_with_a_model_t
         seen = fits[sb.fold]["patients"]
         assert not (unit[sb.bag.patient_id] & seen), (sb.bag.patient_code, sb.fold)
     allowed = fits[-1]["bags"]
-    for f in fits:
+    for i, f in enumerate(fits):
         assert f["read"] <= f["bags"], "a fitter read bags it was not given"
-        assert f["bags"] <= allowed
+        if fraction == 1.0 or i == len(fits) - 1:
+            assert f["bags"] <= allowed
+        else:  # the fold's own fitting part, subset within it
+            fold_fit = [b for b in bags if out.cv["fold_of"][b.patient_id] != i]
+            assert f["bags"] == {b.bag_id for b in learning_curve_subset(fold_fit, params, ctx)[0]}
         arrays, fb = f["arrays"], f["fit_list"]
         means = np.stack([np.asarray(b.embeddings, dtype=np.float64).mean(axis=0) for b in fb])
         assert np.allclose(arrays["scaler_mean"], means.mean(axis=0)), "scaler not fitted on the fitting bags"
@@ -578,11 +587,16 @@ def test_holdout_fitters_never_read_validation_and_abmil_inner_holdout_keeps_dup
             assert inner["stop"] and not (inner["stop"] & inner["fit"])
             for p in inner["stop"]:
                 assert unit[p] <= inner["stop"], "a confirmed-duplicate unit spans the inner fit part and hold-out"
-            fit_bags = [b for b in train if b.patient_id in inner["fit"]]
-            inst = np.concatenate([np.asarray(b.embeddings, dtype=np.float64) for b in fit_bags])
+            # Deliberate change (owner's brief item 7, tests/test_abmil_refit.py): the inner hold-out only selects the
+            # epoch count; the final ABMIL model is then refitted on EVERY training bag, so its input normalisation
+            # and class weights come from all of train (never validation). The old assertion (normalisation from the
+            # inner fit part only) encoded the previous fit-on-80 % behaviour.
+            inst = np.concatenate([np.asarray(b.embeddings, dtype=np.float64) for b in train])
             assert np.allclose(out.arrays["input_mean"], inst.mean(axis=0), atol=1e-5), \
-                "ABMIL input normalisation not fitted on the inner fit part only"
-            assert f["summary"]["class_weights"]["counts"]["positive"] == sum(b.label for b in fit_bags)
+                "ABMIL input normalisation not fitted on the training bags"
+            assert f["summary"]["class_weights"]["counts"]["positive"] == sum(b.label for b in train)
+            sel = f["summary"]["epoch_selection"]
+            assert sel["fit"]["patients"] == len(inner["fit"]) and sel["holdout"]["patients"] == len(inner["stop"])
         else:
             means = np.stack([np.asarray(b.embeddings, dtype=np.float64).mean(axis=0) for b in train])
             assert np.allclose(out.arrays["scaler_mean"], means.mean(axis=0))

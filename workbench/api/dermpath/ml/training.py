@@ -17,14 +17,25 @@ Roles of data (no label reaches feature generation: features come from the run's
 feature set, built label-free; only ``synthetic_pipeline_test`` derives a fixture signal, inside
 ``feature_sets``/``fixture.py``):
 
-* ``holdout``: the head is fitted on TRAIN; ABMIL early stopping uses an inner
-  patient-grouped stratified hold-out of train (never val); threshold, calibration and
-  abstention are selected on VAL; threshold-dependent val metrics are flagged
+* ``holdout``: the head is fitted on TRAIN; ABMIL selects its epoch count on an inner
+  patient-grouped stratified hold-out of train (never val) and is then refitted on every
+  training patient for that count (:data:`dermpath.ml.heads.ABMIL_FIT_SEMANTICS`); threshold,
+  calibration and abstention are selected on VAL; threshold-dependent val metrics are flagged
   ``tuning_set: true``.
 * ``dev_cv``: patient-grouped stratified K-fold over the development pool (train ∪ val),
   out-of-fold predictions stored as split ``oof`` (each development patient scored exactly
   once, by a model that never saw it); threshold, calibration and abstention selected on OOF;
-  the final model is refitted on the whole development pool. Test is untouched.
+  the final model is refitted on the whole development pool. Test is untouched. Folds are a
+  function of the manifest's development patients (every one, scorable or not, grouped by
+  confirmed duplicates), k and the declared ``cv_fold_seed`` only (:func:`dev_cv_folds`), never
+  of the head, the training seed or the feature set; they are part of the run identity
+  (``fold_assignment``). A learning-curve fraction is drawn within each fold's fitting part.
+
+Learned preprocessing must be fold-safe (:func:`preprocessing_fold_safety`): a stain reference
+fitted once on the dataset's train split is shared by every outer fold, so ``dev_cv`` (and any
+learning-curve subset) on such a feature set is refused with ``fold_unsafe_preprocessing`` at
+creation and again in the worker. Fixed-encoder extraction is label-free and fitted on nothing,
+so it is allowed on every slide.
 
 The TEST split is never read here: test metrics come only from a recorded test release.
 
@@ -59,7 +70,15 @@ from ..jobs.registry import JobCanceled, LeaseLost, PermanentJobError
 from ..models import DatasetVersion, LabelVersion, QCIssue, Slide
 from ..storage import get_store
 from .artifacts import code_identity, code_revision, code_tree_drift, dependency_versions, sha256_hex
-from .calibration import CalibrationError, apply_calibration, fit_calibration, identity_calibration
+from .calibration import (
+    RELIABILITY_NOTE,
+    CalibrationError,
+    InsufficientCalibrationEvidence,
+    apply_calibration,
+    calibration_evidence,
+    fit_calibration,
+    identity_calibration,
+)
 from .devices import DeviceUnavailable
 from .encoders import EncoderUnavailable, get_encoder
 from .engine_models import EXECUTION_MODES, FeatureSet, RunAttempt
@@ -104,6 +123,28 @@ IN_SAMPLE_NOTE = "train-split predictions are in-sample and are never reported a
 DECISION_NOTE = ("decisions use the raw score (positive if score >= threshold); calibration maps scores to "
                  "probabilities for reporting and is monotone, so it never changes the ordering")
 BAG_CACHE_ENV = "WB_ML_BAG_CACHE_MB"
+NO_PATCHES_REASON = "no tissue patches in the feature set"
+#: Fold safety of learned preprocessing (owner's brief item 3).
+FOLD_UNSAFE_CODE = "fold_unsafe_preprocessing"
+PREPROCESSING_SAFETY_SCHEMA = "dermpath.preprocessing_fold_safety/1"
+FOLD_UNSAFE_REMEDY = ("use evaluation_protocol 'holdout' at train_patient_fraction 1 (its reference is fitted on the "
+                      "training patients only, verified per run), or stain_normalization 'none'; fold-specific "
+                      "preprocessing (one reference fitted per outer fold on that fold's fitting patients) is not "
+                      "implemented")
+LABEL_FREE_EXTRACTION_NOTE = ("fixed-encoder feature extraction is label-free and fitted on nothing, so extracting "
+                              "every slide (evaluation slides included) with the same frozen encoder is not learned "
+                              "preprocessing; only data-fitted transforms (a stain reference) must be fitted on the "
+                              "permitted fitting patients")
+DEV_CV_PREPROCESSING_PROBLEM = (
+    "dev_cv: the {method} reference was fitted once on train-split slides of the dataset and is shared by every "
+    "outer fold, and every development patient is held out by exactly one fold, so each fold's held-out images "
+    "shaped the normalisation of its own fitting data (preprocessing leakage; label-free, effect unknown)")
+LC_PREPROCESSING_PROBLEM = (
+    "learning-curve subset (train_patient_fraction {fraction}): the {method} reference was fitted on training "
+    "patients outside the subset, so this point's fitted preprocessing used more patients than it reports")
+FOLD_KEYING = ("content: grouping units (a patient, or patients joined by confirmed near-duplicate decisions) are "
+               "ordered by sha256(split-family salt | cv | k [| fold_seed] | the units' patient codes)")
+FOLD_POOL = "every train ∪ val patient of the frozen manifest, whether or not the feature set can score its slides"
 VERIFY_BAGS = 32  # bags re-scored from the stored checkpoint before anything is recorded
 
 
@@ -248,7 +289,18 @@ def compute_run_identity(*, encoder, feature_set, manifest: dict, dataset_versio
         "positive_class": positive_class,
         "negative_class": negative_class,
         "synthetic": bool(synthetic),
+        "fold_assignment": fold_assignment_identity(evaluation_protocol, params),
     }
+
+
+def fold_assignment_identity(protocol: str, params: dict) -> dict | None:
+    """What the outer folds of a ``dev_cv`` run depend on (None for holdout): k and the declared fold seed, keyed by
+    content. The head, the training seed and the feature set are deliberately absent."""
+    if protocol != "dev_cv":
+        return None
+    return {"protocol": "dev_cv", "k": int(params.get("cv_folds", 5)), "fold_seed": int(params.get("cv_fold_seed", 0)),
+            "keyed_by": FOLD_KEYING, "pool": FOLD_POOL,
+            "independent_of": ["head", "training seed", "feature set / encoder (which bags it can score)"]}
 
 
 def identity_sha256(identity: dict) -> str:
@@ -351,6 +403,164 @@ def split_context(manifest: dict, project_id: str) -> dict:
         f"dermpath.split_family|{project_id}".encode()).hexdigest()[:32]
     return {"split_salt": salt, "patient_label_rule": manifest.get("patient_label_rule") or "any_positive",
             "duplicate_pairs": duplicate_patient_pairs(manifest)}
+
+
+# --------------------------------------------------------------------------- fold-safe preprocessing
+
+
+def preprocessing_fold_safety(stain_policy_json: dict | None, *, protocol: str, params: dict | None,
+                              manifest: dict | None = None) -> dict:
+    """Is the feature set's LEARNED preprocessing fitted only on the run's permitted fitting patients?
+
+    Learned preprocessing is a data-fitted transform (today: the ``macenko-v1`` stain reference, fitted once at
+    build on train-split slides of the dataset, :func:`dermpath.ml.feature_sets.learned_preprocessing`).
+    Fixed-encoder extraction is label-free and fitted on nothing (:data:`LABEL_FREE_EXTRACTION_NOTE`).
+
+    * ``dev_cv`` with a dataset-fitted reference is unsafe: the reference is shared by every outer fold and each
+      development patient is held out by one of them.
+    * A learning-curve subset (``train_patient_fraction`` < 1) with it is unsafe in both protocols.
+    * ``holdout`` at fraction 1 is safe when every fitting slide is a train-split item whose patient (and
+      confirmed-duplicate group) is not a validation or test patient; with ``manifest`` this is verified and the
+      fitting slide ids, patient codes and any overlap are returned.
+
+    ``status``: ``no_learned_preprocessing`` | ``fold_safe`` | ``fold_unsafe`` (with ``code``
+    :data:`FOLD_UNSAFE_CODE`, ``problems`` and ``remedy``)."""
+    lp = _fsets().learned_preprocessing(stain_policy_json)
+    params = params or {}
+    frac = float(params.get("train_patient_fraction", 1.0) or 1.0)
+    out = {"schema": PREPROCESSING_SAFETY_SCHEMA, **lp, "protocol": protocol, "train_patient_fraction": frac,
+           "problems": [], "note": LABEL_FREE_EXTRACTION_NOTE}
+    if not lp["learned"]:
+        out["status"] = "no_learned_preprocessing"
+        return out
+    method = lp.get("method") or "learned"
+    problems = []
+    if protocol == "dev_cv":
+        problems.append(DEV_CV_PREPROCESSING_PROBLEM.format(method=method))
+    if frac < 1.0:
+        problems.append(LC_PREPROCESSING_PROBLEM.format(fraction=frac, method=method))
+    if manifest is not None:
+        fitted = list(lp.get("fitted_on_slide_ids") or [])
+        overlap, codes = _reference_overlap(fitted, manifest, protocol)
+        out.update({"fitting_slide_ids": sorted(fitted), "fitting_patient_codes": codes, "held_out_overlap": overlap})
+        if protocol != "dev_cv":
+            if not fitted:
+                problems.append(f"the fitting slides of the {method} reference are not recorded, so fitting on the "
+                                "training patients only cannot be verified")
+            elif overlap:
+                problems.append(f"{len(overlap)} slide(s) that fitted the {method} reference are not training "
+                                "material of this manifest (validation or test patients, their confirmed duplicates, "
+                                "or slides outside the manifest)")
+    out["problems"] = problems
+    if problems:
+        out.update({"status": "fold_unsafe", "code": FOLD_UNSAFE_CODE, "remedy": FOLD_UNSAFE_REMEDY})
+    else:
+        out["status"] = "fold_safe"
+    return out
+
+
+def _reference_overlap(fitted: list[str], manifest: dict, protocol: str) -> tuple[list[dict], list[str]]:
+    """Fitting slides that are not permitted fitting material, and the fitting patients' codes."""
+    from .cv import duplicate_groups
+
+    items = {it["slide_id"]: it for it in manifest.get("items") or []}
+    split_of = {s["coded_patient_id"]: s.get("split") for s in manifest.get("splits") or []}
+    code_of = {}
+    for it in items.values():
+        split_of.setdefault(it["coded_patient_id"], it.get("split"))
+        code_of.setdefault(it["coded_patient_id"], it.get("patient_code") or it["coded_patient_id"])
+    for pid in split_of:
+        code_of.setdefault(pid, pid)
+    groups = duplicate_groups(split_of, patient_keys=code_of, duplicate_pairs=duplicate_patient_pairs(manifest))
+    evaluation = ("val", "test") if protocol != "dev_cv" else ("test",)
+    held_groups = {groups[p] for p, sp in split_of.items() if sp in evaluation}
+    overlap, codes = [], set()
+    for sid in sorted(fitted):
+        it = items.get(sid)
+        if it is None:
+            overlap.append({"slide_id": sid, "patient_code": None, "split": None, "via": "not an item of the manifest"})
+            continue
+        pid = it["coded_patient_id"]
+        codes.add(code_of[pid])
+        if it.get("split") != "train" or split_of.get(pid) != "train":
+            overlap.append({"slide_id": sid, "patient_code": code_of[pid], "split": it.get("split"), "via": "split"})
+        elif groups[pid] in held_groups:
+            overlap.append({"slide_id": sid, "patient_code": code_of[pid], "split": it.get("split"),
+                            "via": "confirmed duplicate of a held-out patient"})
+        elif protocol == "dev_cv":
+            overlap.append({"slide_id": sid, "patient_code": code_of[pid], "split": it.get("split"),
+                            "via": "held out by one outer dev_cv fold"})
+    return overlap, sorted(codes)
+
+
+def run_preprocessing_validity(db, run, dv=None) -> dict:
+    """Fold safety of a recorded run's learned preprocessing (any status, historical runs included): runs whose
+    preprocessing is ``fold_unsafe`` keep their stored results but are invalid for cross-validated (or
+    learning-curve) comparison. Comparison and reporting code should refuse them."""
+    fs = db.get(FeatureSet, run.feature_set_id) if run.feature_set_id else None
+    if fs is None:
+        return {"status": "unknown", "valid_for_cv_comparison": None, "problems": [],
+                "reason": "legacy run without a pinned feature set"}
+    if dv is None:
+        dv = db.get(DatasetVersion, run.dataset_version_id)
+    s = preprocessing_fold_safety(fs.stain_policy_json, protocol=run.evaluation_protocol or "holdout",
+                                  params=run.params_json or {}, manifest=dv.manifest_json if dv is not None else None)
+    out = {k: s.get(k) for k in ("schema", "status", "code", "learned", "kind", "method", "provenance", "protocol",
+                                 "train_patient_fraction", "problems", "remedy", "note")}
+    out["valid_for_cv_comparison"] = s["status"] != "fold_unsafe"
+    if not out["valid_for_cv_comparison"]:
+        out["warning"] = ("invalid for cross-validated or learning-curve comparison: its learned preprocessing was "
+                          "not fitted only on each model's permitted fitting patients; results are kept for the "
+                          "record but must not be compared or selected on")
+    return out
+
+
+def _declared_folds(run) -> tuple[int, int]:
+    """``(k, fold_seed)`` of a dev_cv run: its identity's ``fold_assignment``, or (runs recorded before that field
+    existed) its resolved params, where a missing ``cv_fold_seed`` means 0 (the salt those runs used)."""
+    fa = (run.identity_json or {}).get("fold_assignment") or {}
+    p = run.params_json or {}
+    return int(fa.get("k", p.get("cv_folds", 0))), int(fa.get("fold_seed", p.get("cv_fold_seed", 0)))
+
+
+def comparison_refusal(db, runs) -> dict | None:
+    """Why the development predictions of ``runs`` must not be paired in a comparison, else None.
+
+    * ``fold_unsafe_preprocessing``: a member is invalid for cross-validated / learning-curve comparison
+      (:func:`run_preprocessing_validity`; e.g. a historical dev_cv run on a dataset-fitted macenko reference).
+    * ``mixed_fold_assignment``: dev_cv members were cross-validated on different outer folds (different declared
+      k or ``cv_fold_seed``, or recorded fold maps that disagree on a common patient), so their out-of-fold
+      predictions do not come from the same outer folds.
+
+    Stored results are never changed; the caller reports the refusal instead of a paired difference."""
+    runs = [r for r in runs if r is not None]
+    unsafe = []
+    for r in runs:
+        v = run_preprocessing_validity(db, r)
+        if v.get("valid_for_cv_comparison") is False:
+            unsafe.append({"run_id": r.id, "problems": v.get("problems") or [], "remedy": v.get("remedy")})
+    if unsafe:
+        return {"code": FOLD_UNSAFE_CODE, "run_ids": sorted(u["run_id"] for u in unsafe), "runs": unsafe,
+                "reason": ("a member's learned preprocessing was not fitted only on each model's permitted fitting "
+                           "patients (invalid for cross-validated or learning-curve comparison); its results are "
+                           "kept for the record but are not compared")}
+    cv_runs = [r for r in runs if (r.evaluation_protocol or "holdout") == "dev_cv"]
+    if len(cv_runs) < 2:
+        return None
+    declared = {r.id: _declared_folds(r) for r in cv_runs}
+    maps = {r.id: (((r.metrics_json or {}).get("protocol") or {}).get("cv") or {}).get("fold_of_patient_code")
+            for r in cv_runs}
+    maps = {k: m for k, m in maps.items() if isinstance(m, dict)}
+    common = set.intersection(*(set(m) for m in maps.values())) if len(maps) > 1 else set()
+    differing = sorted(p for p in common if len({maps[k][p] for k in maps}) > 1)
+    if len(set(declared.values())) > 1 or differing:
+        return {"code": "mixed_fold_assignment", "run_ids": sorted(declared),
+                "declared": {k: {"k": v[0], "fold_seed": v[1]} for k, v in sorted(declared.items())},
+                "patients_with_different_folds": len(differing),
+                "reason": ("dev_cv members were cross-validated on different outer folds (k, cv_fold_seed or the "
+                           "recorded fold map differ), so their out-of-fold predictions are not paired on the same "
+                           "folds; compare runs that share one fold assignment")}
+    return None
 
 
 # --------------------------------------------------------------------------- lazy embeddings
@@ -533,62 +743,96 @@ def learning_curve_subset(train: list[Bag], params: dict, context: dict) -> tupl
     return [b for b in train if b.patient_id in keep], info
 
 
+def _lc_compact(info: dict | None) -> dict | None:
+    if info is None:
+        return None
+    return {k: info.get(k) for k in ("fraction", "repeat", "n_patients", "n_bags", "patients_by_class", "pool_patients",
+                                     "fingerprint", "class_absent")}
+
+
 def run_holdout(train: list[Bag], val: list[Bag], *, head: str, params: dict, seed: int, access: EmbeddingAccess,
                 context: dict, progress=None) -> ProtocolOutcome:
-    """Fit on train (or its learning-curve subset); score val. Val is never passed to the fitter."""
+    """Fit on train (or its learning-curve subset); score val. Val is never passed to the fitter. The subset is
+    drawn over the given training bags (scorable or not, so it does not depend on the feature set); bags without
+    tissue patches are then left out of fitting and scoring (the caller records them as unscorable)."""
     progress = progress or _Progress(None, 0, 1)
     fit_bags, lc = learning_curve_subset(train, params, context)
+    fit_bags = [b for b in fit_bags if b.n_patches > 0]
     arrays, meta, summary = fit_head(head, fit_bags, params, seed, progress.sub(0.0, 0.85), access=access,
                                      context=context)
     model = LoadedModel(arrays, meta)
     progress(0.9, "scoring validation bags")
-    dev = score_bags(model, val, access)
+    dev = score_bags(model, [b for b in val if b.n_patches > 0], access)
     in_sample = score_bags(model, fit_bags, access)
     return ProtocolOutcome(arrays, meta, summary, "val", dev, in_sample, fit_bags, learning_curve=lc)
 
 
-def cv_salt(context: dict, k: int) -> str:
-    """Folds depend on the development pool and k only (not on the head seed), so every run on a
-    manifest shares them and their out-of-fold sets are paired."""
-    return f"{context['split_salt']}|cv|k={int(k)}"
+def cv_salt(context: dict, k: int, fold_seed: int = 0) -> str:
+    """Folds depend on the development pool, k and the declared fold seed only (not on the head seed), so every
+    run on a manifest shares them and their out-of-fold sets are paired. Fold seed 0 keeps the salt of runs made
+    before ``cv_fold_seed`` existed."""
+    base = f"{context['split_salt']}|cv|k={int(k)}"
+    return base if int(fold_seed) == 0 else f"{base}|fold_seed={int(fold_seed)}"
 
 
-def run_dev_cv(dev_pool: list[Bag], *, head: str, params: dict, seed: int, access: EmbeddingAccess, context: dict,
-               progress=None) -> ProtocolOutcome:
-    """Patient-grouped stratified K-fold over the development pool; out-of-fold scores; final
-    refit on the whole pool (or its learning-curve subset)."""
+def dev_cv_folds(dev_pool: list[Bag], params: dict, context: dict):
+    """Patient-grouped stratified outer folds over EVERY development bag given (pass the whole train ∪ val pool of
+    the manifest, scorable or not): a function of patient / duplicate-group content, k and ``cv_fold_seed``."""
     from .cv import grouped_stratified_kfold
 
-    progress = progress or _Progress(None, 0, 1)
     k = int(params["cv_folds"])
     with warnings.catch_warnings(record=True):
         warnings.simplefilter("always")
         try:
-            folds = grouped_stratified_kfold([b.label for b in dev_pool], [b.patient_id for b in dev_pool], k=k,
-                                             patient_keys=patient_keys(dev_pool), salt=cv_salt(context, k),
-                                             duplicate_pairs=context.get("duplicate_pairs", ()),
-                                             patient_label_rule=context.get("patient_label_rule", "any_positive"))
+            return grouped_stratified_kfold([b.label for b in dev_pool], [b.patient_id for b in dev_pool], k=k,
+                                            patient_keys=patient_keys(dev_pool),
+                                            salt=cv_salt(context, k, int(params.get("cv_fold_seed", 0))),
+                                            duplicate_pairs=context.get("duplicate_pairs", ()),
+                                            patient_label_rule=context.get("patient_label_rule", "any_positive"))
         except ValueError as exc:
             raise PermanentJobError(f"dev_cv is not possible: {exc}") from exc
-    allowed_bags, lc = learning_curve_subset(dev_pool, params, context)
-    allowed = {b.bag_id for b in allowed_bags}
+
+
+def _unscored_row(b: Bag, reason: str, fold: int) -> dict:
+    return {"bag_id": b.bag_id, "split": "oof", "manifest_split": b.split, "reason": reason, "label": b.label,
+            "patient_id": b.patient_id, "patient_code": b.patient_code, "fold": int(fold)}
+
+
+def run_dev_cv(dev_pool: list[Bag], *, head: str, params: dict, seed: int, access: EmbeddingAccess, context: dict,
+               progress=None) -> ProtocolOutcome:
+    """Patient-grouped stratified K-fold over the development pool; out-of-fold scores; final refit on the whole
+    pool (or its learning-curve subset).
+
+    ``dev_pool`` is every development bag of the manifest (train ∪ val), scorable or not: the folds are assigned
+    over all of them (:func:`dev_cv_folds`), so they never depend on the head, the training seed or which bags the
+    feature set could score. Bags without tissue patches are never fitted or scored; they are returned in
+    ``unscored`` with their fold. A learning-curve fraction is drawn WITHIN each fold: the fold's fitting bags are
+    the nested stratified subset of its own fitting patients (never a function of its held-out patients), and the
+    final model's are the same fraction of the whole pool."""
+    progress = progress or _Progress(None, 0, 1)
+    k = int(params["cv_folds"])
+    folds = dev_cv_folds(dev_pool, params, context)
+    patients = [b.patient_id for b in dev_pool]
+    unscored: list[dict] = [_unscored_row(b, NO_PATCHES_REASON, folds.fold_of[b.patient_id])
+                            for b in dev_pool if b.n_patches <= 0]
     oof: list[ScoredBag] = []
-    unscored: list[dict] = []
     fold_summaries = []
-    splits = folds.splits([b.patient_id for b in dev_pool])
     span = 0.75 / (k + 1)
-    for f, (fit_idx, held_idx) in enumerate(splits):
-        fit_bags = [dev_pool[i] for i in fit_idx if dev_pool[i].bag_id in allowed]
-        held = [dev_pool[i] for i in held_idx]
+    for f, (fit_idx, held_idx) in enumerate(folds.splits(patients)):
+        fit_part = [dev_pool[i] for i in fit_idx]
+        held_all = [dev_pool[i] for i in held_idx]
+        subset, fold_lc = learning_curve_subset(fit_part, params, context)
+        fit_bags = [b for b in subset if b.n_patches > 0]
+        held = [b for b in held_all if b.n_patches > 0]
         classes = {b.label for b in fit_bags}
-        entry = {"fold": f, "fit_bags": len(fit_bags), "held_out_bags": len(held),
-                 "fit_patients": len({b.patient_id for b in fit_bags}),
-                 "held_out_patients": len({b.patient_id for b in held})}
+        entry = {"fold": f, "fit_bags": len(fit_bags), "fit_patients": len({b.patient_id for b in fit_bags}),
+                 "fit_part_patients": len({b.patient_id for b in fit_part}),
+                 "held_out_bags": len(held_all), "held_out_patients": len({b.patient_id for b in held_all}),
+                 "held_out_scorable_bags": len(held), "learning_curve": _lc_compact(fold_lc)}
         if classes != {0, 1}:
             reason = (f"fold {f}: the fitting part has class(es) {sorted(classes)} only; its held-out bags are not "
                       "scored (counted as unscorable)")
-            unscored.extend({"bag_id": b.bag_id, "split": "oof", "reason": reason, "label": b.label,
-                             "patient_id": b.patient_id, "patient_code": b.patient_code} for b in held)
+            unscored.extend(_unscored_row(b, reason, f) for b in held)
             fold_summaries.append({**entry, "status": "not_fitted", "reason": reason})
             continue
         arrays, meta, summary = fit_head(head, fit_bags, params, seed, progress.sub(f * span, (f + 1) * span),
@@ -596,6 +840,8 @@ def run_dev_cv(dev_pool: list[Bag], *, head: str, params: dict, seed: int, acces
         model = LoadedModel(arrays, meta)
         oof.extend(score_bags(model, held, access, fold=f))
         fold_summaries.append({**entry, "status": "fitted", "summary": _compact_summary(summary)})
+    final_subset, lc = learning_curve_subset(dev_pool, params, context)
+    allowed_bags = [b for b in final_subset if b.n_patches > 0]
     progress.sub(k * span, 0.8)(0.0, "refitting the final model on the whole development pool")
     arrays, meta, summary = fit_head(head, allowed_bags, params, seed, progress.sub(k * span, 0.85), access=access,
                                      context=context)
@@ -605,9 +851,22 @@ def run_dev_cv(dev_pool: list[Bag], *, head: str, params: dict, seed: int, acces
     cv = folds.to_dict()
     codes = patient_keys(dev_pool)
     cv["fold_of_patient_code"] = dict(sorted((codes[p], f) for p, f in folds.fold_of.items()))
+    cv["fingerprint"] = folds.diagnostics.get("fingerprint")
+    cv["fold_seed"] = int(params.get("cv_fold_seed", 0))
     cv["folds_summary"] = fold_summaries
-    cv["salt_rule"] = "folds depend on the development pool and k only, not on the head seed"
-    summary = {**summary, "folds": fold_summaries, "final_model": "refitted on the whole development pool"}
+    cv["salt_rule"] = ("folds depend on the development pool (every train ∪ val patient, scorable or not, grouped by "
+                       "confirmed duplicates), k and the declared cv_fold_seed only; never on the head, the training "
+                       "seed or the feature set")
+    cv["learning_curve_rule"] = (None if lc is None else
+                                 "the fraction is drawn within each fold's fitting part (a nested stratified subset of "
+                                 "that fold's own fitting patients) and, for the final model, of the whole "
+                                 "development pool")
+    final_text = "refitted on the whole development pool (train ∪ val)" + (
+        ", restricted to its learning-curve subset" if lc is not None else "")
+    if head == "abmil":
+        final_text += ("; ABMIL: epoch count selected on an inner patient-grouped hold-out of that pool, then a fresh "
+                       "model fitted on every bag of it for that count")
+    summary = {**summary, "folds": fold_summaries, "final_model": final_text}
     return ProtocolOutcome(arrays, meta, summary, "oof", oof, in_sample, allowed_bags, unscored=unscored, cv=cv,
                            learning_curve=lc)
 
@@ -615,15 +874,46 @@ def run_dev_cv(dev_pool: list[Bag], *, head: str, params: dict, seed: int, acces
 def _compact_summary(summary: dict) -> dict:
     keep = ("head", "epochs_run", "best_epoch", "best_inner_holdout_loss", "n_iter", "converged", "train_bags",
             "fit_bags")
-    return {k: summary[k] for k in keep if k in summary}
+    out = {k: summary[k] for k in keep if k in summary}
+    fin, sel = summary.get("final_fit"), summary.get("epoch_selection")
+    if fin:
+        out.update({"final_fit_epochs": fin.get("epochs"), "final_fit_bags": fin.get("bags"),
+                    "final_fit_patients": fin.get("patients")})
+    if sel:
+        out.update({"epoch_selection_status": sel.get("status"),
+                    "epoch_selection_fit_patients": (sel.get("fit") or {}).get("patients", 0),
+                    "epoch_selection_fit_bags": (sel.get("fit") or {}).get("bags", 0),
+                    "epoch_selection_holdout_patients": (sel.get("holdout") or {}).get("patients", 0),
+                    "epoch_selection_holdout_bags": (sel.get("holdout") or {}).get("bags", 0)})
+    return out
 
 
 # --------------------------------------------------------------------------- operating point
 
 
-def select_operating_point(dev: list[ScoredBag], params: dict, *, selected_on: str) -> dict:
+def evidence_groups(dev: list[ScoredBag], context: dict | None = None) -> list[str]:
+    """One independence-unit key per scored bag: the patient's content-stable key, or the union of patients joined
+    by confirmed near-duplicate decisions (``context["duplicate_pairs"]``). Used by evidence gates."""
+    from .cv import duplicate_groups
+
+    keys: dict[str, str] = {}
+    for sb in dev:
+        b = sb.bag
+        keys.setdefault(b.patient_id, str(getattr(b, "patient_key", None) or getattr(b, "patient_code", None)
+                                          or b.patient_id))
+    groups = duplicate_groups(keys, patient_keys=keys, duplicate_pairs=(context or {}).get("duplicate_pairs") or ())
+    return [groups[sb.bag.patient_id] for sb in dev]
+
+
+def select_operating_point(dev: list[ScoredBag], params: dict, *, selected_on: str, context: dict | None = None
+                           ) -> dict:
     """Threshold, calibration and abstention, all chosen on the same DEVELOPMENT predictions
-    (val for holdout, out-of-fold for dev_cv) and frozen."""
+    (val for holdout, out-of-fold for dev_cv) and frozen.
+
+    The calibration evidence gate counts distinct patient groups per class (patients, joined by confirmed
+    duplicates from ``context``), never bags; below it the identity map is frozen and the selection says
+    ``insufficient_evidence`` with the counts. A fitted calibration is measured in-sample on these scores and is not
+    a validated clinical probability (``reliability_note``)."""
     y = np.array([sb.bag.label for sb in dev], dtype=np.int64)
     s = np.array([sb.score for sb in dev], dtype=np.float64)
     patients = [sb.bag.patient_id for sb in dev]
@@ -634,22 +924,33 @@ def select_operating_point(dev: list[ScoredBag], params: dict, *, selected_on: s
         min_positives=n_ev, min_negatives=n_ev, fallback_value=0.5, selected_on=selected_on)
     t = float(thr["value"])
     method = params.get("calibration", "none")
+    groups = evidence_groups(dev, context)
+    evidence = calibration_evidence(y, groups)
     if method == "none":
         cal, cal_status, cal_reason = identity_calibration(), "not_requested", None
     else:
         try:
-            cal = fit_calibration(s, y, method=method, item_splits=[selected_on] * int(y.size))
+            cal = fit_calibration(s, y, method=method, item_splits=[selected_on] * int(y.size), groups=groups)
             cal_status, cal_reason = "fitted", None
+        except InsufficientCalibrationEvidence as exc:
+            cal, cal_status, cal_reason, evidence = identity_calibration(), "insufficient_evidence", str(exc), \
+                exc.evidence
         except CalibrationError as exc:
-            cal, cal_status, cal_reason = identity_calibration(), "insufficient_evidence", str(exc)
+            cal, cal_status, cal_reason = identity_calibration(), "not_fitted", str(exc)
     tc = params.get("abstention_target_coverage")
     if tc is None:
         policy = no_abstention_policy(t, reason="abstention not requested")
     else:
         policy = select_abstention_policy(y, s, t, target_coverage=float(tc), selected_on=selected_on)
+    fitted = cal_status == "fitted"
     return {"threshold": thr, "calibration": cal,
-            "calibration_selection": {"requested": method, "status": cal_status, "reason": cal_reason,
-                                      "selected_on": selected_on, "params_sha256": cal.get("params_sha256")},
+            "calibration_selection": {
+                "requested": method, "status": cal_status, "reason": cal_reason, "selected_on": selected_on,
+                "params_sha256": cal.get("params_sha256"), "evidence": evidence,
+                "evaluated_in_sample": fitted,
+                "evaluation_note": (f"in-sample: any calibration measured on these {selected_on} scores uses the "
+                                    "scores the map was fitted on" if fitted else None),
+                "reliability_note": RELIABILITY_NOTE},
             "abstention": policy, "decision_note": DECISION_NOTE}
 
 
@@ -683,6 +984,14 @@ def development_summary(dev: list[ScoredBag], unscored: list[dict], op: dict, pa
                          n_boot=int(params.get("n_boot", 1000)), seed=int(seed),
                          min_patients=int(params.get("boot_min_patients", 10)), tuning_set=tuning)
     m = ev["metrics"]
+    calibration = dict(ev["calibration"])
+    fitted_on = (op["calibration"].get("fitted_on") or {}) if cal_s is not None else {}
+    calibration["calibrated_in_sample"] = bool(cal_s is not None and split in (fitted_on.get("splits") or []))
+    if calibration["calibrated_in_sample"]:
+        calibration["calibrated_note"] = ("in-sample: the calibration map was fitted on these same development "
+                                          "scores, so this calibrated report is not an independent estimate (and not "
+                                          "a validated clinical probability)")
+    calibration["calibration_status"] = (op.get("calibration_selection") or {}).get("status")
     return {
         "split": split, "protocol": protocol, "tuning_set": tuning, "tuning_set_note": TUNING_SET_NOTE if tuning
         else None,
@@ -693,7 +1002,7 @@ def development_summary(dev: list[ScoredBag], unscored: list[dict], op: dict, pa
         "n_items": ev["n_items"], "n_patients": ev["n_patients"], "positives": ev["positives"],
         "negatives": ev["negatives"], "n_unscorable": ev["n_unscorable"],
         "intention_to_evaluate": ev["intention_to_evaluate"], "bootstrap": ev["bootstrap"],
-        "calibration": ev["calibration"], "evaluation_prevalence": ev["evaluation_prevalence"],
+        "calibration": calibration, "evaluation_prevalence": ev["evaluation_prevalence"],
         # compact view (values only)
         "sensitivity": m["sensitivity"]["value"], "specificity": m["specificity"]["value"],
         "auroc": m["auroc"]["value"], "auprc": m["auprc"]["value"],
@@ -702,29 +1011,33 @@ def development_summary(dev: list[ScoredBag], unscored: list[dict], op: dict, pa
 
 def effective_sampling(fit_bags: list[Bag], params: dict, head_summary: dict | None = None) -> dict:
     """What the final head actually saw: class counts, the class weights applied, and the
-    effective positive fraction ``w1 n1 / (w1 n1 + w0 n0)``. For ABMIL the weights come from
-    the inner fit part (the inner hold-out only stops training)."""
+    effective positive fraction ``w1 n1 / (w1 n1 + w0 n0)``, all on the bags the final head was
+    fitted on (every fitting bag: ABMIL's inner hold-out only selects the epoch count before the
+    refit). For ABMIL the patients and bags of the epoch-selection phase are reported separately."""
     head_summary = head_summary or {}
     cw = head_summary.get("class_weights") or class_weights([b.label for b in fit_bags], params["class_weight"])
-    inner = head_summary.get("inner_holdout") or {}
-    if inner and head_summary.get("fit_bags") != len(fit_bags):
-        computed_on = ("the inner fit part of the training bags (ABMIL; the inner hold-out is used only for early "
-                       "stopping)")
-        patients = (inner.get("fit") or {}).get("patients_by_class")
-    else:
-        computed_on = "the bags the final head was fitted on (training data only)"
-        patients = None
-    if patients is None:
-        patients = {"positive": len({b.patient_id for b in fit_bags if b.label == 1}),
-                    "negative": len({b.patient_id for b in fit_bags if b.label == 0})}
-    return {"class_counts": {"bags": cw["counts"], "patients_with_bags_of_class": patients},
-            "class_weight": cw["class_weight"], "weights": cw["weights"],
-            "raw_positive_fraction": cw["raw_positive_fraction"],
-            "effective_positive_fraction": cw["effective_positive_fraction"],
-            "computed_on": computed_on,
-            "instance_subsampling": {"max_instances_per_bag": params.get("max_instances_per_bag"),
-                                     **({"bag_epochs_subsampled": head_summary["instance_subsampling"][
-                                         "bag_epochs_subsampled"]} if "instance_subsampling" in head_summary else {})}}
+    patients = {"positive": len({b.patient_id for b in fit_bags if b.label == 1}),
+                "negative": len({b.patient_id for b in fit_bags if b.label == 0})}
+    out = {"class_counts": {"bags": cw["counts"], "patients_with_bags_of_class": patients},
+           "class_weight": cw["class_weight"], "weights": cw["weights"],
+           "raw_positive_fraction": cw["raw_positive_fraction"],
+           "effective_positive_fraction": cw["effective_positive_fraction"],
+           "computed_on": "the bags the final head was fitted on (training data only; every fitting bag)",
+           "fitted_bags": len(fit_bags), "fitted_patients": len({b.patient_id for b in fit_bags}),
+           "instance_subsampling": {"max_instances_per_bag": params.get("max_instances_per_bag"),
+                                    **({"bag_epochs_subsampled": head_summary["instance_subsampling"][
+                                        "bag_epochs_subsampled"]} if "instance_subsampling" in head_summary else {})}}
+    sel = head_summary.get("epoch_selection")
+    if sel:
+        out["epoch_selection"] = {
+            "status": sel.get("status"), "best_epoch": sel.get("best_epoch"),
+            "fit_patients": (sel.get("fit") or {}).get("patients", 0),
+            "fit_bags": (sel.get("fit") or {}).get("bags", 0),
+            "holdout_patients": (sel.get("holdout") or {}).get("patients", 0),
+            "holdout_bags": (sel.get("holdout") or {}).get("bags", 0),
+            "note": ("the inner hold-out only selected the epoch count; the final model was refitted on every fitting "
+                     "bag for that count")}
+    return out
 
 
 # --------------------------------------------------------------------------- records
@@ -965,6 +1278,10 @@ def _run_training(run_id: str, ctx, state: dict) -> dict:
                                    label_scope=run.label_scope, positive_class=run.positive_class,
                                    negative_class=run.negative_class, synthetic=bool(run.synthetic))
         diff = identity_diff(run.identity_json, now)
+        # Owner's brief item 3: learned preprocessing must be fitted on the permitted fitting patients only. Checked
+        # again here (the creation guard can be bypassed, and runs recorded before the guard exist).
+        fold_safety = preprocessing_fold_safety(fs.stain_policy_json, protocol=run.evaluation_protocol,
+                                                params=run.params_json, manifest=manifest)
         drift = code_tree_drift()
         if not drift["matches"]:
             diff.append({"field": "code_tree_drift", "frozen": drift["code_tree_sha256_at_start"],
@@ -977,6 +1294,9 @@ def _run_training(run_id: str, ctx, state: dict) -> dict:
     state["attempt_id"] = _open_attempt(run_id, project_id, ctx, now, diff)
     if problems:  # the more specific refusal first (a mode change usually also changes the identity)
         raise PermanentJobError("mode_mismatch: " + "; ".join(problems))
+    if fold_safety.get("status") == "fold_unsafe":  # before any feature-set build, fit or prediction
+        raise PermanentJobError(f"{FOLD_UNSAFE_CODE}: " + "; ".join(fold_safety.get("problems") or [])
+                                + f" (remedy: {FOLD_UNSAFE_REMEDY})")
     if diff:
         raise RunIdentityChanged(diff)
 
@@ -1012,20 +1332,31 @@ def _run_training(run_id: str, ctx, state: dict) -> dict:
             for b in bags:
                 access.describe(b)
                 if b.n_patches == 0:
-                    unscored.append({"bag_id": b.bag_id, "split": sp, "reason": "no tissue patches in the feature set",
+                    unscored.append({"bag_id": b.bag_id, "split": sp, "reason": NO_PATCHES_REASON,
                                      "label": b.label, "patient_id": b.patient_id, "patient_code": b.patient_code})
+        # The protocols get EVERY development bag: folds and learning-curve subsets are assigned over the manifest's
+        # patients whether or not this feature set can score their slides; bags without patches are never fitted
+        # or scored (recorded above as unscorable).
+        all_train, all_val = list(train_bags), list(val_bags)
         train_bags = [b for b in train_bags if b.n_patches > 0]
         val_bags = [b for b in val_bags if b.n_patches > 0]
         if protocol == "dev_cv":
-            outcome = run_dev_cv(train_bags + val_bags, head=head, params=params, seed=seed, access=access,
+            outcome = run_dev_cv(all_train + all_val, head=head, params=params, seed=seed, access=access,
                                  context=context, progress=fit_progress)
-            dev_unscored = [u for u in unscored] + outcome.unscored
+            no_patch = {u["bag_id"]: u for u in outcome.unscored if u["reason"] == NO_PATCHES_REASON}
+            for u in unscored:
+                if u["bag_id"] in no_patch:
+                    u["fold"] = no_patch[u["bag_id"]]["fold"]
+            fold_unscored = [u for u in outcome.unscored if u["bag_id"] not in no_patch]
+            dev_unscored = [u for u in unscored] + fold_unscored
+            all_unscored = list(dev_unscored)
             for u in dev_unscored:
                 u.setdefault("manifest_split", u.get("split"))
         else:
-            outcome = run_holdout(train_bags, val_bags, head=head, params=params, seed=seed, access=access,
+            outcome = run_holdout(all_train, val_bags, head=head, params=params, seed=seed, access=access,
                                   context=context, progress=fit_progress)
             dev_unscored = [u for u in unscored if u["split"] == "val"]
+            all_unscored = list(unscored)
     except (FloatingPointError, np.linalg.LinAlgError, ValueError) as exc:
         # Deterministic: the same data, params and seed would fail the same way on a retry.
         raise PermanentJobError(f"training failed: {type(exc).__name__}: {exc}") from exc
@@ -1034,7 +1365,7 @@ def _run_training(run_id: str, ctx, state: dict) -> dict:
         raise PermanentJobError(f"feature_set_integrity: {type(exc).__name__}: {exc}") from exc
     training_seconds = time.perf_counter() - t1
 
-    op = select_operating_point(outcome.dev, params, selected_on=outcome.dev_split)
+    op = select_operating_point(outcome.dev, params, selected_on=outcome.dev_split, context=context)
     frozen_at = utcnow()
     dev_bag_ids = [sb.bag.bag_id for sb in outcome.dev]
     op["threshold"] = {**op["threshold"], "selected_on": outcome.dev_split, "frozen_at": frozen_at.isoformat(),
@@ -1112,11 +1443,16 @@ def _run_training(run_id: str, ctx, state: dict) -> dict:
                          "slide_loads": access.loads, "notice": encoder.notice if encoder.synthetic else None},
             "timings_seconds": {"feature_set": fs_info["seconds"], "training": round(training_seconds, 3),
                                 "total": round(time.perf_counter() - t_start, 3)},
-            "unscored_bags": unscored + [u for u in outcome.unscored if u not in unscored],
+            "unscored_bags": all_unscored,
             f"{outcome.dev_split}_summary": summary,
             "effective_sampling": effective_sampling(outcome.fit_bags, params, outcome.summary),
             "protocol": {"evaluation_protocol": protocol, "development_split": outcome.dev_split,
                          "selected_on": outcome.dev_split, "cv": outcome.cv, "learning_curve": outcome.learning_curve,
+                         "fold_assignment": identity.get("fold_assignment"),
+                         "preprocessing": {**fold_safety, "feature_set_id": fs.id,
+                                           "feature_set_spec_sha256": fs.spec_sha256,
+                                           "stain_policy_sha256": getattr(fs, "stain_policy_sha256", None),
+                                           "reference_sha256": getattr(fs, "stain_reference_sha256", None)},
                          "ordering": ORDERING_NOTE, "optimisation_budget": OPTIMISATION_BUDGETS.get(head),
                          "roles": _roles(protocol, head)},
             "operating_point": {"threshold": {k: v for k, v in op["threshold"].items()
@@ -1155,14 +1491,19 @@ def run_threshold(op: dict) -> float:
 
 
 def _roles(protocol: str, head: str) -> dict:
-    stop = ("inner patient-grouped stratified hold-out of the training patients" if head == "abmil"
-            else "not applicable (convex fit)")
+    abmil = head == "abmil"
+    stop = ("epoch count selected on an inner patient-grouped stratified hold-out of the fitting patients, then the "
+            "model is refitted on every fitting patient for that count" if abmil else "not applicable (convex fit)")
     if protocol == "dev_cv":
-        return {"fitting": "each fold's fitting part; final model on the whole development pool (train ∪ val)",
-                "early_stopping": stop + " (inside each fitting part)",
+        return {"fitting": ("each fold's fitting part (a learning-curve fraction is drawn within it); final model "
+                            "refitted on the whole development pool (train ∪ val)"
+                            + ("; ABMIL refits every fitting patient after epoch selection" if abmil else "")),
+                "early_stopping": stop + (" (inside each fold's fitting part, and inside the development pool for "
+                                          "the final model; never an outer held-out fold or test)" if abmil else ""),
                 "threshold": "out-of-fold predictions", "calibration": "out-of-fold predictions",
                 "abstention": "out-of-fold predictions", "test": "untouched (test release only)"}
-    return {"fitting": "train", "early_stopping": stop + "; never validation", "threshold": "validation",
+    return {"fitting": "train" + ("; ABMIL refitted on every training patient after epoch selection" if abmil else ""),
+            "early_stopping": stop + "; never validation", "threshold": "validation",
             "calibration": "validation", "abstention": "validation", "test": "untouched (test release only)"}
 
 

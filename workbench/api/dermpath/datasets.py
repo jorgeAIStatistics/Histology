@@ -27,7 +27,17 @@ Guarantees
   test split, and only on a frozen version.
 * **Audit** (:func:`audit`, design §9): patient independence (snapshot and live lineage), duplicates,
   label-scope consistency, missing metadata, class balance, confounding (Cramér's V with Fisher/χ²
-  on patients) and mixed-label patients. Embedded in the manifest at freeze.
+  on patients), mixed-label patients and acquisition exposure. Embedded in the manifest at freeze.
+* **Evaluation cohorts are protected from model-driven acquisition** (owner's brief item 6). A patient
+  an active-learning batch proposed (``acquisition_exposure`` rows, written with the proposal; legacy
+  ``al_proposal`` rows without one count too), its linked slides and cases, and its confirmed
+  duplicate partners are model-selected review material (:func:`acquisition_exposure`). The allocator
+  pins them to train; freeze (and freeze-check) refuses ``409 acquisition_exposed_in_evaluation`` when
+  val or test holds any, re-checked inside the freeze's write transaction so a proposal committed
+  meanwhile is caught. Inherited and sealed splits never move: such conflicts (historical ones
+  included) are reported per patient with a resolution, and frozen versions are never rewritten
+  (their audit lists them). The manifest separates the representative performance cohort (val/test)
+  from the model-selected review cohort (``evaluation_cohorts``).
 """
 
 from __future__ import annotations
@@ -59,6 +69,8 @@ from .labels import (
     reference_label,
 )
 from .models import (
+    AcquisitionExposure,
+    Block,
     Case,
     CodedPatient,
     DatasetItem,
@@ -70,6 +82,7 @@ from .models import (
     QCReview,
     Slide,
     SplitAssignment,
+    SpecimenPart,
     SplitFamily,
     SplitFamilyAssignment,
     Upload,
@@ -108,6 +121,11 @@ SNAPSHOT_FIELDS = ("slide_sha256", "label_version_id", "label_value", "label_sco
 ACKNOWLEDGEABLE_WARNINGS = ("open_qc_issues", "unreviewed_near_duplicates", "unsure_near_duplicates",
                             "duplicates_across_splits", "class_absent", "uncalibrated_items")
 _DIFF_CAP = 50
+ACQUISITION_SCHEMA = "dermpath.acquisition_exposure/1"
+EVALUATION_COHORTS_SCHEMA = "dermpath.evaluation_cohorts/1"
+#: Splits that form the representative performance cohort (never model-selected material).
+EVALUATION_SPLITS = ("val", "test")
+ACQUISITION_BLOCKER = "acquisition_exposed_in_evaluation"
 
 # Re-exported so existing callers keep working.
 normalise_split = splitlib.normalise_split
@@ -532,6 +550,349 @@ def known_sites(db: Session, project_id: str) -> list[str]:
     return sorted(s for s in db.scalars(select(Case.site_id).where(Case.project_id == project_id).distinct()) if s)
 
 
+# --------------------------------------------------------------------------- acquisition exposure (brief item 6)
+#
+# Active learning chooses which patients experts look at from MODEL scores (plus a random share). Their material is
+# a model-selected review cohort: it may train later models but must never become validation or test material,
+# where it would make evaluation depend on the model being evaluated (or a predecessor). The record is the
+# append-only ``acquisition_exposure`` table, written in the proposal's transaction; everything below derives the
+# EFFECTIVE exposure from it, from legacy proposals and from the current hierarchy and duplicate decisions.
+
+
+def _patient_material(db: Session, project_id: str, patient_id: str) -> tuple[list[str], list[str]]:
+    """Sorted ``(slide ids, case ids)`` of a coded patient in the project (live hierarchy)."""
+    cases = sorted(db.scalars(select(Case.id).where(Case.project_id == project_id,
+                                                    Case.coded_patient_id == patient_id)).all())
+    if not cases:
+        return [], []
+    slides = sorted(db.scalars(select(Slide.id).join(Block, Block.id == Slide.block_id)
+                               .join(SpecimenPart, SpecimenPart.id == Block.part_id)
+                               .where(Slide.project_id == project_id, SpecimenPart.case_id.in_(cases))).all())
+    return slides, cases
+
+
+def _slide_owners(db: Session, slide_ids) -> dict[str, tuple[str | None, str | None]]:
+    """``{slide_id: (coded_patient_id, patient_code)}`` from the live hierarchy (None for an unassigned slide)."""
+    out: dict[str, tuple[str | None, str | None]] = {}
+    for sid in sorted(set(slide_ids)):
+        slide = db.get(Slide, sid)
+        lin = slide_lineage(db, slide) if slide is not None else {}
+        out[sid] = (lin.get("coded_patient_id"), lin.get("patient_code"))
+    return out
+
+
+def duplicate_links(db: Session, project_id: str) -> list[dict]:
+    """Patient pairs joined by the latest ``duplicate`` decision on two slides that now belong to different
+    patients: ``[{patient_a, patient_b, slide_a, slide_b, decision_id}]`` (live hierarchy, whole project)."""
+    decided = [(a, b, nd) for (a, b), nd in sorted(_decisions(db, project_id).items()) if nd.decision == "duplicate"]
+    owners = _slide_owners(db, [x for a, b, _ in decided for x in (a, b)])
+    links = []
+    for a, b, nd in decided:
+        pa, pb = owners[a][0], owners[b][0]
+        if pa and pb and pa != pb:
+            links.append({"patient_a": pa, "patient_b": pb, "slide_a": a, "slide_b": b, "decision_id": nd.id})
+    return links
+
+
+def duplicate_patient_groups(db: Session, project_id: str, links: list[dict] | None = None) -> dict[str, set[str]]:
+    """``{coded_patient_id: every patient of its confirmed-duplicate group (itself included)}`` for the patients in
+    at least one ``duplicate`` link (union-find, so groups are transitive)."""
+    links = duplicate_links(db, project_id) if links is None else links
+    groups: dict[str, set[str]] = {}
+    for cluster in _union_clusters([(lk["patient_a"], lk["patient_b"]) for lk in links]):
+        members = set(cluster)
+        for pid in cluster:
+            groups[pid] = members
+    return groups
+
+
+def record_acquisition_exposure(db: Session, *, project_id: str, proposal_id: str, batch_id: str, slide_id: str,
+                                run_id: str | None, bundle_id: str | None, dataset_version_id: str | None,
+                                created_by: str, kind: str = "model_selected") -> list[AcquisitionExposure]:
+    """Persist the patient-level exposure of one committed proposal, in the caller's transaction (the proposal's):
+    the patient that owns ``slide_id`` now (relation ``selected``, with every slide and case of the patient) and
+    every patient of its confirmed-duplicate group (relation ``duplicate_partner``, with the decisions that join
+    them). Rows are append-only (:class:`~dermpath.models.AcquisitionExposure`)."""
+    slide = db.get(Slide, slide_id)
+    lin = slide_lineage(db, slide) if slide is not None else {}
+    pid = lin.get("coded_patient_id")
+    if pid is None:
+        raise ValueError(f"slide {slide_id} has no coded patient; an exposure needs one")
+    links = duplicate_links(db, project_id)
+    group = duplicate_patient_groups(db, project_id, links).get(pid, {pid})
+    members = [(pid, "selected")] + [(m, "duplicate_partner") for m in sorted(group - {pid})]
+    codes = dict(db.execute(select(CodedPatient.id, CodedPatient.code)
+                            .where(CodedPatient.id.in_([m for m, _ in members]))).all())
+    rows = []
+    for member, relation in members:
+        slides, cases = _patient_material(db, project_id, member)
+        if relation == "selected" and slide_id not in slides:
+            slides = sorted(set(slides) | {slide_id})
+        via = [{"slide_a": lk["slide_a"], "slide_b": lk["slide_b"], "decision_id": lk["decision_id"]}
+               for lk in links if member in (lk["patient_a"], lk["patient_b"])
+               and lk["patient_a"] in group and lk["patient_b"] in group]
+        rows.append(AcquisitionExposure(
+            project_id=project_id, coded_patient_id=member, patient_code=codes.get(member), kind=kind,
+            relation=relation, selected_patient_id=pid, proposal_id=proposal_id, batch_id=batch_id, run_id=run_id,
+            bundle_id=bundle_id, dataset_version_id=dataset_version_id, proposed_slide_id=slide_id,
+            slide_ids_json=slides, case_ids_json=cases, duplicate_links_json=via, created_by=created_by))
+    db.add_all(rows)
+    db.flush()
+    return rows
+
+
+def acquisition_exposure(db: Session, project_id: str) -> dict:
+    """The project's EFFECTIVE model-selected exposure (read-only; conservative: material only ever joins it).
+
+    A patient is exposed when any of these holds (each is listed in its ``sources``):
+
+    * ``selected``: an ``acquisition_exposure`` row (a committed active-learning proposal of one of its slides);
+    * ``duplicate_partner_recorded``: a partner recorded with such a proposal (a ``duplicate`` decision then);
+    * ``legacy_al_proposal``: an ``al_proposal`` row committed before exposures were recorded (historical);
+    * ``exposed_slide_now_belongs_to_patient`` / ``exposed_case_now_belongs_to_patient``: a lineage correction
+      moved exposed material to this patient;
+    * ``duplicate_partner_now``: a CURRENT ``duplicate`` decision joins the patient to an exposed patient.
+
+    Returns ``{schema, patients: {coded_patient_id: {coded_patient_id, patient_code, kinds, sources, proposal_ids,
+    first_exposed_at}}, slides: {slide_id: {coded_patient_id, proposal_id}}, cases, recorded_rows,
+    legacy_proposals}``."""
+    patients: dict[str, dict] = {}
+    slides: dict[str, dict] = {}
+    cases: set[str] = set()
+
+    def mark(pid: str | None, code: str | None, source: str, *, proposal_id: str | None = None, at=None) -> None:
+        if not pid:
+            return
+        e = patients.setdefault(pid, {"coded_patient_id": pid, "patient_code": code, "kinds": set(),
+                                      "sources": set(), "proposal_ids": set(), "first_exposed_at": None})
+        e["patient_code"] = e["patient_code"] or code
+        e["kinds"].add("model_selected")
+        e["sources"].add(source)
+        if proposal_id:
+            e["proposal_ids"].add(proposal_id)
+        if at is not None and (e["first_exposed_at"] is None or at < e["first_exposed_at"]):
+            e["first_exposed_at"] = at
+
+    recorded = db.scalars(select(AcquisitionExposure).where(AcquisitionExposure.project_id == project_id)
+                          .order_by(AcquisitionExposure.created_at, AcquisitionExposure.id)).all()
+    for r in recorded:
+        mark(r.coded_patient_id, r.patient_code,
+             "selected" if r.relation == "selected" else "duplicate_partner_recorded",
+             proposal_id=r.proposal_id, at=r.created_at)
+        for sid in r.slide_ids_json or []:
+            slides.setdefault(sid, {"coded_patient_id": r.coded_patient_id, "proposal_id": r.proposal_id})
+        cases.update(r.case_ids_json or [])
+    legacy = 0
+    try:
+        from .ml.engine_models import ALProposal
+    except ModuleNotFoundError:  # pragma: no cover - ML package not installed: no proposals exist
+        ALProposal = None  # noqa: N806
+    if ALProposal is not None:
+        covered = {r.proposal_id for r in recorded}
+        for prop in db.scalars(select(ALProposal).where(ALProposal.project_id == project_id)
+                               .order_by(ALProposal.created_at, ALProposal.id)).all():
+            if prop.id in covered:
+                continue
+            legacy += 1
+            pid = prop.coded_patient_id or _slide_owners(db, [prop.slide_id])[prop.slide_id][0]
+            mark(pid, None, "legacy_al_proposal", proposal_id=prop.id, at=prop.created_at)
+            slides.setdefault(prop.slide_id, {"coded_patient_id": pid, "proposal_id": prop.id})
+    for sid, (pid, code) in _slide_owners(db, slides).items():
+        if pid and pid != slides[sid]["coded_patient_id"]:
+            mark(pid, code, "exposed_slide_now_belongs_to_patient", proposal_id=slides[sid]["proposal_id"])
+    for case in (db.scalars(select(Case).where(Case.id.in_(sorted(cases)))).all() if cases else []):
+        if case.coded_patient_id not in patients:
+            mark(case.coded_patient_id, None, "exposed_case_now_belongs_to_patient")
+    groups = duplicate_patient_groups(db, project_id)
+    for pid in sorted(patients):
+        for member in sorted(groups.get(pid, ())):
+            if member != pid:
+                mark(member, None, "duplicate_partner_now")
+    missing = [pid for pid, e in patients.items() if not e["patient_code"]]
+    if missing:
+        codes = dict(db.execute(select(CodedPatient.id, CodedPatient.code).where(CodedPatient.id.in_(missing))).all())
+        for pid in missing:
+            patients[pid]["patient_code"] = codes.get(pid)
+    out = {}
+    for pid in sorted(patients):
+        e = patients[pid]
+        out[pid] = {**e, "kinds": sorted(e["kinds"]), "sources": sorted(e["sources"]),
+                    "proposal_ids": sorted(e["proposal_ids"]),
+                    "first_exposed_at": e["first_exposed_at"].isoformat() if e["first_exposed_at"] else None}
+    return {"schema": ACQUISITION_SCHEMA, "patients": out, "slides": slides, "cases": sorted(cases),
+            "recorded_rows": len(recorded), "legacy_proposals": legacy}
+
+
+def evaluation_patients(db: Session, project_id: str) -> dict[str, dict]:
+    """The reserved evaluation cohort of the project: every patient holding ``val`` or ``test`` in ANY split family
+    (frozen versions write family assignments), sealed patients included. ``{coded_patient_id: {split, family_id,
+    lineage_id, patient_code, sealed}}``; a patient in several families reports test (and sealed) first."""
+    rows = db.execute(
+        select(SplitFamilyAssignment, SplitFamily.lineage_id)
+        .join(SplitFamily, SplitFamily.id == SplitFamilyAssignment.family_id)
+        .where(SplitFamily.project_id == project_id,
+               (SplitFamilyAssignment.split.in_(EVALUATION_SPLITS)) | (SplitFamilyAssignment.sealed_at.is_not(None)))
+        .order_by(SplitFamilyAssignment.coded_patient_id, SplitFamilyAssignment.family_id)).all()
+    out: dict[str, dict] = {}
+    for a, lineage_id in rows:
+        rec = {"split": a.split, "family_id": a.family_id, "lineage_id": lineage_id, "patient_code": a.patient_code,
+               "sealed": a.sealed_at is not None}
+        cur = out.get(a.coded_patient_id)
+        if cur is None or (rec["sealed"], rec["split"] == "test") > (cur["sealed"], cur["split"] == "test"):
+            out[a.coded_patient_id] = rec
+    return out
+
+
+def evaluation_reservation(db: Session, dv: DatasetVersion, patient_id: str) -> dict:
+    """Whether the version's partition reserves a patient NEW to its split family for evaluation by a LABEL-FREE
+    rule, decided before anyone labels or selects them: ``temporal`` (latest case date on or after the validation
+    cutoff, or the test cutoff when there is no validation split; a patient without any dated case is reserved,
+    because the rule cannot place them) and ``external_site`` (any case at a test site). Proposing such a patient
+    would force evaluation-period or external-site material into training. ``random`` partitions stratify by label,
+    so no label-free reservation exists; their protection is the exposure pin. Returns ``{reserved_for_evaluation,
+    rule, split_by_rule, reason}``."""
+    split = (dv.config_json or {}).get("split") or {}
+    partition = split.get("partition")
+    if partition not in ("temporal", "external_site"):
+        return {"reserved_for_evaluation": False, "rule": partition, "split_by_rule": None,
+                "reason": "random partitions stratify by label: no label-free reservation before labelling"}
+    cases = db.scalars(select(Case).where(Case.project_id == dv.project_id,
+                                          Case.coded_patient_id == patient_id).order_by(Case.id)).all()
+    if partition == "temporal":
+        dates = [c.collected_on for c in cases if c.collected_on]
+        if not dates:
+            return {"reserved_for_evaluation": True, "rule": "temporal", "split_by_rule": None,
+                    "reason": "no dated case: the temporal rule cannot place the patient"}
+        latest = max(dates)
+        test_cut = date.fromisoformat(split["test_cutoff"])
+        val_cut = date.fromisoformat(split["val_cutoff"]) if split.get("val_cutoff") else None
+        by_rule = "test" if latest >= test_cut else "val" if (val_cut and latest >= val_cut) else "train"
+        return {"reserved_for_evaluation": by_rule != "train", "rule": "temporal", "split_by_rule": by_rule,
+                "reason": f"latest case date {latest.isoformat()}"}
+    test_sites = set(split.get("test_sites") or [])
+    at_test_site = sorted({c.site_id for c in cases if c.site_id in test_sites})
+    return {"reserved_for_evaluation": bool(at_test_site), "rule": "external_site",
+            "split_by_rule": "test" if at_test_site else None,
+            "reason": f"cases at test sites {at_test_site}" if at_test_site else "no case at a test site"}
+
+
+_HELD_BY_RESOLUTION = {
+    "draft_allocation": "Refresh the draft (POST /datasets/{id}/refresh): the allocator pins model-selected patients "
+                        "to train.",
+    "split_family": "This lineage's split family holds the patient in this split and inherited splits never move. "
+                    "Start a new lineage (POST /datasets/{id}/new-version with new_lineage=true and a reason; the "
+                    "patient is allocated to train there) or exclude the patient's slides from the dataset.",
+    "sealed": "The patient is sealed in test by a test release (it can never move to train) and model-selected "
+              "material can never be clean test material: exclude the patient's slides from new versions (review "
+              "state 'excluded' with a reason).",
+}
+
+
+def _exposure_conflicts(db: Session, dv: DatasetVersion, assigned: dict[str, str], items: list[dict],
+                        exposure: dict, family: dict | None = None) -> tuple[list[dict], list[dict]]:
+    """Exposed material in val/test of a version: ``(patients, slides)``. ``assigned``: ``{coded_patient_id:
+    split}``; ``items``: rows with ``slide_id``, ``coded_patient_id``, ``patient_code``. Each patient says what holds
+    it there (``held_by``: draft_allocation, split_family or sealed), whether it is a ``historical_conflict`` (the
+    split was already part of an evaluation cohort, or the exposure is a legacy proposal from before exposures were
+    recorded) and its ``resolution``. Slides: exposed slides in val/test whose patient is not listed. ``family``:
+    the split-family assignments to judge ``held_by`` against (default: the lineage's current ones; a freeze in
+    progress passes those from before its own new assignments)."""
+    sealed = sealed_constraints(db, dv)
+    fam = family_assignments(db, lineage_family(db, dv.lineage_id)) if family is None else family
+    exposed = exposure["patients"]
+    patients = []
+    for pid, split in sorted(assigned.items()):
+        e = exposed.get(pid)
+        if split not in EVALUATION_SPLITS or e is None:
+            continue
+        held_by = ("sealed" if pid in sealed else
+                   "split_family" if pid in fam and fam[pid].split == split else "draft_allocation")
+        patients.append({"patient_code": e["patient_code"], "coded_patient_id": pid, "split": split,
+                         "sources": e["sources"], "proposal_ids": e["proposal_ids"][:_DIFF_CAP],
+                         "first_exposed_at": e["first_exposed_at"], "held_by": held_by,
+                         "historical_conflict": held_by != "draft_allocation" or "legacy_al_proposal" in e["sources"],
+                         "resolution": _HELD_BY_RESOLUTION[held_by]})
+    listed = {p["coded_patient_id"] for p in patients}
+    slides = []
+    for it in sorted(items, key=lambda r: r["slide_id"]):
+        rec = exposure["slides"].get(it["slide_id"])
+        split = assigned.get(it["coded_patient_id"])
+        if rec is not None and split in EVALUATION_SPLITS and it["coded_patient_id"] not in listed:
+            slides.append({"slide_id": it["slide_id"], "split": split, "patient_code": it.get("patient_code"),
+                           "proposal_id": rec["proposal_id"], "exposed_with_patient": rec["coded_patient_id"]})
+    return patients, slides
+
+
+def acquisition_report(db: Session, dv: DatasetVersion, rows: list[dict] | None = None,
+                       exposure: dict | None = None) -> dict:
+    """Acquisition exposure of one dataset version (audit, freeze-check, manifest): how many exposed patients it
+    holds per split, and any exposed material in val/test (``in_evaluation``), with the historical conflicts named.
+    Descriptive: a frozen version is never rewritten; its stored evaluations stand, and a conflict listed here means
+    its val/test metrics include model-selected material."""
+    rows = item_rows(db, dv) if rows is None else rows
+    exposure = acquisition_exposure(db, dv.project_id) if exposure is None else exposure
+    assigned = {r["coded_patient_id"]: r.get("split") for r in rows}
+    per_split = Counter(sp for pid, sp in assigned.items() if pid in exposure["patients"])
+    patients, slides = _exposure_conflicts(db, dv, {k: v for k, v in assigned.items() if v}, rows, exposure)
+    frozen = dv.status == "frozen"
+    historical = [p for p in patients if frozen or p["historical_conflict"]]
+    return {
+        "schema": ACQUISITION_SCHEMA,
+        "exposed_patients": sum(per_split.values()),
+        "exposed_patients_per_split": {sp: per_split.get(sp, 0) for sp in splitlib.SPLITS},
+        "in_evaluation": patients,
+        "slides_in_evaluation": slides,
+        "historical_conflicts": historical,
+        "ok": not patients and not slides,
+        "frozen_version_rewritten": False if frozen else None,
+        "project_legacy_proposals": exposure["legacy_proposals"],
+        "note": ("Patients chosen by active learning (with their slides, cases and confirmed duplicates) are "
+                 "model-selected review material: development only, never validation or test. A frozen version "
+                 "is never rewritten; a conflict listed for it means its stored val/test metrics include "
+                 "model-selected material."),
+    }
+
+
+def evaluation_cohorts(rows: list[dict], splits: list[dict], exposure: dict) -> dict:
+    """Manifest block separating the REPRESENTATIVE PERFORMANCE COHORT (val + test: allocated by the content-stable
+    split rule, never model-selected) from the MODEL-SELECTED REVIEW COHORT (patients active learning chose, with
+    their confirmed duplicates: development only)."""
+    split_of = {s["coded_patient_id"]: s["split"] for s in splits}
+    code_of = {s["coded_patient_id"]: s["patient_code"] for s in splits}
+    exposed = {pid for pid in split_of if pid in exposure["patients"]}
+    perf = {pid for pid, sp in split_of.items() if sp in EVALUATION_SPLITS}
+    return {
+        "schema": EVALUATION_COHORTS_SCHEMA,
+        "representative_performance_cohort": {
+            "splits": list(EVALUATION_SPLITS),
+            "patients": len(perf),
+            "patients_per_split": {sp: sum(1 for p in perf if split_of[p] == sp) for sp in EVALUATION_SPLITS},
+            "slides": sum(1 for r in rows if r.get("split") in EVALUATION_SPLITS),
+            "model_selected_patients": len(perf & exposed),
+            "selection": "allocated by the content-stable split rule (dermpath.splits: seeded patient hash, or the "
+                         "temporal / external-site rule), independent of model scores and of active-learning "
+                         "selection; model-selected patients are never placed here",
+            "use": "performance estimates: validation for model and threshold selection, test only at a recorded "
+                   "test release",
+        },
+        "model_selected_review_cohort": {
+            "patients": len(exposed),
+            "patient_codes": sorted(code_of[p] for p in exposed)[:_DIFF_CAP * 4],
+            "patients_per_split": {sp: sum(1 for p in exposed if split_of[p] == sp) for sp in splitlib.SPLITS},
+            "slides": sum(1 for r in rows if r["coded_patient_id"] in exposed),
+            "kinds": {"model_selected": len(exposed)},
+            "selection": "chosen for expert review by active learning (uncertainty and diversity on model scores, "
+                         "plus a random share), with their confirmed duplicate partners",
+            "use": "development (training) only; never a performance estimate",
+        },
+        "limitation": ("Model-selected patients never enter val or test, so the performance cohort is drawn from the "
+                       "cohort without them. Active learning favours uncertain cases: when many patients are "
+                       "model-selected, the evaluation population can be easier than the full cohort; compare the "
+                       "counts above. Temporal and external-site partitions reserve their evaluation patients by a "
+                       "label-free rule before any proposal; random partitions stratify by label and cannot."),
+    }
+
+
 def _plan_splits(db: Session, dv: DatasetVersion, split: dict) -> tuple[dict, dict[str, str], dict, SplitFamily | None]:
     """Compute (never write) the allocation for this draft: ``(split, mapping, diag, family)``."""
     split = splitlib.normalise_split(split)
@@ -550,12 +911,15 @@ def _plan_splits(db: Session, dv: DatasetVersion, split: dict) -> tuple[dict, di
     for pid, s in sealed.items():
         existing.setdefault(pid, s["split"])
     patients = _patient_infos(db, dv)
+    in_cohort = {p["id"] for p in patients}
+    # Model-selected material (active-learning proposals, their slides/cases and confirmed duplicate partners) is
+    # development only: the allocator pins it to train; inherited or sealed splits stay and freeze refuses them.
+    exposed = sorted(pid for pid in acquisition_exposure(db, dv.project_id)["patients"] if pid in in_cohort)
     sites = known_sites(db, dv.project_id) if split["partition"] == "external_site" else None
     mapping, diag = splitlib.allocate(patients, split, salt=fam.salt if fam else project_salt(dv.project_id),
                                       existing=existing, groups=_duplicate_groups(db, dv),
                                       classes=cfg.get("label_values"), known_sites=sites,
-                                      positive_class=positive_class(cfg))
-    in_cohort = {p["id"] for p in patients}
+                                      positive_class=positive_class(cfg), development_only=exposed)
     diag["family"] = {**diag.get("family", {}), "split_family_id": fam.id if fam else None, "locked": locked,
                       "sealed_patients_pinned": sum(1 for pid in sealed if pid in in_cohort)}
     return split, mapping, diag, fam
@@ -786,8 +1150,9 @@ def public_dataset_record(db: Session, project_id: str, rows: list[dict]) -> dic
 
 
 def build_manifest(db: Session, dv: DatasetVersion, frozen_at, frozen_by: str, *,
-                   family: SplitFamily | None = None) -> dict:
+                   family: SplitFamily | None = None, exposure: dict | None = None) -> dict:
     rows = [{**r, **qc_snapshot(db, r["slide_id"])} for r in item_rows(db, dv)]
+    exposure = acquisition_exposure(db, dv.project_id) if exposure is None else exposure
     cfg = dv.config_json
     splits = []
     for sa in db.scalars(select(SplitAssignment).where(SplitAssignment.dataset_version_id == dv.id)
@@ -844,9 +1209,10 @@ def build_manifest(db: Session, dv: DatasetVersion, frozen_at, frozen_by: str, *
                                 "new": len(version_patients - set(fam_existing)),
                                 "dropped": len(set(fam_existing) - version_patients)},
         "split_diagnostics": diag,
+        "evaluation_cohorts": evaluation_cohorts(rows, splits, exposure),
         "near_duplicate_decisions": _decisions_in_force(db, dv, {r["slide_id"] for r in rows}),
         "exclusions": dv.exclusions_json,
-        "audit": audit(db, dv),
+        "audit": audit(db, dv, exposure=exposure),
         "python_version": platform.python_version(),
         "research_use_only": True,
     }
@@ -1018,16 +1384,54 @@ def freeze_blockers(db: Session, dv: DatasetVersion) -> list[dict]:
                     "restrict include_provenance", "item_counts": mode["item_counts"]})
     if rows and not any(r["split"] is None for r in rows):
         out.extend(_family_freeze_problems(db, dv))
+        out.extend(_acquisition_freeze_problems(db, dv))
     return out
 
 
 def freeze_check(db: Session, dv: DatasetVersion) -> dict:
-    """Read-only preview of :func:`freeze`: blockers, warnings needing acknowledgement, informational items."""
+    """Read-only preview of :func:`freeze`: blockers, warnings needing acknowledgement, informational items.
+    ``acquisition_exposure`` reports model-selected material in this version (historical conflicts included)."""
     w = freeze_warnings(db, dv)
     rows = item_rows(db, dv)
     return {**w, "blockers": freeze_blockers(db, dv), "data_mode": data_mode(rows)["mode"],
+            "acquisition_exposure": acquisition_report(db, dv, rows),
             "acknowledgeable": list(ACKNOWLEDGEABLE_WARNINGS),
             "requires_acknowledgement": any(w[k] for k in ACKNOWLEDGEABLE_WARNINGS)}
+
+
+def _acquisition_freeze_problems(db: Session, dv: DatasetVersion, exposure: dict | None = None,
+                                 family: dict | None = None) -> list[dict]:
+    """``acquisition_exposed_in_evaluation``: val or test of this draft holds model-selected material (a patient an
+    active-learning batch proposed, its linked slides or cases, or a confirmed duplicate partner). No
+    acknowledgement overrides it; each patient carries ``held_by``, ``historical_conflict`` and a ``resolution``."""
+    exposure = acquisition_exposure(db, dv.project_id) if exposure is None else exposure
+    assigned = {sa.coded_patient_id: sa.split for sa in db.scalars(
+        select(SplitAssignment).where(SplitAssignment.dataset_version_id == dv.id)).all()}
+    items = [{"slide_id": it.slide_id, "coded_patient_id": it.coded_patient_id, "patient_code": it.patient_code}
+             for it in _stored_items(db, dv)]
+    patients, slides = _exposure_conflicts(db, dv, assigned, items, exposure, family)
+    if not patients and not slides:
+        return []
+    return [{"code": ACQUISITION_BLOCKER,
+             "message": "Material selected by active learning (the proposed patients, their slides and cases, and "
+                        "their confirmed duplicate partners) is model-selected review material and can never be "
+                        "validation or test material. See each patient's resolution.",
+             "patients": patients[:_DIFF_CAP], "slides": slides[:_DIFF_CAP],
+             "historical_conflicts": sum(1 for p in patients if p["historical_conflict"])}]
+
+
+def _acquisition_freeze_check(db: Session, dv: DatasetVersion, exposure: dict | None = None,
+                              family: dict | None = None) -> None:
+    for problem in _acquisition_freeze_problems(db, dv, exposure, family):
+        details = {k: v for k, v in problem.items() if k not in ("code", "message")}
+        raise conflict(problem["code"], problem["message"], **details)
+
+
+def lock_project_writes(db: Session, project_id: str) -> None:
+    """Serialise a dataset freeze with an active-learning commit of the same project. On SQLite the caller already
+    holds the database write lock (it flushed a write first; SQLite has one writer), so this is a no-op there
+    (``FOR UPDATE`` is not rendered); on PostgreSQL it takes the project row lock both writers ask for."""
+    db.execute(select(Project.id).where(Project.id == project_id).with_for_update())
 
 
 def _family_freeze_problems(db: Session, dv: DatasetVersion) -> list[dict]:
@@ -1087,6 +1491,9 @@ def freeze(db: Session, actor: Actor, dv: DatasetVersion, reason: str | None = N
            acknowledge_warnings: bool = False) -> DatasetVersion:
     if dv.status != "draft":
         raise conflict("dataset_frozen", "Already frozen")
+    # Model-selected material in val/test (e.g. a proposal committed after the draft was allocated): refused with
+    # its own code before the stale check, so the response names the patients and the resolution.
+    _acquisition_freeze_check(db, dv)
     diff, exclusions, fresh_diag = _draft_state_with_plan(db, dv)
     if diff:
         raise conflict("draft_stale", "Eligibility, labels, lineage, provenance or the split allocation changed "
@@ -1121,7 +1528,8 @@ def freeze(db: Session, actor: Actor, dv: DatasetVersion, reason: str | None = N
         raise unprocessable("reason_required", "Freezing with acknowledged warnings needs a reason")
     now = utcnow()
     fam = _ensure_family(db, dv, actor.id)
-    manifest = build_manifest(db, dv, now, actor.id, family=fam)
+    exposure = acquisition_exposure(db, dv.project_id)
+    manifest = build_manifest(db, dv, now, actor.id, family=fam, exposure=exposure)
     if has_warnings:
         manifest["acknowledged_warnings"] = {**warnings, "reason": reason, "acknowledged_by": actor.id}
     existing = family_assignments(db, fam)
@@ -1131,7 +1539,6 @@ def freeze(db: Session, actor: Actor, dv: DatasetVersion, reason: str | None = N
                                          patient_code=s["patient_code"], split=s["split"], first_version_id=dv.id))
     digest = hashlib.sha256(canonical_json(manifest)).hexdigest()
     key = f"projects/{dv.project_id}/datasets/{dv.id}/manifest.json"
-    get_store().put_bytes(key, json.dumps(manifest, indent=2, sort_keys=True).encode())
     dv.manifest_json = manifest
     dv.manifest_sha256 = digest
     dv.manifest_object_key = key
@@ -1145,7 +1552,24 @@ def freeze(db: Session, actor: Actor, dv: DatasetVersion, reason: str | None = N
                                 "split_fingerprint": manifest["split_fingerprint"],
                                 "acknowledged": [k for k in ACKNOWLEDGEABLE_WARNINGS if warnings[k]]}, reason=reason)
     db.flush()
+    # Final exposure check INSIDE this write transaction: the flush above took the database write lock (SQLite has
+    # one writer; PostgreSQL takes the project row lock below, which the active-learning commit also takes), so an
+    # active-learning proposal committed while this freeze was re-planning is visible now, and none can commit until
+    # this transaction ends. A refusal rolls everything back (the caller never commits it).
+    lock_project_writes(db, dv.project_id)
+    current = acquisition_exposure(db, dv.project_id)
+    _acquisition_freeze_check(db, dv, current, existing)  # the family as it was before this freeze added to it
+    in_version = ({s["coded_patient_id"] for s in manifest["splits"]}, {r["slide_id"] for r in manifest["items"]})
+    if _version_exposure(current, *in_version) != _version_exposure(exposure, *in_version):
+        raise conflict("draft_stale", "Patients of this version were selected by active learning while it was being "
+                       "frozen (they stay in train); freeze again so the manifest records them as model-selected.")
+    get_store().put_bytes(key, json.dumps(manifest, indent=2, sort_keys=True).encode())
     return dv
+
+
+def _version_exposure(exposure: dict, patient_ids: set[str], slide_ids: set[str]) -> tuple[list[str], list[str]]:
+    return (sorted(pid for pid in exposure["patients"] if pid in patient_ids),
+            sorted(sid for sid in exposure["slides"] if sid in slide_ids))
 
 
 def verify_manifest(dv: DatasetVersion) -> bool | None:
@@ -1416,7 +1840,7 @@ def _confounding(patients: dict[str, dict], key: str, row_of) -> dict:
     return {"unit": "patients", "table": table, "slide_table": slide_table, **association(table)}
 
 
-def audit(db: Session, dv: DatasetVersion) -> dict:
+def audit(db: Session, dv: DatasetVersion, *, exposure: dict | None = None) -> dict:
     """Dataset audit (design §9). Descriptive; nothing is changed or resolved automatically."""
     rows = item_rows(db, dv)
     cfg = dv.config_json
@@ -1529,8 +1953,31 @@ def audit(db: Session, dv: DatasetVersion) -> dict:
         "confounding": confounding,
         "mixed_label_patients": (report or {}).get("mixed_label_patients"),
         "data_mode": data_mode(rows),
+        "acquisition_exposure": acquisition_report(db, dv, rows, exposure),
         "research_use_only": True,
     }
+
+
+def project_acquisition_report(db: Session, project_id: str) -> dict:
+    """Project-wide acquisition exposure: every exposed patient with its sources, and the historical conflicts of
+    every FROZEN version (exposed material in its val/test). Read-only: frozen versions and their stored
+    evaluations are never rewritten; a listed conflict qualifies their val/test metrics."""
+    exposure = acquisition_exposure(db, project_id)
+    conflicts = []
+    for dv in db.scalars(select(DatasetVersion).where(DatasetVersion.project_id == project_id,
+                                                      DatasetVersion.status == "frozen")
+                         .order_by(DatasetVersion.frozen_at, DatasetVersion.id)).all():
+        rep = acquisition_report(db, dv, exposure=exposure)
+        if rep["in_evaluation"] or rep["slides_in_evaluation"]:
+            conflicts.append({"dataset_version_id": dv.id, "name": dv.name, "version": dv.version,
+                              "lineage_id": dv.lineage_id, "frozen_at": dv.frozen_at.isoformat() if dv.frozen_at
+                              else None, "patients": rep["in_evaluation"], "slides": rep["slides_in_evaluation"]})
+    return {"schema": ACQUISITION_SCHEMA, "project_id": project_id,
+            "exposed_patients": list(exposure["patients"].values()), "recorded_rows": exposure["recorded_rows"],
+            "legacy_proposals": exposure["legacy_proposals"], "historical_conflicts": conflicts,
+            "frozen_versions_rewritten": False, "creates_labels": False,
+            "notice": "Model-selected review material (active-learning proposals with their slides, cases and "
+                      "confirmed duplicates) trains models but never evaluates them. Research use only."}
 
 
 # --------------------------------------------------------------------------- export
