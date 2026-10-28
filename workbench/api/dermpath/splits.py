@@ -29,7 +29,10 @@ Guarantees
   partition rule runs (it counts toward train's targets, so the others still meet the ratios), under
   every partition. An inherited (or sealed) split is never moved: such a unit is reported in
   ``diag["development_only"]["held_in_evaluation"]`` and the dataset freeze refuses it. With no
-  development-only patients the allocation is exactly the ``/3`` allocation.
+  development-only patients the allocation is exactly the ``/3`` allocation. Because pinned units count toward
+  train's targets, WHICH other patients fill val/test can depend on what active learning chose: the
+  allocation is recomputed without the pin (same salt, seed, cohort, grouping and inherited splits) and the
+  differences are reported in ``diag["development_only"]["effect_on_other_patients"]``.
 """
 
 from __future__ import annotations
@@ -290,6 +293,49 @@ def _patients(raw: Sequence[Mapping], rule: str, positive_class: str) -> list[_P
     return out
 
 
+def duplicate_closure_pairs(slide_pairs: Iterable[tuple[str, str]], patient_of: Mapping[str, str]
+                            ) -> list[tuple[str, str]]:
+    """Every pair of distinct patients that confirmed-duplicate SLIDE pairs join, directly or transitively.
+
+    The closure (union-find) is computed over every slide the pairs name, including slides outside ``patient_of``
+    (a slide no dataset includes, e.g. an excluded re-scan), and over each patient's own slides: ``A~X`` and
+    ``X~B`` join patients A and B even when X belongs to no included patient. All patient pairs inside each group
+    are returned (sorted), so a consumer that sees only some of the group's patients still joins them directly."""
+    parent: dict[tuple[str, str], tuple[str, str]] = {}
+
+    def find(x):
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[max(ra, rb)] = min(ra, rb)
+
+    named = set()
+    for a, b in slide_pairs:
+        if a is None or b is None:
+            continue
+        union(("s", str(a)), ("s", str(b)))
+        named |= {str(a), str(b)}
+    for s in named:  # a patient's own slides are one material group with the patient
+        p = patient_of.get(s)
+        if p:
+            union(("s", s), ("p", str(p)))
+    members: dict = defaultdict(set)
+    for node in list(parent):
+        if node[0] == "p":
+            members[find(node)].add(node[1])
+    out = set()
+    for ps in members.values():
+        ps = sorted(ps)
+        out.update((ps[i], ps[j]) for i in range(len(ps)) for j in range(i + 1, len(ps)))
+    return sorted(out)
+
+
 def _units(patients: list[_Patient], groups: Iterable[tuple[str, str]]) -> tuple[list[list[_Patient]], int]:
     """Union-find over grouping pairs; returns units (lists of patients) and the number of pairs applied."""
     parent = {p.id: p.id for p in patients}
@@ -406,6 +452,7 @@ def allocate(patients: Sequence[Mapping], split: Mapping, *, salt: str = "",
     ``diag["development_only"]`` reports both (absent when the argument is None).
     """
     split = normalise_split(split)
+    groups = list(groups)  # used twice when development-only patients are pinned (counterfactual below)
     partition, rule = split["partition"], split["patient_label_rule"]
     pts = _patients(patients, rule, positive_class)
     by_id = {p.id: p for p in pts}
@@ -540,8 +587,41 @@ def allocate(patients: Sequence[Mapping], split: Mapping, *, salt: str = "",
             "held_in_evaluation": sorted(({"patient_code": p.code, "split": mapping[p.id]} for p in pts
                                           if p.id in dev_only and mapping[p.id] != "train"),
                                          key=lambda d: d["patient_code"])[:_DIAG_LIST_CAP],
+            "effect_on_other_patients": _pin_effect(patients, split, mapping, by_id, dev_only, dev_pinned,
+                                                    salt=salt, existing=existing, groups=groups, classes=classes,
+                                                    known_sites=known_sites, positive_class=positive_class),
         }
     return mapping, diag
+
+
+def _pin_effect(patients, split, mapping, by_id, dev_only, dev_pinned, **kw) -> dict:
+    """How pinning development-only units to train changed the split of the OTHER patients: the allocation is
+    recomputed without ``development_only`` (same salt, seed, cohort, grouping and inherited splits) and every
+    non-pinned patient whose split differs is named. Pinned units count toward train's targets, so the stratified
+    rule fills val/test with other patients: the composition of the evaluation cohort then depends on what active
+    learning selected (its membership is still never model-selected)."""
+    base = {"counterfactual": "the same allocation without the development-only pin (same salt, seed, cohort, "
+                              "grouping and inherited splits)"}
+    if not dev_pinned:
+        return {**base, "status": "no_pinned_units", "changed": 0, "moved_into_evaluation": [],
+                "displaced_to_train": [], "other_changes": []}
+    try:
+        without, _ = allocate(patients, split, development_only=None, **kw)
+    except Exception as exc:  # noqa: BLE001 - e.g. temporal: a pinned patient without a case date
+        return {**base, "status": "not_computable", "reason": (getattr(exc, "code", None) or type(exc).__name__) + ": " + str(exc)[:300]}
+    moved_in, displaced, other = [], [], []
+    for pid, sp in sorted(mapping.items(), key=lambda kv: by_id[kv[0]].code):
+        if pid in dev_only or without.get(pid) == sp:
+            continue
+        rec = {"patient_code": by_id[pid].code, "split": sp, "without_pin": without.get(pid)}
+        (moved_in if sp in ("val", "test") and without.get(pid) == "train" else
+         displaced if sp == "train" else other).append(rec)
+    return {**base, "status": "computed", "changed": len(moved_in) + len(displaced) + len(other),
+            "moved_into_evaluation": moved_in[:_DIAG_LIST_CAP], "displaced_to_train": displaced[:_DIAG_LIST_CAP],
+            "other_changes": other[:_DIAG_LIST_CAP],
+            "note": "pinned model-selected units count toward train's targets, so other patients fill val/test in "
+                    "their place: which non-selected patients form the evaluation cohort depends on what active "
+                    "learning selected"}
 
 
 def class_report(patients: Sequence[Mapping], mapping: Mapping[str, str], split: Mapping | None = None, *,

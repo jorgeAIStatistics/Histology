@@ -210,6 +210,9 @@ def install_fakes(monkeypatch, *, corrupt=(), weights_override: dict | None = No
     monkeypatch.setattr(fsm, "require_ready", require_ready, raising=False)
     monkeypatch.setattr(fsm, "load_slide_features", load_slide_features, raising=False)
     monkeypatch.setattr(fsm, "extract_slide", extract_slide, raising=False)
+    # The fake extraction never reads or verifies stored objects (fake slides have none), so the object check that
+    # inference runs before serving a stored prediction is faked with it; real-extraction tests keep the real check.
+    monkeypatch.setattr(fsm, "verify_snapshot_objects", lambda slide, snap: None, raising=False)
     monkeypatch.setattr(training, "score_bags_with_checkpoint", score, raising=False)
     return calls
 

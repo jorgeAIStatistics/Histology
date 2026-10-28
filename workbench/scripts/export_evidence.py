@@ -32,9 +32,12 @@ local (``<reports-dir>/_state/evidence_salt`` by default, never in the package).
 re-scanned; any leak aborts the export and nothing is left behind.
 
 Offline validity: a stage contributes results only when its report has a fingerprint, its bytes match the integrity
-record, it is not a dry run (unless ``--include-dry-run``), the recorded implementation (driver sha256, engine code
-tree, extractor version) equals the current one, and every upstream report is the one it was computed from and is
-itself valid. Database artifacts cannot be checked offline; the driver's last status snapshot is reported beside.
+record, it passes the driver's database-free content rules (``report_content_problems``: every s3 grid run succeeded,
+no crashed s4 / s4b work), it is not a dry run (unless ``--include-dry-run``), the recorded implementation (driver
+sha256, engine code tree, extractor version) equals the current one, and every upstream report is the one it was
+computed from and is itself valid. Database and object-store artifacts cannot be checked offline: a stage whose SAME
+report bytes the driver's last status snapshot holds invalid or failed is excluded too, and the snapshot is reported
+beside.
 
 Usage (from ``workbench/api``)::
 
@@ -288,7 +291,23 @@ class Reports:
         for s in drv.STAGES:
             p = self.path(s)
             self.reports[s] = read_json(p) if p.is_file() else None
+        snap = read_json(self.state / "status.json")
+        self.snapshot = snap if isinstance(snap, dict) else {}
         self._status: dict[str, dict] = {}
+
+    def snapshot_verdict(self, stage: str, rep: dict, report_sha256: str) -> dict | None:
+        """The driver's last status snapshot entry for ``stage`` when it judged THESE report bytes (its
+        ``report_sha256``; for an older snapshot without it, the same recorded fingerprint and finish time)."""
+        v = (self.snapshot.get("stages") or {}).get(stage)
+        if not isinstance(v, dict):
+            return None
+        if v.get("report_sha256"):
+            same = v["report_sha256"] == report_sha256
+        else:
+            same = (bool(v.get("recorded_fingerprint_sha256"))
+                    and v.get("recorded_fingerprint_sha256") == g(rep, "fingerprint", "sha256")
+                    and v.get("finished_at") is not None and v.get("finished_at") == rep.get("finished_at"))
+        return v if same else None
 
     def path(self, stage: str) -> Path:
         return self.dir / ("summary.json" if stage == "s8" else f"{stage}.json")
@@ -326,6 +345,15 @@ class Reports:
                 integrity.append("no integrity record")
             elif side.get("report_sha256") != sha256_file(p):
                 integrity.append("report bytes changed after it was written")
+            # The driver's database-free content rules (e.g. an s3 whose grid run did not succeed, s4 / s4b work
+            # that crashed): a report the driver holds invalid is never evidence here either.
+            integrity.extend(f"content: {x}" for x in drv.report_content_problems(stage, rep))
+            verdict = self.snapshot_verdict(stage, rep, sha256_file(p))
+            if verdict and verdict.get("status") in ("invalid", "failed"):
+                why = "; ".join(str(x) for x in (verdict.get("reasons") or [])[:3])
+                (integrity if verdict["status"] == "invalid" else failed).append(
+                    f"the driver's last status snapshot ({self.snapshot.get('at')}) holds this report "
+                    f"{verdict['status']}" + (f": {why[:400]}" if why else ""))
             if rep.get("dry_run") and not self.include_dry_run:
                 reasons.append("dry run (plumbing only; never evidence)")
             impl = comps.get("implementation") or {}
@@ -553,13 +581,17 @@ def comparison_view(c) -> dict | None:
     if not isinstance(c, dict):
         return None
     return {"fixed": c.get("fixed"), "seed": c.get("seed"), "models": c.get("models"), "status": c.get("status"),
-            "reason": c.get("reason"), "n_boot": c.get("n_boot"), "bootstrap_seed": c.get("bootstrap_seed"),
+            "code": c.get("code"), "reason": c.get("reason"), "n_boot": c.get("n_boot"),
+            "bootstrap_seed": c.get("bootstrap_seed"), "prediction_unit": c.get("prediction_unit"),
             "subject_accounting": c.get("subject_accounting"),
             "excluded_bags": len(c.get("excluded_bags_unscorable_under_some_model") or []),
+            "tuning_set": c.get("tuning_set"), "tuning_set_note": c.get("tuning_set_note"),
             "deltas": [{"a": d.get("a"), "b": d.get("b"), "delta": d.get("delta"),
-                        **{m: {k: (d.get(m) or {}).get(k) for k in ("value", "ci", "ci_reason")}
+                        **{m: {**{k: (d.get(m) or {}).get(k) for k in ("value", "ci", "ci_reason")},
+                               **({"tuning_set": True} if (d.get(m) or {}).get("tuning_set") else {})}
                            for m in ("auroc", "auprc", "sensitivity", "specificity", "brier") if d.get(m)},
-                        "mcnemar_p": d.get("mcnemar_p")} for d in c.get("deltas") or []],
+                        "mcnemar_p": d.get("mcnemar_p"), "mcnemar_tuning_set": d.get("mcnemar_tuning_set")}
+                       for d in c.get("deltas") or []],
             "reference_standard": c.get("reference_standard")}
 
 
@@ -609,8 +641,9 @@ def build_results(r: Reports) -> dict:
             "comparisons_across_seeds": comps.get("across_seeds"),
             "learning_curves": [{"encoder": c.get("encoder"), "head": c.get("head"),
                                  "points": [{k: p.get(k) for k in ("fraction", "n_repeats", "n_succeeded",
-                                                                   "train_patients", "auroc_mean", "auroc_min",
-                                                                   "auroc_max")} for p in c.get("points") or []]}
+                                                                   "train_patients", "final_model_patients",
+                                                                   "auroc_mean", "auroc_min", "auroc_max")}
+                                            for p in c.get("points") or []]}
                                 for c in s3.get("learning_curves") or []],
             "pre_declared_test_candidate": {k: g(s3, "pre_declared_test_candidate", k)
                                             for k in ("rule", "declared_at", "seeds", "ranking", "tie")}
@@ -693,6 +726,7 @@ def build_test_releases(r: Reports) -> dict:
         is_cur = sha256_file(p) == cur_sha
         body = rep.get("test_evaluation") or {}
         items.append({"source": "s6.json" if p == cur else f"test_release_history/{p.name}",
+                      "is_current_s6": is_cur,
                       "sha256": sha256_file(p), "test_release_id": rep.get("test_release_id"),
                       "release_number": rep.get("release_number"), "finished_at": rep.get("finished_at"),
                       "action": rep.get("action"), "reason": rep.get("reason"),
@@ -706,9 +740,10 @@ def build_test_releases(r: Reports) -> dict:
                       "unscorable": {k: v for k, v in (rep.get("unscorable") or {}).items() if k != "unscored"},
                       "evaluation_prevalence": rep.get("evaluation_prevalence"),
                       "reference_standard": rep.get("reference_standard") or body.get("reference_standard"),
-                      "status": (r.status("s6")["status"] if is_cur else "historical (superseded by a later "
-                                                                         "release)"),
                       "status_reasons": r.status("s6")["reasons"] if is_cur else []})
+    # labelled by test_release_id with the driver's own rule: an earlier copy of the SAME release (a forced, audited
+    # re-read) is never "superseded by a later release"
+    r.drv.release_history_labels(items, cur_sha, r.status("s6")["status"] if cur.is_file() else None)
     return {"releases": items, "count": len(items),
             "note": ("no test release recorded: the test split was never read by the driver" if not items else
                      "every recorded test look is listed; an obsolete release's candidate no longer matches the "
@@ -778,7 +813,8 @@ def build_exclusions(r: Reports) -> dict:
                                                       "reasons": (v.get("reasons") or [])[:5]}
                                                   for s, v in (snapshot.get("stages") or {}).items()}}
             if snapshot else None,
-            "database_artifacts": "not checked offline (no database is opened); see driver_status_snapshot",
+            "database_artifacts": "not checked offline (no database is opened); a stage whose same report bytes "
+                                  "the driver_status_snapshot holds invalid or failed is excluded",
             "superseded_outputs": superseded, "failed_runs": failed_runs, "arms_not_evidence": arms,
             "skipped_work": {s: rep.get("skipped_work") for s, rep in r.reports.items()
                              if isinstance(rep, dict) and rep.get("skipped_work")}}

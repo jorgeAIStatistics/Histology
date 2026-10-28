@@ -62,9 +62,27 @@ Reuse, versions and concurrency:
   recorded feature identity (row count and a chunked sha256 of the scored rows), else the job fails
   (``stale_prediction_refused``): an old score is never paired with a new embedding.
 * The API dedupes by ``infer:{bundle}:{slide}:{request-time snapshot sha256}`` (one job per input
-  identity; a changed input gets a new job). Workers insert under the unique constraint
+  identity; a changed input gets a new job), and the payload carries that sha
+  (``expected_input_snapshot_sha256``; the result reports ``requested_input_snapshot_sha256`` and
+  ``input_changed_since_request``). The job handed back always answers the request's identity: when the newest
+  job of the identity's chain finished on ANOTHER identity (the input changed while it was queued), failed or was
+  canceled, a new job is enqueued under ``…:r{n}`` (duplicate re-requests share it through the unique key).
+  Workers insert under the unique constraint
   (bundle, subject scope, slide, snapshot sha256); a worker that loses the race returns the winner's
   row (after the same feature-identity check), so duplicate concurrent work yields one prediction.
+* Only outcomes that are deterministic functions of the snapshot (and the bundle) are recorded as a snapshot's
+  "unscorable" outcome (scale, sampling and stain refusals, no tissue patches, region geometry, ...). A slide whose
+  ingest state moved after the snapshot (``feature_sets.NOT_INGESTED``: a re-ingest in flight) raises
+  :class:`InputNotReady` (retried with backoff, nothing recorded); worker-side refusals (``extraction_env_changed``,
+  ``extraction_code_changed``) fail the job and record nothing.
+* Image identity on the reuse path: the snapshot identity is computed from database fields only, so before a
+  STORED prediction is served (the worker's reuse path with or without an embedding, and the API's ``prediction``)
+  the slide's stored image and QC mask object are verified against the snapshot
+  (:func:`dermpath.ml.feature_sets.verify_snapshot_objects`; the image sha is memoised per object key, size,
+  mtime, inode and ctime, so an unchanged object costs a ``stat``; the first check in a process streams the file
+  once). An object replaced in place fails closed: ``input_changed`` in the worker (both active-learning modes) and
+  ``409 input_changed`` from ``POST /bundles/{id}/infer``. A slide without a stored prediction is checked by the
+  extraction itself.
 
 Memory (owner brief item 5): embeddings are never copied whole. The pooled embedding (only computed when
 asked: active learning's diversity) uses the head's chunked float64 :func:`dermpath.ml.heads.streaming_mean`
@@ -77,9 +95,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import types
 
 import numpy as np
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
 from .. import audit
@@ -117,6 +136,9 @@ PROVENANCE_COMPLETE = "complete"
 PROVENANCE_LEGACY = "legacy_unverified"
 #: Keys the prediction adds to its stored snapshot (outputs and identity; never part of the snapshot identity).
 SNAPSHOT_RECORD_KEYS = frozenset({"schema", "input_snapshot_sha256", "n_patches", "feature_artifact_id", "features"})
+#: Extraction error prefixes that describe the worker (environment, extraction code), not the input snapshot: they
+#: fail the job and are never recorded as a snapshot's "unscorable" outcome.
+NOT_SNAPSHOT_OUTCOMES = ("extraction_env_changed", "extraction_code_changed")
 
 
 # =========================================================================== bundles
@@ -414,23 +436,85 @@ def _stored_prediction(db, bundle_id: str, slide_id: str, snapshot_sha: str) -> 
     return row
 
 
+class InputNotReady(RuntimeError):
+    """The slide is in a transient state that is not part of any input snapshot (a re-ingest in flight after the
+    job's snapshot). Not a :class:`PermanentJobError`: the worker retries the job with backoff, and nothing is
+    recorded as the snapshot's outcome."""
+
+
+def _verify_objects(slide_ref, snapshot: dict, pred_id: str | None = None) -> str | None:
+    """None when the stored slide image (and QC mask object) still are the snapshot's, else the ``input_changed``
+    detail (:func:`dermpath.ml.feature_sets.verify_snapshot_objects`; memoised, a ``stat`` when unchanged)."""
+    from . import feature_sets as fsm
+
+    try:
+        fsm.verify_snapshot_objects(slide_ref, snapshot)
+    except fsm.FeatureError as exc:
+        what = f"prediction {pred_id} is not served for it" if pred_id else "nothing is served for it"
+        return f"{exc} (the stored objects no longer match the input snapshot; {what})"
+    return None
+
+
 def current_prediction(db, bundle: InferenceBundle, slide_id: str) -> tuple[InferencePrediction | None, str | None]:
-    """``(prediction for the slide's current input identity or None, that identity)`` (read-only, for the API)."""
+    """``(prediction for the slide's current input identity or None, that identity)`` (for the API).
+
+    A stored prediction is presented as the answer for the current input only after the slide's stored image and
+    mask object are verified against its snapshot (the snapshot identity is computed from database fields only, so
+    an object replaced in place would otherwise keep its old score): a mismatch is ``409 input_changed``."""
     slide = db.get(Slide, slide_id)
     if slide is None or slide.project_id != bundle.project_id:
         return None, None
-    _snap, sha = effective_input_snapshot(db, slide)
+    snap, sha = effective_input_snapshot(db, slide)
     try:
-        return _stored_prediction(db, bundle.id, slide_id, sha), sha
+        row = _stored_prediction(db, bundle.id, slide_id, sha)
     except PermanentJobError:
         return None, sha
+    if row is not None:
+        bad = _verify_objects(slide, snap, row.id)
+        if bad is not None:
+            raise conflict("input_changed", bad, bundle_id=bundle.id, slide_id=slide_id, input_snapshot_sha256=sha,
+                           prediction_id=row.id)
+    return row, sha
+
+
+def _infer_key(bundle_id: str, slide_id: str, snapshot_sha: str) -> str:
+    return f"infer:{bundle_id}:{slide_id}:{snapshot_sha}"
+
+
+def _latest_infer_job(db, base_key: str):
+    """``(newest job of the request chain of one input identity, its attempt number)`` or ``(None, -1)``.
+
+    The chain is ``base_key`` (attempt 0) then ``base_key:r1``, ``base_key:r2``, ..."""
+    from ..models import Job
+
+    rows = db.scalars(select(Job).where(or_(Job.idempotency_key == base_key,
+                                            Job.idempotency_key.startswith(base_key + ":r", autoescape=True)))).all()
+    best, best_n = None, -1
+    for job in rows:
+        suffix = job.idempotency_key[len(base_key):]
+        n = 0 if suffix == "" else (int(suffix[2:]) if suffix[2:].isdigit() else -1)
+        if n > best_n:
+            best, best_n = job, n
+    return best, best_n
+
+
+def _job_answers(job, snapshot_sha: str) -> bool:
+    """Whether ``job`` is the answer to a request for input identity ``snapshot_sha``: still in flight, or finished
+    with a result FOR that identity. A job that scored another identity (the input changed while it was queued), or
+    that failed or was canceled, is not: the request gets a new job."""
+    if job.status in ("queued", "running"):
+        return True
+    return job.status == "succeeded" and (job.result_json or {}).get("input_snapshot_sha256") == snapshot_sha
 
 
 def request_inference(db, actor, bundle: InferenceBundle, slide_id: str):
     """Validate and enqueue ``infer_slide``: one job per (bundle, slide, current input identity). Returns
-    ``(job, created)``. The job takes its own snapshot when it runs; this one only keys the deduplication, so a
-    changed input (QC mask, exclusions, calibration, re-ingested image) gets a new job and an unchanged one does
-    not."""
+    ``(job, created)``. The job takes its own snapshot when it runs; this one keys the deduplication and travels in
+    the payload (``expected_input_snapshot_sha256``), so a changed input (QC mask, exclusions, calibration,
+    re-ingested image) gets a new job and an unchanged one does not. The job returned always answers THIS identity:
+    when the newest job of the identity's chain finished on another identity (its input changed while it was
+    queued), failed or was canceled, a new job is enqueued under ``infer:{bundle}:{slide}:{sha}:r{n}`` (concurrent
+    requests share it through the unique key); a job whose result belongs to another input is never handed back."""
     slide = db.get(Slide, slide_id)
     if slide is None or slide.project_id != bundle.project_id:
         raise not_found("slide", slide_id)
@@ -456,14 +540,21 @@ def request_inference(db, actor, bundle: InferenceBundle, slide_id: str):
         raise conflict("encoder_unavailable", f"Encoder {enc_id} is not available ({status})", encoder_id=enc_id,
                        status=status, status_detail=detail)
     _snap, snap_sha = effective_input_snapshot(db, slide)
-    job, created = queue.enqueue(db, INFER_JOB, {"bundle_id": bundle.id, "slide_id": slide.id},
-                                 idempotency_key=f"infer:{bundle.id}:{slide.id}:{snap_sha}",
-                                 project_id=bundle.project_id, created_by=actor.id)
+    base_key = _infer_key(bundle.id, slide.id, snap_sha)
+    latest, attempt = _latest_infer_job(db, base_key)
+    if latest is not None and _job_answers(latest, snap_sha):
+        return latest, False
+    key = base_key if latest is None else f"{base_key}:r{attempt + 1}"
+    job, created = queue.enqueue(db, INFER_JOB, {"bundle_id": bundle.id, "slide_id": slide.id,
+                                                 "expected_input_snapshot_sha256": snap_sha},
+                                 idempotency_key=key, project_id=bundle.project_id, created_by=actor.id)
     if created:
         audit.record_for(db, actor, project_id=bundle.project_id, action="inference.requested",
                          entity_type="inference_bundle", entity_id=bundle.id,
                          after={"slide_id": slide.id, "slide_sha256": slide.sha256, "job_id": job.id,
-                                "input_snapshot_sha256_at_request": snap_sha})
+                                "input_snapshot_sha256_at_request": snap_sha,
+                                "supersedes_job": None if latest is None else {"id": latest.id,
+                                                                               "status": latest.status}})
     return job, created
 
 
@@ -640,9 +731,17 @@ def _extract(content: dict, slide_id: str, snapshot: dict, ctx):
     except _integrity_errors() as exc:  # a corrupt artifact is a failure, never a recorded "unscorable" outcome
         raise PermanentJobError(f"feature_integrity: {exc}") from exc
     except _unscorable_errors() as exc:
-        if str(exc).startswith("input_changed"):  # image identity / mask / snapshot failure: fail closed
+        # Only outcomes that are deterministic functions of the snapshot (and the bundle) are recorded as the
+        # snapshot's research outcome: a row is unique per (bundle, slide, snapshot) and is served from then on.
+        msg = str(exc)
+        if msg.startswith("input_changed"):  # image identity / mask / snapshot failure: fail closed
             raise PermanentJobError(f"{exc} (slide {slide_id}: the inputs no longer match the job's input snapshot; "
                                     "nothing was recorded)") from exc
+        if msg.startswith(fsm.NOT_INGESTED):  # transient state outside the snapshot: retry, record nothing
+            raise InputNotReady(f"input_not_ready: {exc}; nothing was recorded, the job is retried") from exc
+        if msg.startswith(NOT_SNAPSHOT_OUTCOMES):  # the worker's environment or code, not the input
+            raise PermanentJobError(f"{exc} (not an outcome of slide {slide_id}'s input snapshot; nothing was "
+                                    "recorded)") from exc
         return None, f"{type(exc).__name__}: {exc}"[:200]
     return sf, None
 
@@ -683,6 +782,13 @@ def score_slide(bundle_id: str, slide_id: str, ctx=None, *, created_by: str | No
         existing = _stored_prediction(db, bundle_id, slide_id, snap_sha)
         existing_dict = prediction_dict(existing, content) if existing is not None else None
         recorded = (existing.input_snapshot_json or {}).get("features") if existing is not None else None
+        slide_ref = types.SimpleNamespace(id=slide.id, synthetic_spec_json=slide.synthetic_spec_json)
+    if existing_dict is not None:
+        # The snapshot identity is computed from database fields only: before a stored score is served (with or
+        # without an embedding), the stored image and mask objects must still be the snapshot's. Fail closed.
+        bad = _verify_objects(slide_ref, snapshot, existing_dict["id"])
+        if bad is not None:
+            raise PermanentJobError(f"{bad} (slide {slide_id})")
     if existing_dict is not None and not need_embedding:
         return existing_dict, None
     sf, reason = _extract(content, slide_id, snapshot, ctx)
@@ -759,12 +865,19 @@ def score_slide(bundle_id: str, slide_id: str, ctx=None, *, created_by: str | No
         return prediction_dict(p, content), mean
 
 
-def infer_slide(bundle_id: str, slide_id: str, ctx=None) -> dict:
+def infer_slide(bundle_id: str, slide_id: str, ctx=None, *, expected_input_snapshot_sha256: str | None = None) -> dict:
+    """Score the slide's input as it is when the job runs. ``input_snapshot_sha256`` is the identity actually
+    scored; ``requested_input_snapshot_sha256`` the one the request saw (they differ when the input changed while
+    the job was queued: the request path then gives that identity a new job, see :func:`request_inference`)."""
     created_by = getattr(ctx, "created_by", None)
     pred, _ = score_slide(bundle_id, slide_id, ctx, created_by=created_by, need_embedding=False)
-    return {"bundle_id": bundle_id, "slide_id": slide_id, "inference_prediction_id": pred["id"],
-            "input_snapshot_sha256": pred["input_snapshot_sha256"], "score": pred["score"],
-            "abstained": pred["abstained"], "unscorable_reason": pred["unscorable_reason"]}
+    out = {"bundle_id": bundle_id, "slide_id": slide_id, "inference_prediction_id": pred["id"],
+           "input_snapshot_sha256": pred["input_snapshot_sha256"], "score": pred["score"],
+           "abstained": pred["abstained"], "unscorable_reason": pred["unscorable_reason"]}
+    if expected_input_snapshot_sha256 is not None:
+        out["requested_input_snapshot_sha256"] = expected_input_snapshot_sha256
+        out["input_changed_since_request"] = expected_input_snapshot_sha256 != pred["input_snapshot_sha256"]
+    return out
 
 
 @register(INFER_JOB, description="Label-free research inference of a registered bundle on one slide")
@@ -773,7 +886,8 @@ def infer_slide_job(ctx, payload: dict) -> dict:
     bundle_id, slide_id = payload.get("bundle_id"), payload.get("slide_id")
     if not bundle_id or not slide_id:
         raise PermanentJobError("payload.bundle_id and payload.slide_id are required")
-    return infer_slide(bundle_id, slide_id, ctx)
+    return infer_slide(bundle_id, slide_id, ctx,
+                       expected_input_snapshot_sha256=payload.get("expected_input_snapshot_sha256"))
 
 
 def prediction_dict(p: InferencePrediction, content: dict) -> dict:

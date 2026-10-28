@@ -54,6 +54,7 @@ import hashlib
 import importlib
 import logging
 import os
+import statistics
 import time
 import warnings
 from collections import OrderedDict
@@ -63,7 +64,7 @@ import numpy as np
 from sqlalchemy import func, select
 
 from .. import audit
-from ..datasets import TestSetLockViolation, training_eligible_items
+from ..datasets import TestSetLockViolation, manifest_acquisition_snapshot, training_eligible_items
 from ..db import session_scope, utcnow
 from ..errors import ApiError
 from ..jobs.registry import JobCanceled, LeaseLost, PermanentJobError
@@ -385,16 +386,61 @@ def patient_keys(bags: list[Bag]) -> dict[str, str]:
 
 
 def duplicate_patient_pairs(manifest: dict) -> list[tuple[str, str]]:
-    """Patient pairs joined by near-duplicate slide pairs a person marked ``duplicate``."""
+    """Patient pairs joined, directly or transitively, by near-duplicate slide pairs a person marked ``duplicate``.
+
+    The closure runs at slide level over every decision in force in the manifest, including decisions naming a
+    slide that is not an item (``A~X`` and ``X~B`` join A and B), and every patient pair inside each group is
+    returned, so folds, inner splits, learning-curve subsets, evidence gates and the reference-fit check all see
+    ``A~B`` directly whatever subset of the group they are given."""
+    from ..splits import duplicate_closure_pairs
+
     patient_of = {it["slide_id"]: it["coded_patient_id"] for it in manifest.get("items") or []}
-    out = set()
-    for d in manifest.get("near_duplicate_decisions") or []:
-        if d.get("decision") != "duplicate":
+    decided = [(d.get("slide_a"), d.get("slide_b")) for d in manifest.get("near_duplicate_decisions") or []
+               if d.get("decision") == "duplicate"]
+    return duplicate_closure_pairs(decided, patient_of)
+
+
+CROSS_SPLIT_DUPLICATES_WARNING = (
+    "confirmed duplicates span splits whose roles must stay apart (a person confirmed these patients as the same "
+    "material and acknowledged the freeze warning duplicates_across_splits): the affected estimates are optimistic "
+    "and must not be used for model selection or reported as independent")
+
+
+def cross_split_duplicates(manifest: dict, protocol: str) -> dict:
+    """Confirmed-duplicate groups (transitive, over the manifest's decisions in force) that span splits whose roles
+    must stay apart under ``protocol``: under ``holdout`` the head's fitting patients (train) and validation (the
+    threshold, calibration and validation metrics); under both protocols development (train ∪ val) and test.
+    ``dev_cv`` pools train ∪ val and keeps every group in one outer fold, so a train/val pair is not listed there.
+    The split allocator keeps groups whole; such pairs exist only when inherited or sealed splits contradicted a
+    group and a person acknowledged ``duplicates_across_splits`` at freeze. Recorded, not refused (the
+    acknowledgement is the human decision); the run says which estimates the overlap affects."""
+    split_of: dict[str, str] = {}
+    code_of: dict[str, str] = {}
+    for it in manifest.get("items") or []:
+        split_of.setdefault(it["coded_patient_id"], it.get("split"))
+        code_of.setdefault(it["coded_patient_id"], it.get("patient_code") or it["coded_patient_id"])
+    for s in manifest.get("splits") or []:
+        split_of.setdefault(s["coded_patient_id"], s.get("split"))
+
+    def role(sp):
+        return "development" if (protocol == "dev_cv" and sp in ("train", "val")) else sp
+
+    pairs = []
+    for a, b in duplicate_patient_pairs(manifest):
+        sa, sb = split_of.get(a), split_of.get(b)
+        if sa is None or sb is None or role(sa) == role(sb):
             continue
-        a, b = patient_of.get(d.get("slide_a")), patient_of.get(d.get("slide_b"))
-        if a and b and a != b:
-            out.add(tuple(sorted((a, b))))
-    return sorted(out)
+        affects = ("test evaluation (a development patient is the same material as a test patient)"
+                   if "test" in (sa, sb) else
+                   "validation metrics, threshold and calibration (the head was fitted on the same material)")
+        pairs.append({"patient_codes": [code_of.get(a, a), code_of.get(b, b)], "splits": [sa, sb],
+                      "affects": affects})
+    pairs.sort(key=lambda p: (p["patient_codes"], p["splits"]))
+    dev = any("test" not in p["splits"] for p in pairs)
+    test = any("test" in p["splits"] for p in pairs)
+    return {"status": "contaminated" if pairs else "none", "protocol": protocol, "pairs": pairs,
+            "development_contaminated": dev, "test_contaminated": test,
+            "warning": CROSS_SPLIT_DUPLICATES_WARNING if pairs else None}
 
 
 def split_context(manifest: dict, project_id: str) -> dict:
@@ -561,6 +607,45 @@ def comparison_refusal(db, runs) -> dict | None:
                            "recorded fold map differ), so their out-of-fold predictions are not paired on the same "
                            "folds; compare runs that share one fold assignment")}
     return None
+
+
+def development_unscored(run, split: str) -> list[dict]:
+    """The run's recorded unscorable bags of development split ``split`` (``metrics_json["unscored_bags"]``).
+
+    Under dev_cv every development bag is an out-of-fold subject, so every recorded development unscorable bag is
+    OOF-unscorable: runs recorded before that rule kept the manifest split ('train' / 'val') on bags without tissue
+    patches, and are read the same way here. Holdout runs: the rows of ``split`` itself."""
+    rows = [u for u in ((run.metrics_json or {}).get("unscored_bags") or []) if isinstance(u, dict) and u.get("bag_id")]
+    if (run.evaluation_protocol or "holdout") == "dev_cv":
+        return [u for u in rows if split == "oof" and u.get("split") in ("oof", "train", "val")]
+    return [u for u in rows if u.get("split") == split]
+
+
+def threshold_tuned_on(run, split: str) -> bool:
+    """True when the run's operating threshold was SELECTED on ``split`` itself (e.g. Youden on the OOF scores), so
+    threshold-dependent numbers on that split are tuning estimates (optimistic)."""
+    th = run.threshold_json or {}
+    return th.get("selection_status") == "selected" and th.get("selected_on") == split
+
+
+def oof_fitting_patients(metrics: dict | None) -> dict | None:
+    """Under dev_cv an out-of-fold metric is produced by the FOLD models: the patients behind it are each fitted
+    fold's fitting patients (after the learning-curve subset, scorable bags only), not the final refit's. Returns
+    ``{"train_patients": low median over fitted folds, "train_patients_by_fold", "train_patients_min/max",
+    "final_model_patients", "train_patients_basis"}``, or None when the run recorded no fitted fold."""
+    protocol = (metrics or {}).get("protocol") or {}
+    folds = ((protocol.get("cv") or {}).get("folds_summary") or [])
+    fitted = [int(f["fit_patients"]) for f in folds if isinstance(f, dict) and f.get("status") == "fitted"
+              and isinstance(f.get("fit_patients"), int)]
+    if not fitted:
+        return None
+    lc = protocol.get("learning_curve") or {}
+    return {"train_patients": int(statistics.median_low(fitted)), "train_patients_by_fold": fitted,
+            "train_patients_min": min(fitted), "train_patients_max": max(fitted),
+            "final_model_patients": lc.get("n_patients"),
+            "train_patients_basis": ("out-of-fold: patients each fold model was fitted on (low median over the "
+                                     "fitted folds); the final refit's count (final_model_patients) produced no "
+                                     "out-of-fold score")}
 
 
 # --------------------------------------------------------------------------- lazy embeddings
@@ -888,6 +973,55 @@ def _compact_summary(summary: dict) -> dict:
     return out
 
 
+# --------------------------------------------------------------------------- model-selected held-out material
+
+ACQUISITION_EXPOSED_CODE = "acquisition_exposed_in_evaluation"
+MODEL_SELECTED_SUMMARY_NOTE = ("Model-selected patients (chosen by active learning, or confirmed duplicates of such "
+                               "patients): development material only, NOT a performance estimate. Shown for "
+                               "transparency at the run's frozen operating point, which was not selected on them.")
+
+
+def held_out_exposure(created: dict | None, now: dict, dev: list[ScoredBag], unscored: list[dict],
+                      fit_bags: list[Bag], *, split: str) -> dict:
+    """The run's model-selected (active-learning-exposed) patients, from the manifest snapshot recorded at creation
+    united with the one taken in the worker (exposure only grows; a run created before snapshots existed uses the
+    worker's), and how many of them are in the held-out development material (``val`` for holdout, ``oof`` for
+    dev_cv, where train patients are held out too). Those held-out rows are stored and flagged but excluded from the
+    operating point, the calibration and the development summary; the representative held-out patients remain."""
+    created_ids = set((created or {}).get("patient_ids") or [])
+    now_ids = set(now.get("patient_ids") or [])
+    ids = created_ids | now_ids
+    codes = {p["coded_patient_id"]: p.get("patient_code") for p in (now.get("patients") or [])}
+    codes.update({p["coded_patient_id"]: p.get("patient_code") for p in ((created or {}).get("patients") or [])})
+    sel = [sb for sb in dev if sb.bag.patient_id in ids]
+    sel_unscored = [u for u in unscored if u.get("patient_id") in ids]
+    held_patients = {sb.bag.patient_id for sb in sel} | {u.get("patient_id") for u in sel_unscored}
+    rep_patients = {sb.bag.patient_id for sb in dev if sb.bag.patient_id not in ids}
+    held_out = {"split": split, "model_selected_patients": len(held_patients), "model_selected_bags": len(sel),
+                "model_selected_unscorable_bags": len(sel_unscored),
+                "model_selected_patient_codes": sorted(str(codes.get(p) or p) for p in held_patients)[:100],
+                "representative_patients": len(rep_patients),
+                "representative_bags": len(dev) - len(sel)}
+    status = "model_selected_held_out_excluded" if held_patients else "none"
+    note = (f"{len(held_patients)} model-selected patient(s) (active-learning exposure) were held out ({split}); "
+            "their predictions are stored (attributes.model_selected) and summarised separately "
+            "(model_selected_summary), and the operating point, the calibration and the development estimate use "
+            "the representative held-out patients only." if held_patients else
+            "no model-selected (active-learning-exposed) patient was held out")
+    return {"schema": "dermpath.run_acquisition_exposure/1", "status": status,
+            "rule": "model-selected review material is development (training) material only, never a performance "
+                    "estimate: it may be fitted on, but its held-out predictions never select the operating point "
+                    "or calibration and never enter the development estimate",
+            "snapshot_at_creation": ({k: created.get(k) for k in ("count", "per_split", "computed_at")}
+                                     if created else None),
+            "snapshot_at_training": {k: now.get(k) for k in ("count", "per_split", "computed_at")},
+            "added_since_creation": (sorted(str(codes.get(p) or p) for p in now_ids - created_ids)[:100]
+                                     if created is not None else None),
+            "model_selected_patient_ids": sorted(ids),
+            "model_selected_in_fitting": len({b.patient_id for b in fit_bags if b.patient_id in ids}),
+            "held_out": held_out, "note": note}
+
+
 # --------------------------------------------------------------------------- operating point
 
 
@@ -1016,6 +1150,12 @@ def effective_sampling(fit_bags: list[Bag], params: dict, head_summary: dict | N
     refit). For ABMIL the patients and bags of the epoch-selection phase are reported separately."""
     head_summary = head_summary or {}
     cw = head_summary.get("class_weights") or class_weights([b.label for b in fit_bags], params["class_weight"])
+    sub = {"max_instances_per_bag": params.get("max_instances_per_bag")}
+    final_fit = head_summary.get("final_fit") or {}
+    if "bag_epochs_subsampled" in final_fit:  # ABMIL: the final refit's own count (not the epoch-selection model's)
+        sub["bag_epochs_subsampled"] = int(final_fit["bag_epochs_subsampled"])
+    elif "instance_subsampling" in head_summary:
+        sub["bag_epochs_subsampled"] = head_summary["instance_subsampling"]["bag_epochs_subsampled"]
     patients = {"positive": len({b.patient_id for b in fit_bags if b.label == 1}),
                 "negative": len({b.patient_id for b in fit_bags if b.label == 0})}
     out = {"class_counts": {"bags": cw["counts"], "patients_with_bags_of_class": patients},
@@ -1024,9 +1164,7 @@ def effective_sampling(fit_bags: list[Bag], params: dict, head_summary: dict | N
            "effective_positive_fraction": cw["effective_positive_fraction"],
            "computed_on": "the bags the final head was fitted on (training data only; every fitting bag)",
            "fitted_bags": len(fit_bags), "fitted_patients": len({b.patient_id for b in fit_bags}),
-           "instance_subsampling": {"max_instances_per_bag": params.get("max_instances_per_bag"),
-                                    **({"bag_epochs_subsampled": head_summary["instance_subsampling"][
-                                        "bag_epochs_subsampled"]} if "instance_subsampling" in head_summary else {})}}
+           "instance_subsampling": sub}
     sel = head_summary.get("epoch_selection")
     if sel:
         out["epoch_selection"] = {
@@ -1035,8 +1173,10 @@ def effective_sampling(fit_bags: list[Bag], params: dict, head_summary: dict | N
             "fit_bags": (sel.get("fit") or {}).get("bags", 0),
             "holdout_patients": (sel.get("holdout") or {}).get("patients", 0),
             "holdout_bags": (sel.get("holdout") or {}).get("bags", 0),
+            "bag_epochs_subsampled": sel.get("bag_epochs_subsampled"),
             "note": ("the inner hold-out only selected the epoch count; the final model was refitted on every fitting "
-                     "bag for that count")}
+                     "bag for that count (instance_subsampling counts the final refit only; the discarded "
+                     "epoch-selection model's subsampled bag-epochs are reported here)")}
     return out
 
 
@@ -1314,6 +1454,9 @@ def _run_training(run_id: str, ctx, state: dict) -> dict:
         manifest_sha, synthetic, fs_id = run.dataset_manifest_sha256, bool(run.synthetic), run.feature_set_id
         execution_mode, pinned_weights = run.execution_mode, run.weights_sha256
         identity = dict(run.identity_json)
+        # Model-selected material (active-learning exposure) recorded at creation, plus anything exposed since.
+        acquisition_created = (run.provenance_json or {}).get("acquisition_exposure_at_creation")
+        acquisition_now = manifest_acquisition_snapshot(db, project_id, manifest)
     context = split_context(manifest, project_id)
     train_bags = build_bags(train_items, label_scope, positive)
     val_bags = build_bags(val_items, label_scope, positive)
@@ -1351,7 +1494,11 @@ def _run_training(run_id: str, ctx, state: dict) -> dict:
             dev_unscored = [u for u in unscored] + fold_unscored
             all_unscored = list(dev_unscored)
             for u in dev_unscored:
+                # Under dev_cv every development bag is an out-of-fold subject: a bag without tissue patches is
+                # OOF-unscorable whatever its manifest split (kept as manifest_split), as the stored OOF body counts
+                # it. Readers of runs recorded before this rule use development_unscored().
                 u.setdefault("manifest_split", u.get("split"))
+                u["split"] = "oof"
         else:
             outcome = run_holdout(all_train, val_bags, head=head, params=params, seed=seed, access=access,
                                   context=context, progress=fit_progress)
@@ -1365,14 +1512,46 @@ def _run_training(run_id: str, ctx, state: dict) -> dict:
         raise PermanentJobError(f"feature_set_integrity: {type(exc).__name__}: {exc}") from exc
     training_seconds = time.perf_counter() - t1
 
-    op = select_operating_point(outcome.dev, params, selected_on=outcome.dev_split, context=context)
+    # Model-selected (active-learning-exposed) patients are development (training) material only, never a
+    # performance estimate: their held-out predictions are kept and reported apart, and the operating point, the
+    # calibration and the development summary use the representative held-out patients only.
+    acq = held_out_exposure(acquisition_created, acquisition_now, outcome.dev, dev_unscored, outcome.fit_bags,
+                            split=outcome.dev_split)
+    selected_ids = set(acq["model_selected_patient_ids"])
+    rep_dev = [sb for sb in outcome.dev if sb.bag.patient_id not in selected_ids]
+    sel_dev = [sb for sb in outcome.dev if sb.bag.patient_id in selected_ids]
+    rep_unscored = [u for u in dev_unscored if u.get("patient_id") not in selected_ids]
+    sel_unscored = [u for u in dev_unscored if u.get("patient_id") in selected_ids]
+    if outcome.dev and not rep_dev:
+        raise PermanentJobError(f"{ACQUISITION_EXPOSED_CODE}: every scored {outcome.dev_split} bag belongs to a "
+                                "model-selected (active-learning) patient, so no representative held-out material is "
+                                "left to select the operating point on or to report")
+    op = select_operating_point(rep_dev, params, selected_on=outcome.dev_split, context=context)
     frozen_at = utcnow()
-    dev_bag_ids = [sb.bag.bag_id for sb in outcome.dev]
+    dev_bag_ids = [sb.bag.bag_id for sb in rep_dev]
     op["threshold"] = {**op["threshold"], "selected_on": outcome.dev_split, "frozen_at": frozen_at.isoformat(),
                        "protocol": protocol, "selected_on_bag_ids": dev_bag_ids,
-                       **({"val_bag_ids": dev_bag_ids} if outcome.dev_split == "val" else {"oof_bag_ids": dev_bag_ids})}
-    summary = development_summary(outcome.dev, dev_unscored, op, params, seed, split=outcome.dev_split,
-                                   protocol=protocol)
+                       **({"val_bag_ids": dev_bag_ids} if outcome.dev_split == "val" else {"oof_bag_ids": dev_bag_ids}),
+                       "model_selected_excluded": acq["held_out"]}
+    op["calibration_selection"]["model_selected_excluded"] = acq["held_out"]
+    summary = development_summary(rep_dev, rep_unscored, op, params, seed, split=outcome.dev_split,
+                                  protocol=protocol)
+    summary["acquisition_exposure"] = {k: acq[k] for k in ("status", "held_out", "note")}
+    if sel_dev or sel_unscored:
+        try:
+            sel_summary = development_summary(sel_dev, sel_unscored, op, params, seed, split=outcome.dev_split,
+                                              protocol=protocol)
+            sel_summary["note"] = MODEL_SELECTED_SUMMARY_NOTE
+        except Exception as exc:  # noqa: BLE001 - a transparency-only summary never fails the run
+            sel_summary = {"status": "not_computable", "reason": f"{type(exc).__name__}: {exc}",
+                           "note": MODEL_SELECTED_SUMMARY_NOTE}
+        summary["model_selected_summary"] = sel_summary
+    # Confirmed duplicates across splits whose roles must stay apart (acknowledged at freeze): recorded where the
+    # affected estimates are reported, never silent.
+    xdup = cross_split_duplicates(manifest, protocol)
+    if xdup["development_contaminated"]:
+        summary["cross_split_duplicates"] = {k: xdup[k] for k in ("status", "pairs", "warning")}
+        summary["contaminated_by_cross_split_duplicates"] = True
     progress(0.9, f"threshold {op['threshold']['value']:.4f} frozen ({op['threshold']['rule']}, on "
                   f"{outcome.dev_split})")
 
@@ -1420,6 +1599,8 @@ def _run_training(run_id: str, ctx, state: dict) -> dict:
         preds = (prediction_records(run, "train", outcome.in_sample, op, qc, access)
                  + prediction_records(run, outcome.dev_split, outcome.dev, op, qc, access))
         for p in preds:
+            if p.coded_patient_id in selected_ids:  # kept, but never representative performance material
+                p.attributes_json = {**(p.attributes_json or {}), "model_selected": True}
             db.add(p)
         db.flush()
         run.threshold_value = float(op["threshold"]["value"])
@@ -1432,8 +1613,9 @@ def _run_training(run_id: str, ctx, state: dict) -> dict:
         if run.weights_sha256 is None:
             run.weights_sha256 = fs.weights_sha256
         run.split_counts_json = split_counts(manifest, label_scope)
-        dev_rows = [p for p in preds if p.split == outcome.dev_split]
-        store_development_evaluation(db, run, outcome.dev_split, dev_rows, dev_unscored, summary)
+        dev_rows = [p for p in preds if p.split == outcome.dev_split and p.coded_patient_id not in selected_ids]
+        store_development_evaluation(db, run, outcome.dev_split, dev_rows, rep_unscored, summary,
+                                     extra={"acquisition_exposure": acq})
         run.metrics_json = {
             "training": outcome.summary,
             "features": {"feature_set_id": fs.id, "feature_set_spec_sha256": fs.spec_sha256,
@@ -1449,6 +1631,7 @@ def _run_training(run_id: str, ctx, state: dict) -> dict:
             "protocol": {"evaluation_protocol": protocol, "development_split": outcome.dev_split,
                          "selected_on": outcome.dev_split, "cv": outcome.cv, "learning_curve": outcome.learning_curve,
                          "fold_assignment": identity.get("fold_assignment"),
+                         "cross_split_duplicates": xdup,
                          "preprocessing": {**fold_safety, "feature_set_id": fs.id,
                                            "feature_set_spec_sha256": fs.spec_sha256,
                                            "stain_policy_sha256": getattr(fs, "stain_policy_sha256", None),
@@ -1463,8 +1646,16 @@ def _run_training(run_id: str, ctx, state: dict) -> dict:
                                                 "development", "policy_sha256")},
                                 "decision_note": DECISION_NOTE},
             "in_sample_note": IN_SAMPLE_NOTE,
+            "acquisition_exposure": acq,
+            "warnings": ([{"code": "cross_split_duplicates", "message": xdup["warning"], "pairs": xdup["pairs"]}]
+                         if xdup["pairs"] else [])
+                        + ([{"code": "model_selected_held_out", "message": acq["note"],
+                             "patients": acq["held_out"]["model_selected_patients"]}]
+                           if acq["status"] != "none" else []),
         }
-        run.provenance_json = {"train_bag_ids": [b.bag_id for b in outcome.fit_bags],
+        run.provenance_json = {**(run.provenance_json or {}),
+                               "acquisition_exposure_at_training": acquisition_now,
+                               "train_bag_ids": [b.bag_id for b in outcome.fit_bags],
                                "val_bag_ids": [b.bag_id for b in val_bags],
                                "development_bag_ids": dev_bag_ids, "feature_set_id": fs.id,
                                "feature_artifact_ids": sorted({a for b in train_bags + val_bags for a in b.artifact_ids
@@ -1508,10 +1699,12 @@ def _roles(protocol: str, head: str) -> dict:
 
 
 def store_development_evaluation(db, run: TrainingRun, split: str, rows: list[Prediction], unscored: list[dict],
-                                 summary: dict) -> Evaluation:
+                                 summary: dict, *, extra: dict | None = None) -> Evaluation:
     """The stored development evaluation (``val`` for holdout, ``oof`` for dev_cv). The body
     comes from :func:`dermpath.ml.evaluation.build_evaluation` (same shape as other splits),
-    flagged as a tuning set, with the development summary attached."""
+    flagged as a tuning set, with the development summary attached. The caller passes the representative rows only
+    (model-selected patients' rows are reported in ``extra["acquisition_exposure"]`` and the summary's
+    ``model_selected_summary``)."""
     from .evaluation import build_evaluation  # local: evaluation imports this module
 
     rows_unscored = [{"bag_id": u["bag_id"], "split": split, "manifest_split": u.get("manifest_split", u.get("split")),
@@ -1520,7 +1713,7 @@ def store_development_evaluation(db, run: TrainingRun, split: str, rows: list[Pr
                          if "label" in u else {})} for u in unscored]
     body = build_evaluation(run, split, rows, rows_unscored)
     body.update({"protocol": run.evaluation_protocol, "threshold_selected_on": split,
-                 "development_summary": summary})
+                 "development_summary": summary, **(extra or {})})
     ev = Evaluation(run_id=run.id, project_id=run.project_id, split=split, metrics_json=body,
                     threshold=float(run.threshold_value), threshold_frozen_from=split,
                     threshold_frozen_at=run.threshold_frozen_at, computed_by=audit.SYSTEM_WORKER)

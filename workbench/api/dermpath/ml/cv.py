@@ -90,15 +90,16 @@ def duplicate_groups(patients: Iterable[str], *, patient_keys: Mapping[str, str]
                      duplicate_pairs: Iterable[tuple[str, str]] = ()) -> dict[str, str]:
     """Patient id -> content-stable key of its grouping unit: the sorted patient keys of the patients joined (by
     union-find) through confirmed-duplicate pairs, joined by ``+`` (the ``unit_key`` of :func:`build_units`).
-    Pairs naming an absent patient are ignored. Used as the independence unit of evidence gates."""
+    A pair naming an absent patient still joins transitively (``A~T``, ``T~B`` join A and B when T is not given,
+    e.g. unscored). Used as the independence unit of evidence gates."""
     pats = sorted({str(p) for p in patients})
     missing = [p for p in pats if p not in patient_keys]
     if missing:
         raise ValueError(f"patient_keys has no key for {len(missing)} patient(s), e.g. {missing[:3]}")
-    uf = _UnionFind(pats)
-    for a, b in duplicate_pairs:
-        if a in uf.parent and b in uf.parent:
-            uf.union(a, b)
+    pairs = [(str(a), str(b)) for a, b in duplicate_pairs]
+    uf = _UnionFind(set(pats) | {x for pr in pairs for x in pr})
+    for a, b in pairs:
+        uf.union(a, b)
     members: dict[str, list[str]] = defaultdict(list)
     for p in pats:
         members[uf.find(p)].append(p)
@@ -115,8 +116,9 @@ def build_units(labels, patients: Sequence[str], *, patient_keys: Mapping[str, s
                 patient_label_rule: str = "any_positive") -> tuple[list[GroupingUnit], dict]:
     """Grouping units over per-bag ``labels`` and ``patients``. ``patient_keys`` maps every
     patient id to a content-stable, unique key (the patient code). ``duplicate_pairs`` are
-    patient-id pairs a person confirmed as duplicates; pairs naming an absent patient are
-    ignored and listed."""
+    patient-id pairs a person confirmed as duplicates; pairs naming an absent patient are listed
+    (``duplicate_pairs_ignored``: they cannot join that patient's bags) but still join transitively,
+    so ``A~T`` and ``T~B`` keep A and B in one unit when T is not given (e.g. unscorable)."""
     if patient_label_rule not in PATIENT_LABEL_RULES:
         raise ValueError(f"unknown patient_label_rule {patient_label_rule!r}; use one of "
                          f"{', '.join(PATIENT_LABEL_RULES)}")
@@ -133,12 +135,12 @@ def build_units(labels, patients: Sequence[str], *, patient_keys: Mapping[str, s
     keys = {p: str(patient_keys[p]) for p in bags}
     if len(set(keys.values())) != len(keys):
         raise ValueError("patient_keys must be unique per patient (ordering would be ambiguous)")
-    uf = _UnionFind(bags)
+    pairs = [(a, b) for a, b in duplicate_pairs]
+    uf = _UnionFind(set(bags) | {x for pr in pairs for x in pr})
     ignored = []
-    for a, b in duplicate_pairs:
-        if a in bags and b in bags:
-            uf.union(a, b)
-        else:
+    for a, b in pairs:
+        uf.union(a, b)  # an absent patient still links the present patients it was confirmed with
+        if not (a in bags and b in bags):
             ignored.append(sorted([str(a), str(b)]))
     members: dict[str, list[str]] = defaultdict(list)
     for p in bags:

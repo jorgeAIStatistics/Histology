@@ -14,10 +14,13 @@ Two kinds of signal, both on development data only:
 
 Cohort flags (owner's brief item 6). This queue is itself MODEL-SELECTED review: items carry
 ``acquisition_exposed`` (the patient was chosen by active learning: model-selected review material,
-development only) and ``evaluation_patient`` (a discordance on the VALIDATION split: relabelling an
-evaluation patient because a model disagreed moves that label toward the model and biases its
-validation metrics, so adjudicate blind to model outputs). Flags inform; nothing is excluded or
-resolved by them.
+development only) and ``evaluation_patient`` (a model discordance on a patient whose OWN split is validation or
+test: the manifest split of the prediction, ``attributes.manifest_split`` for ``dev_cv`` out-of-fold rows, or a
+val/test assignment in any split family of the project. Relabelling an evaluation patient because a model
+disagreed moves that label toward the model and biases its evaluation metrics, so adjudicate blind to model
+outputs). The flag keys on the patient's split, never on the prediction split: a ``dev_cv`` run scores validation
+patients as ``oof``. Each discordance names the patient's split (``patient_split``). Flags inform; nothing is
+excluded or resolved by them.
 
 Ranking (transparent tiers, then the largest relative margin to the threshold, then the number of
 discordant runs, then the oldest disagreement, then the target id):
@@ -32,7 +35,7 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
-from ..datasets import IMPORTED_REFERENCE_NOTICE, acquisition_exposure
+from ..datasets import EVALUATION_SPLITS, IMPORTED_REFERENCE_NOTICE, acquisition_exposure, evaluation_patients
 from ..db import utcnow
 from ..models import Case, DatasetVersion, Disagreement, Slide, SplitFamily, SplitFamilyAssignment
 from ..vocab import LABEL_DISPLAY
@@ -89,6 +92,7 @@ def _patient_of(db, scope: str, slide_id: str | None, case_id: str | None) -> st
 def review_priorities(db, project_id: str, *, run_id: str | None = None, limit: int = 200) -> dict:
     sealed = _sealed_patients(db, project_id)
     exposed = set(acquisition_exposure(db, project_id)["patients"])
+    family_evaluation = set(evaluation_patients(db, project_id))  # val/test (or sealed) in ANY split family
     now = utcnow()
     items: dict[tuple[str, str], dict] = {}
 
@@ -144,8 +148,11 @@ def review_priorities(db, project_id: str, *, run_id: str | None = None, limit: 
                 it["target"]["patient_code"] = p.patient_code
             m = _margin(p.score, p.threshold)
             predicted = run.positive_class if p.predicted else run.negative_class
+            # The patient's own split: dev_cv scores train AND val patients as "oof" and keeps the manifest split.
+            patient_split = (p.attributes_json or {}).get("manifest_split") or p.split
             it["model_discordances"].append({
-                "run_id": run.id, "run_name": run.name, "split": p.split, "reference": p.label_value,
+                "run_id": run.id, "run_name": run.name, "split": p.split, "patient_split": patient_split,
+                "reference": p.label_value,
                 "reference_display": LABEL_DISPLAY.get(p.label_value, p.label_value), "predicted": predicted,
                 "predicted_display": LABEL_DISPLAY.get(predicted, predicted), "score": p.score,
                 "threshold": p.threshold, "relative_margin": m, "confident": m >= CONFIDENT_MARGIN,
@@ -172,9 +179,13 @@ def review_priorities(db, project_id: str, *, run_id: str | None = None, limit: 
                            f"{max_margin:.2f}" + (f" (confident: {caveat})" if confident else ""))
         if it["sealed_test_patient"]:
             reasons.append("patient sealed by a test release: adjudicate blind to model outputs")
-        evaluation_patient = any(x["split"] == "val" for x in dis)
+        pid = it["target"]["coded_patient_id"]
+        evaluation_patient = bool(dis) and (any(x["patient_split"] in EVALUATION_SPLITS for x in dis)
+                                            or bool(pid and pid in family_evaluation))
         if evaluation_patient:
-            reasons.append("validation patient: a relabel prompted by a model discordance biases validation metrics "
+            which = ("validation patient" if any(x["patient_split"] == "val" for x in dis)
+                     else "evaluation patient (validation or test in a split family)")
+            reasons.append(f"{which}: a relabel prompted by a model discordance biases validation metrics "
                            "toward the model; adjudicate blind to model outputs")
         if it["acquisition_exposed"]:
             reasons.append("patient selected by active learning: model-selected review material (development "

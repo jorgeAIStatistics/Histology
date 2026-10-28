@@ -921,6 +921,11 @@ def test_holdout_body_counts_unscorable_states_prevalence_and_flags_the_tuning_s
 
 
 def test_dev_cv_body_counts_unscorable_train_and_val_bags_and_flags_oof(env, ids, monkeypatch):
+    """Corrected in verification round 2 (reporting): this test told fold-not-fitted rows apart from no-tissue rows
+    by ``split == "oof"``, which encoded the defect that left dev_cv no-tissue rows labelled 'train' / 'val' (so the
+    driver's OOF accounting dropped them). Every dev_cv development unscorable row is now ``split: "oof"`` with its
+    ``manifest_split`` kept; fold-not-fitted rows are counted by their reason instead. The checked counts are the
+    same."""
     dv_id = cohort(ids)["dataset_version_id"]
     manifest = _manifest(dv_id)
     pick = _pick_unscorable(manifest)
@@ -933,7 +938,13 @@ def test_dev_cv_body_counts_unscorable_train_and_val_bags_and_flags_oof(env, ids
     dev_items = [it for it in manifest["items"] if it["split"] in ("train", "val")]
     oof = [p for p in preds if p[0] == "oof"]
     assert not [p for p in preds if p[0] == "test"]
-    n_fold_unscored = sum(1 for u in run["metrics_json"]["unscored_bags"] if u.get("split") == "oof")
+    # Fold-not-fitted rows are told apart from the no-tissue rows by their reason (verification round 2, reporting:
+    # every development unscorable bag of a dev_cv run is recorded with split 'oof', its manifest split kept).
+    from dermpath.ml.training import NO_PATCHES_REASON
+
+    rows = run["metrics_json"]["unscored_bags"]
+    assert all(u.get("split") == "oof" and u.get("manifest_split") in ("train", "val") for u in rows)
+    n_fold_unscored = sum(1 for u in rows if u.get("reason") != NO_PATCHES_REASON)
     assert body["n_unscorable"] == 3 + n_fold_unscored
     assert body["n_items"] + body["n_unscorable"] == len({it["slide_id"] for it in dev_items})
     assert body["n_patients"] == len({it["coded_patient_id"] for it in dev_items})

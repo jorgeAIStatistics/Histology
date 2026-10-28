@@ -41,7 +41,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 
 from .. import audit
-from ..datasets import IMPORTED_REFERENCE_NOTICE, seal_test_patients, training_eligible_items
+from ..datasets import (
+    ACQUISITION_BLOCKER,
+    IMPORTED_REFERENCE_NOTICE,
+    acquisition_report,
+    manifest_acquisition_snapshot,
+    seal_test_patients,
+    training_eligible_items,
+)
 from ..db import session_scope
 from ..errors import conflict, not_found, unprocessable
 from ..jobs import queue
@@ -59,7 +66,15 @@ from ..vocab import LABEL_DISPLAY
 from . import ATTENTION_NOTICE, PIPELINE_TEST_BANNER, RESEARCH_NOTICE, SCORE_NOTE
 from . import metrics as M
 from .calibration import CALIBRATION_SCHEMA, apply_calibration
-from .comparison import ComparisonRefused, ScoreSet, paired_comparison
+from .comparison import (
+    ComparisonRefused,
+    ScoreSet,
+    label_tuning_estimates,
+    paired_comparison,
+    prediction_unit,
+    restrict_to_common,
+    subject_accounting,
+)
 from .engine_models import ComparisonFamily, ComparisonFamilyMember, FeatureSet, InferenceBundle, TestRelease
 from .failure import failure_taxonomy
 from .heads import Bag
@@ -528,6 +543,17 @@ def build_evaluation(run: TrainingRun, split: str, preds: list, unscored: list |
         body["computed_after_threshold_frozen_at"] = run.threshold_frozen_at.isoformat()
         body["feature_set_id"] = run.feature_set_id
         body["scored_from"] = "pinned feature-set artifacts (no re-extraction)"
+        # Exposure recorded AFTER the release (e.g. a duplicate decision joining a test patient to an active-learning
+        # selection): reported, never silently included as representative test material.
+        snap = manifest_acquisition_snapshot(db, run.project_id, manifest)
+        in_test = [p for p in snap["patients"] if p["split"] == "test"]
+        body["acquisition_exposure"] = {"model_selected_test_patients": len(in_test),
+                                        "patient_codes": sorted(str(p["patient_code"]) for p in in_test)[:100],
+                                        "status": "model_selected_in_test" if in_test else "none"}
+        if in_test:
+            body["warnings"].append(
+                f"{len(in_test)} test patient(s) are model-selected material (active-learning exposure recorded "
+                "after this release was created); this test estimate is not fully representative")
         looks = body.get("prior_releases_on_test_patients") or 0
         if release.release_number > 1 or looks:
             body["warnings"].append(
@@ -715,6 +741,27 @@ def _resolve_candidate(db: Session, run: TrainingRun, requested: str | None):
     return "bundle", bundle, None, [run.id]
 
 
+def _refuse_model_selected_test(db: Session, dv: DatasetVersion) -> None:
+    """``409 acquisition_exposed_in_evaluation`` (before anything is sealed) when the version's test split holds
+    model-selected material: a patient active learning proposed (a legacy proposal included), its slides or cases,
+    or a confirmed duplicate partner. Such test results would be presented as representative test performance; no
+    justification overrides it. The frozen version is never rewritten."""
+    report = acquisition_report(db, dv)
+    patients = [p for p in report["in_evaluation"] if p["split"] == "test"]
+    slides = [x for x in report["slides_in_evaluation"] if x["split"] == "test"]
+    if not patients and not slides:
+        return
+    raise conflict(ACQUISITION_BLOCKER, "The test split of this frozen version holds model-selected material (active-"
+                   "learning selections, their slides or cases, or their confirmed duplicate partners); its results "
+                   "would not be a representative test estimate. Release a version without it: create a child "
+                   "version that excludes these patients' slides (review state 'excluded' with a reason), freeze it "
+                   "and train the candidate there.",
+                   dataset_version_id=dv.id,
+                   patients=[{k: p.get(k) for k in ("patient_code", "coded_patient_id", "split", "sources",
+                                                     "historical_conflict")} for p in patients][:50],
+                   slides=slides[:50], historical_conflicts=sum(1 for p in patients if p["historical_conflict"]))
+
+
 def create_test_release(db: Session, actor, run: TrainingRun, *, reason: str, justification: str | None = None,
                         candidate: str | None = None) -> tuple[TestRelease, Job]:
     """Record a test release and enqueue its scoring job; seals the split family's test patients in the same
@@ -742,6 +789,7 @@ def create_test_release(db: Session, actor, run: TrainingRun, *, reason: str, ju
         runs.append(r)
     if family is not None and family.dataset_version_id != dv.id:
         raise conflict("manifest_mismatch", "The comparison family uses another dataset version")
+    _refuse_model_selected_test(db, dv)
     prior = release_count(db, dv.id)
     number = prior + 1
     looks = prior_looks_at_test_patients(db, dv)
@@ -1263,6 +1311,70 @@ def _score_set(db: Session, run: TrainingRun, split: str, manifest: dict | None)
                     split_fingerprint=(manifest or {}).get("split_fingerprint"))
 
 
+def _unit_fields(runs) -> dict:
+    scopes = sorted({r.label_scope for r in runs if r is not None and r.label_scope})
+    scope = scopes[0] if len(scopes) == 1 else None
+    return {"label_scope": scope, "prediction_unit": prediction_unit(scope)}
+
+
+def paired_runs_comparison(db: Session, named: dict, split: str, *, manifest: dict | None, n_boot: int, seed: int,
+                           min_patients: int, refuse_unaccounted: bool = True) -> dict:
+    """Paired comparison of the stored DEVELOPMENT predictions (``split``: val / oof / train) of finished runs
+    (``named``: name -> TrainingRun), shared by comparison families, the benchmark harness and the COBRA driver.
+
+    * Paired evaluable subjects: the bags scored by EVERY model. Bags recorded as unscorable under a model (no tissue
+      patches, a fold that could not be fitted) are excluded from the pairing and accounted per model in
+      ``subject_accounting`` (bags and patients), never imputed and never silently dropped.
+    * ``refuse_unaccounted``: a bag missing from a model's predictions WITHOUT being recorded as unscorable for that
+      model is unexplained; the comparison is refused (``bag_set_mismatch``) instead of intersected.
+    * Threshold-dependent deltas (sensitivity, specificity, McNemar) are labelled tuning estimates when a member's
+      threshold was selected on this same split; the prediction unit and the patient counts are stated.
+
+    The caller has already applied :func:`dermpath.ml.training.comparison_refusal` (fold safety, outer folds)."""
+    from .training import development_unscored, threshold_tuned_on
+
+    runs = dict(sorted(named.items()))
+    standard = reference_standard_fields(manifest)
+    base = {"split": split, **_unit_fields(runs.values()), **standard}
+    if len({r.label_scope for r in runs.values()}) > 1:
+        return {"status": "refused", "code": "mixed_label_scope", **base,
+                "reason": "the runs predict different units (slide vs case bags); their predictions are not paired"}
+    sets, accounting = [], {}
+    for name, run in runs.items():
+        preds = db.scalars(select(Prediction).where(Prediction.run_id == run.id, Prediction.split == split)
+                           .order_by(Prediction.bag_id)).all()
+        unsc = development_unscored(run, split)
+        accounting[name] = {"scored": {p.bag_id: p.patient_code or p.coded_patient_id for p in preds},
+                            "unscorable": {u["bag_id"]: u.get("patient_code") or u.get("patient_id") for u in unsc}}
+        sets.append(ScoreSet(name=name, bag_ids=[p.bag_id for p in preds],
+                             patients=[p.patient_code or p.coded_patient_id for p in preds],  # content-stable
+                             labels=[p.label for p in preds], scores=[p.score for p in preds],
+                             threshold=float(run.threshold_value), manifest_sha256=run.dataset_manifest_sha256,
+                             split_fingerprint=(manifest or {}).get("split_fingerprint")))
+    if any(not ss.bag_ids for ss in sets):
+        return {"status": "not_available", **base, "reason": f"at least one run has no stored '{split}' predictions"}
+    restricted, excluded = restrict_to_common(sets)
+    explained = set().union(*[set(a["unscorable"]) for a in accounting.values()])
+    unaccounted = sorted(set(excluded) - explained)
+    base.update({"subject_accounting": subject_accounting(accounting),
+                 "excluded_bags_unscorable_under_some_model": [b for b in excluded if b in explained],
+                 "unscorable_bags_by_model": {n: sorted(a["unscorable"]) for n, a in accounting.items()}})
+    if unaccounted:
+        base["excluded_bags_unaccounted"] = unaccounted
+        if refuse_unaccounted:
+            return {"status": "refused", "code": "bag_set_mismatch", **base,
+                    "reason": f"{len(unaccounted)} bag(s) are scored by some models and neither scored nor recorded "
+                              f"as unscorable by another (e.g. {unaccounted[:3]}); not intersected silently"}
+    try:
+        res = paired_comparison(restricted, n_boot=n_boot, seed=int(seed), min_patients=min_patients)
+    except ComparisonRefused as exc:
+        return {"status": "refused", "code": exc.code, "reason": exc.detail, **base}
+    label_tuning_estimates(res, {n: threshold_tuned_on(r, split) for n, r in runs.items()})
+    res.update({"label_scope": base["label_scope"], "prediction_unit": base["prediction_unit"]})
+    return {"status": "ok", **base, "tuning_set": res["tuning_set"], "tuning_set_note": res["tuning_set_note"],
+            "result": res}
+
+
 def family_comparison(db: Session, fam: ComparisonFamily, runs: list[TrainingRun], split: str, *, n_boot: int,
                       min_patients: int) -> dict:
     done = [r for r in runs if r.status == "succeeded" and r.threshold_value is not None]
@@ -1270,15 +1382,19 @@ def family_comparison(db: Session, fam: ComparisonFamily, runs: list[TrainingRun
         return {"status": "insufficient_members", "split": split, "reason": "a paired comparison needs at least two "
                 "finished runs", "n_runs": len(done)}
     manifest = (db.get(DatasetVersion, fam.dataset_version_id).manifest_json or {})
+    if split != "test":  # development: paired evaluable subjects, unscorable subjects accounted, tuning labelled
+        return paired_runs_comparison(db, {r.id: r for r in done}, split, manifest=manifest, n_boot=n_boot,
+                                      seed=int(fam.bootstrap_seed), min_patients=min_patients)
     sets = [_score_set(db, r, split, manifest) for r in done]
     if any(not ss.bag_ids for ss in sets):
         return {"status": "not_available", "split": split,
                 "reason": f"at least one run has no stored '{split}' predictions"}
-    standard = reference_standard_fields(manifest)
+    standard = {**reference_standard_fields(manifest), **_unit_fields(done)}
     try:
         res = paired_comparison(sets, n_boot=n_boot, seed=int(fam.bootstrap_seed), min_patients=min_patients)
     except ComparisonRefused as exc:
         return {"status": "refused", "split": split, "code": exc.code, "reason": exc.detail, **standard}
+    res.update({k: standard[k] for k in ("label_scope", "prediction_unit")})
     return {"status": "ok", "split": split, "result": res, **standard}
 
 
@@ -1296,6 +1412,7 @@ def family_dict(db: Session, fam: ComparisonFamily, *, actor_role: str | None = 
            "locked_at": fam.locked_at.isoformat() if fam.locked_at else None, "lock_reason": fam.lock_reason,
            "runs": [{"id": r.id, "name": r.name, "head": r.head, "encoder_id": r.encoder_id, "seed": r.seed,
                      "status": r.status, "evaluation_protocol": r.evaluation_protocol or "holdout",
+                     "label_scope": r.label_scope, "prediction_unit": prediction_unit(r.label_scope),
                      "synthetic": r.synthetic} for r in runs],
            "synthetic": any(r.synthetic for r in runs),
            "banner": PIPELINE_TEST_BANNER if any(r.synthetic for r in runs) else None, "note": FAMILY_NOTE,
@@ -1339,4 +1456,4 @@ __all__ = ["build_evaluation", "store_evaluation", "stored_evaluation", "evaluat
            "test_release_status", "test_release_dict", "errors_response", "attention_response",
            "prediction_for_slide", "failure_reason", "qc_context", "bags_from_items", "verify_slide_features",
            "create_family", "add_family_member", "lock_family", "family_dict", "family_run_ids",
-           "reference_standard_fields"]
+           "reference_standard_fields", "paired_runs_comparison"]

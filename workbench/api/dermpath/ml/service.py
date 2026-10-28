@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from .. import audit
 from ..auth import Actor
+from ..datasets import manifest_acquisition_snapshot
 from ..errors import ApiError, conflict, not_found, unprocessable
 from ..jobs import queue
 from ..models import DatasetVersion, Job, Project
@@ -22,7 +23,7 @@ from .engine_models import (
     FeatureSetItem,
     RunAttempt,
 )
-from .evaluation import threshold_dict
+from .evaluation import reference_standard_fields, threshold_dict
 from .models import ModelVersion, TrainingRun
 from .training import (
     FOLD_UNSAFE_CODE,
@@ -235,6 +236,11 @@ def create_experiment(db: Session, actor: Actor, project: Project, *, dataset_ve
                       family_id=family.id if family else None, weights_sha256=fs.weights_sha256,
                       code_revision=identity["code_revision"], deps_json=dependency_versions(),
                       created_by=actor.id)
+    # Model-selected (active-learning-exposed) patients of the manifest at creation: the worker reports their
+    # held-out (val / out-of-fold) predictions apart from the representative estimate and never selects the
+    # operating point or calibration on them (it adds any exposure recorded since; exposure only grows).
+    acquisition = manifest_acquisition_snapshot(db, project.id, manifest)
+    run.provenance_json = {"acquisition_exposure_at_creation": acquisition}
     db.add(run)
     db.flush()
     if family is not None:
@@ -250,7 +256,8 @@ def create_experiment(db: Session, actor: Actor, project: Project, *, dataset_ve
                                               "synthetic": run.synthetic, "job_id": job.id, "execution_mode": mode,
                                               "evaluation_protocol": protocol, "feature_set_id": fs.id,
                                               "identity_sha256": run.identity_sha256,
-                                              "family_id": run.family_id})
+                                              "family_id": run.family_id,
+                                              "model_selected_patients": acquisition["per_split"]})
     return run, job
 
 
@@ -294,6 +301,14 @@ def run_dict(db: Session, run: TrainingRun) -> dict:
         error = (job.error if job is not None else None) or (run.error if status != "queued" else None)
     metrics = (run.metrics_json or {}) if status == "succeeded" else {}
     attempts = db.scalar(select(func.count(RunAttempt.id)).where(RunAttempt.run_id == run.id)) or 0
+    # Development metrics are measured against the manifest's labels: an imported reference standard is stated with
+    # them (top level and inside each development summary), as on every other result surface.
+    standard = reference_standard_fields(dv.manifest_json if dv is not None else None)
+
+    def _summary(key: str):
+        summ = metrics.get(key)
+        return {**summ, **standard} if isinstance(summ, dict) else summ
+
     return {
         "id": run.id,
         "name": run.name,
@@ -327,8 +342,9 @@ def run_dict(db: Session, run: TrainingRun) -> dict:
         "training_summary": (run.metrics_json or {}).get("training") if status == "succeeded" else None,
         "feature_summary": (run.metrics_json or {}).get("features") if status == "succeeded" else None,
         "timings_seconds": (run.metrics_json or {}).get("timings_seconds") if status == "succeeded" else None,
-        "val_summary": metrics.get("val_summary"),
-        "oof_summary": metrics.get("oof_summary"),
+        "val_summary": _summary("val_summary"),
+        "oof_summary": _summary("oof_summary"),
+        **standard,
         "unscored_bags": metrics.get("unscored_bags") if status == "succeeded" else None,
         "effective_sampling": metrics.get("effective_sampling"),
         "protocol_summary": metrics.get("protocol"),

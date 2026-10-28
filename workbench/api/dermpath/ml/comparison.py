@@ -280,3 +280,75 @@ def paired_comparison(score_sets: Sequence[ScoreSet], *, n_boot: int = 2000, see
                                  "for McNemar)", "note": MULTIPLE_COMPARISON_NOTE},
         "winner": None,
     }
+
+
+# =========================================================================== paired evaluable subjects (shared)
+# One accounting for every surface that pairs stored predictions (comparison families, the benchmark harness and the
+# COBRA experiment driver): deltas use the bags scored by EVERY model (paired evaluable subjects); bags unscorable
+# under any model are excluded from the pairing and counted per model, never imputed and never silently dropped.
+
+THRESHOLD_DEPENDENT_DELTAS = ("sensitivity", "specificity")
+SUBJECT_ACCOUNTING_NOTE = ("deltas use only bags scored by every model (paired evaluable subjects); bags unscorable "
+                           "under any model are excluded from the pairing and counted here per model, never imputed")
+TUNING_COMPARISON_NOTE = ("tuning estimates (optimistic): at least one model's operating threshold was selected on "
+                          "these same development scores, so the paired sensitivity / specificity deltas and McNemar "
+                          "at the operating points are tuning estimates; threshold-free deltas (AUROC, AUPRC, Brier) "
+                          "are not affected by that selection")
+
+
+def prediction_unit(label_scope: str | None) -> str | None:
+    """What one prediction is: ``"slide (bag)"`` or ``"case (bag)"``."""
+    return f"{label_scope} (bag)" if label_scope else None
+
+
+def subject_accounting(models: dict) -> dict:
+    """``models``: ``{name: {"scored": {bag_id: patient}, "unscorable": {bag_id: patient}}}``. Paired evaluable
+    subjects are the bags scored by EVERY model; unscorable bags are counted per model, never imputed."""
+    scored = {n: dict(m.get("scored") or {}) for n, m in models.items()}
+    unsc = {n: dict(m.get("unscorable") or {}) for n, m in models.items()}
+    names = list(models)
+    common = set(scored[names[0]]) if names else set()
+    for n in names[1:]:
+        common &= set(scored[n])
+    patient_of: dict[str, str] = {}
+    for d in list(unsc.values()) + list(scored.values()):  # scored rows (content-stable codes) win
+        patient_of.update(d)
+    excluded = set(patient_of) - common
+    return {"paired_evaluable": {"bags": len(common), "patients": len({patient_of[b] for b in common})},
+            "unscorable": {n: {"bags": len(unsc[n]), "patients": len(set(unsc[n].values()))} for n in names},
+            "excluded_from_pairing": {"bags": len(excluded), "patients": len({patient_of[b] for b in excluded})},
+            "note": SUBJECT_ACCOUNTING_NOTE}
+
+
+def restrict_to_common(sets: Sequence[ScoreSet]) -> tuple[list[ScoreSet], list[str]]:
+    """The score sets restricted to the bags scored by every model, and the sorted excluded bag ids."""
+    common = set(sets[0].bag_ids)
+    for ss in sets[1:]:
+        common &= set(ss.bag_ids)
+    excluded = sorted(set().union(*[set(ss.bag_ids) for ss in sets]) - common)
+    out = []
+    for ss in sets:
+        keep = [i for i, b in enumerate(ss.bag_ids) if b in common]
+        out.append(ScoreSet(name=ss.name, bag_ids=[ss.bag_ids[i] for i in keep],
+                            patients=[ss.patients[i] for i in keep], labels=[ss.labels[i] for i in keep],
+                            scores=[ss.scores[i] for i in keep], threshold=ss.threshold,
+                            manifest_sha256=ss.manifest_sha256, split_fingerprint=ss.split_fingerprint))
+    return out, excluded
+
+
+def label_tuning_estimates(result: dict, tuned: dict[str, bool]) -> dict:
+    """Mark the threshold-dependent parts of a :func:`paired_comparison` result as tuning estimates when any
+    member's threshold was selected on the compared scores (``tuned``: model name -> selected here). Threshold-free
+    deltas stay unflagged. Mutates and returns ``result``."""
+    tuned_models = sorted(n for n, t in tuned.items() if t)
+    result["tuning_set"] = bool(tuned_models)
+    result["threshold_tuned_on_these_data"] = tuned_models
+    result["tuning_set_note"] = TUNING_COMPARISON_NOTE if tuned_models else None
+    if tuned_models:
+        for pair in result.get("pairs") or []:
+            for m in THRESHOLD_DEPENDENT_DELTAS:
+                if m in pair.get("deltas", {}):
+                    pair["deltas"][m]["tuning_set"] = True
+            if isinstance(pair.get("mcnemar"), dict):
+                pair["mcnemar"]["tuning_set"] = True
+    return result

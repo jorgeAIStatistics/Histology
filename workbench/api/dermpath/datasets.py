@@ -37,7 +37,11 @@ Guarantees
   meanwhile is caught. Inherited and sealed splits never move: such conflicts (historical ones
   included) are reported per patient with a resolution, and frozen versions are never rewritten
   (their audit lists them). The manifest separates the representative performance cohort (val/test)
-  from the model-selected review cohort (``evaluation_cohorts``).
+  from the model-selected review cohort (``evaluation_cohorts``) and names the other patients whose split
+  the train pin changed (``allocation_effect_of_model_selected``). A patient held in val/test only by a
+  sealed or family-held duplicate partner is reported ``held_by: duplicate_group``. Runs and test releases
+  read :func:`manifest_acquisition_snapshot`: model-selected held-out rows never set a run's operating point
+  or estimate, and a test split holding model-selected material is never released.
 """
 
 from __future__ import annotations
@@ -536,14 +540,13 @@ def _decisions(db: Session, project_id: str) -> dict[tuple[str, str], NearDuplic
 
 
 def _duplicate_groups(db: Session, dv: DatasetVersion) -> list[tuple[str, str]]:
-    """Patient pairs joined by a ``duplicate`` decision on two included slides of different patients."""
+    """Included patient pairs joined, directly or transitively, by the project's ``duplicate`` decisions: the
+    closure runs over every decided slide, including slides the dataset does not include (``A~X``, ``X~B`` join A
+    and B), and every pair inside a group is returned (:func:`dermpath.splits.duplicate_closure_pairs`)."""
     owner = dict(db.execute(select(DatasetItem.slide_id, DatasetItem.coded_patient_id)
                             .where(DatasetItem.dataset_version_id == dv.id)).all())
-    pairs = []
-    for (a, b), nd in sorted(_decisions(db, dv.project_id).items()):
-        if nd.decision == "duplicate" and a in owner and b in owner and owner[a] != owner[b]:
-            pairs.append((owner[a], owner[b]))
-    return pairs
+    decided = [(a, b) for (a, b), nd in sorted(_decisions(db, dv.project_id).items()) if nd.decision == "duplicate"]
+    return splitlib.duplicate_closure_pairs(decided, owner)
 
 
 def known_sites(db: Session, project_id: str) -> list[str]:
@@ -785,7 +788,53 @@ _HELD_BY_RESOLUTION = {
     "sealed": "The patient is sealed in test by a test release (it can never move to train) and model-selected "
               "material can never be clean test material: exclude the patient's slides from new versions (review "
               "state 'excluded' with a reason).",
+    "duplicate_group": "The patient shares a confirmed-duplicate group with a patient whose split is inherited or "
+                       "sealed (held_with), and the allocator keeps a group together, so re-allocating this draft "
+                       "cannot move it. Exclude this patient's slides from the dataset (review state 'excluded' "
+                       "with a reason), or exclude the partner's slides so this patient can be allocated to train; "
+                       "when no partner is sealed (only this lineage's split family holds it), a new lineage "
+                       "(POST /datasets/{id}/new-version with new_lineage=true) also resolves it.",
 }
+
+
+def _grouping_holds(db: Session, dv: DatasetVersion, assigned: dict[str, str], sealed: dict, fam: dict
+                    ) -> dict[str, list[dict]]:
+    """Patients whose split is held by a PARTNER of their confirmed-duplicate group (the allocator's grouping
+    units, :func:`_duplicate_groups`): ``{coded_patient_id: [{coded_patient_id, patient_code, held_by, split}]}``
+    for each partner in the same split that is sealed or holds that split in the lineage's split family. The
+    allocator gives such a unit the partner's inherited or sealed split before it pins model-selected units to
+    train, so a refresh never moves its other members."""
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for a, b in _duplicate_groups(db, dv):
+        if a in assigned and b in assigned:
+            parent[find(a)] = find(b)
+    members: dict[str, list[str]] = {}
+    for pid in list(parent):
+        members.setdefault(find(pid), []).append(pid)
+    out: dict[str, list[dict]] = {}
+    for group in members.values():
+        for pid in group:
+            holders = []
+            for other in sorted(group):
+                if other == pid or assigned.get(other) != assigned.get(pid):
+                    continue
+                how = ("sealed" if other in sealed else
+                       "split_family" if other in fam and fam[other].split == assigned.get(other) else None)
+                if how:
+                    holders.append({"coded_patient_id": other, "held_by": how, "split": assigned.get(other),
+                                    "patient_code": (sealed.get(other) or {}).get("patient_code")
+                                    or getattr(fam.get(other), "patient_code", None)})
+            if holders:
+                out[pid] = holders
+    return out
 
 
 def _exposure_conflicts(db: Session, dv: DatasetVersion, assigned: dict[str, str], items: list[dict],
@@ -794,24 +843,35 @@ def _exposure_conflicts(db: Session, dv: DatasetVersion, assigned: dict[str, str
     split}``; ``items``: rows with ``slide_id``, ``coded_patient_id``, ``patient_code``. Each patient says what holds
     it there (``held_by``: draft_allocation, split_family or sealed), whether it is a ``historical_conflict`` (the
     split was already part of an evaluation cohort, or the exposure is a legacy proposal from before exposures were
-    recorded) and its ``resolution``. Slides: exposed slides in val/test whose patient is not listed. ``family``:
-    the split-family assignments to judge ``held_by`` against (default: the lineage's current ones; a freeze in
-    progress passes those from before its own new assignments)."""
+    recorded) and its ``resolution``. ``held_by: duplicate_group`` means a partner of its confirmed-duplicate group
+    is sealed or family-held in that split (``held_with`` names them): the allocator keeps the group together, so a
+    refresh cannot move it, and the conflict is historical because the partner's hold is. Slides: exposed slides in
+    val/test whose patient is not listed. ``family``: the split-family assignments to judge ``held_by`` against
+    (default: the lineage's current ones; a freeze in progress passes those from before its own new assignments)."""
     sealed = sealed_constraints(db, dv)
     fam = family_assignments(db, lineage_family(db, dv.lineage_id)) if family is None else family
     exposed = exposure["patients"]
     patients = []
+    grouping = None
     for pid, split in sorted(assigned.items()):
         e = exposed.get(pid)
         if split not in EVALUATION_SPLITS or e is None:
             continue
         held_by = ("sealed" if pid in sealed else
                    "split_family" if pid in fam and fam[pid].split == split else "draft_allocation")
-        patients.append({"patient_code": e["patient_code"], "coded_patient_id": pid, "split": split,
-                         "sources": e["sources"], "proposal_ids": e["proposal_ids"][:_DIFF_CAP],
-                         "first_exposed_at": e["first_exposed_at"], "held_by": held_by,
-                         "historical_conflict": held_by != "draft_allocation" or "legacy_al_proposal" in e["sources"],
-                         "resolution": _HELD_BY_RESOLUTION[held_by]})
+        held_with = None
+        if held_by == "draft_allocation":
+            grouping = _grouping_holds(db, dv, assigned, sealed, fam) if grouping is None else grouping
+            if pid in grouping:
+                held_by, held_with = "duplicate_group", grouping[pid]
+        entry = {"patient_code": e["patient_code"], "coded_patient_id": pid, "split": split,
+                 "sources": e["sources"], "proposal_ids": e["proposal_ids"][:_DIFF_CAP],
+                 "first_exposed_at": e["first_exposed_at"], "held_by": held_by,
+                 "historical_conflict": held_by != "draft_allocation" or "legacy_al_proposal" in e["sources"],
+                 "resolution": _HELD_BY_RESOLUTION[held_by]}
+        if held_with is not None:
+            entry["held_with"] = held_with
+        patients.append(entry)
     listed = {p["coded_patient_id"] for p in patients}
     slides = []
     for it in sorted(items, key=lambda r: r["slide_id"]):
@@ -853,10 +913,38 @@ def acquisition_report(db: Session, dv: DatasetVersion, rows: list[dict] | None 
     }
 
 
-def evaluation_cohorts(rows: list[dict], splits: list[dict], exposure: dict) -> dict:
+def manifest_acquisition_snapshot(db: Session, project_id: str, manifest: dict, exposure: dict | None = None) -> dict:
+    """Model-selected (active-learning-exposed, :func:`acquisition_exposure`) patients among a FROZEN manifest's
+    patients now, by manifest split. Experiments record it at creation and again in the worker (model-selected
+    held-out material is reported apart from the representative performance estimate), and test releases refuse a
+    test split holding any. ``{schema, computed_at, count, per_split, patient_ids, patients: [{coded_patient_id,
+    patient_code, split, sources, historical}]}``; ``historical`` is a legacy proposal or a val/test patient (the
+    version was frozen before the exposure)."""
+    exposure = acquisition_exposure(db, project_id) if exposure is None else exposure
+    split_of = {s["coded_patient_id"]: s["split"] for s in (manifest or {}).get("splits", [])}
+    code_of = {s["coded_patient_id"]: s.get("patient_code") for s in (manifest or {}).get("splits", [])}
+    for it in (manifest or {}).get("items", []):
+        split_of.setdefault(it.get("coded_patient_id"), it.get("split"))
+        code_of.setdefault(it.get("coded_patient_id"), it.get("patient_code"))
+    patients = []
+    for pid in sorted(p for p in split_of if p in exposure["patients"]):
+        e = exposure["patients"][pid]
+        patients.append({"coded_patient_id": pid, "patient_code": e.get("patient_code") or code_of.get(pid),
+                         "split": split_of[pid], "sources": e["sources"],
+                         "historical": "legacy_al_proposal" in e["sources"] or split_of[pid] in EVALUATION_SPLITS})
+    per_split = Counter(p["split"] for p in patients)
+    return {"schema": ACQUISITION_SCHEMA, "computed_at": utcnow().isoformat(), "count": len(patients),
+            "per_split": {sp: per_split.get(sp, 0) for sp in splitlib.SPLITS},
+            "patient_ids": [p["coded_patient_id"] for p in patients], "patients": patients[:_DIFF_CAP * 4]}
+
+
+def evaluation_cohorts(rows: list[dict], splits: list[dict], exposure: dict, diag: dict | None = None) -> dict:
     """Manifest block separating the REPRESENTATIVE PERFORMANCE COHORT (val + test: allocated by the content-stable
     split rule, never model-selected) from the MODEL-SELECTED REVIEW COHORT (patients active learning chose, with
-    their confirmed duplicates: development only)."""
+    their confirmed duplicates: development only). ``diag``: the version's split diagnostics; their
+    ``development_only.effect_on_other_patients`` (which non-selected patients the train pin moved into val/test
+    or displaced to train) is repeated here, because the performance cohort's COMPOSITION is not independent of
+    active-learning selection when model-selected patients were pinned."""
     split_of = {s["coded_patient_id"]: s["split"] for s in splits}
     code_of = {s["coded_patient_id"]: s["patient_code"] for s in splits}
     exposed = {pid for pid in split_of if pid in exposure["patients"]}
@@ -870,8 +958,12 @@ def evaluation_cohorts(rows: list[dict], splits: list[dict], exposure: dict) -> 
             "slides": sum(1 for r in rows if r.get("split") in EVALUATION_SPLITS),
             "model_selected_patients": len(perf & exposed),
             "selection": "allocated by the content-stable split rule (dermpath.splits: seeded patient hash, or the "
-                         "temporal / external-site rule), independent of model scores and of active-learning "
-                         "selection; model-selected patients are never placed here",
+                         "temporal / external-site rule), never by model scores; model-selected patients are never "
+                         "placed here. They are pinned to train first and count toward train's targets, so which "
+                         "OTHER patients fill val/test can depend on what active learning selected (see "
+                         "allocation_effect_of_model_selected)",
+            "allocation_effect_of_model_selected": ((diag or {}).get("development_only") or {}).get(
+                "effect_on_other_patients"),
             "use": "performance estimates: validation for model and threshold selection, test only at a recorded "
                    "test release",
         },
@@ -888,7 +980,10 @@ def evaluation_cohorts(rows: list[dict], splits: list[dict], exposure: dict) -> 
         "limitation": ("Model-selected patients never enter val or test, so the performance cohort is drawn from the "
                        "cohort without them. Active learning favours uncertain cases: when many patients are "
                        "model-selected, the evaluation population can be easier than the full cohort; compare the "
-                       "counts above. Temporal and external-site partitions reserve their evaluation patients by a "
+                       "counts above. Under a random partition the pinned patients count toward train's targets, so "
+                       "other patients take their val/test places: the composition of the performance cohort "
+                       "depends on active-learning selection (allocation_effect_of_model_selected names the moved "
+                       "patients). Temporal and external-site partitions reserve their evaluation patients by a "
                        "label-free rule before any proposal; random partitions stratify by label and cannot."),
     }
 
@@ -1087,9 +1182,21 @@ def qc_snapshot(db: Session, slide_id: str) -> dict:
 
 
 def _decisions_in_force(db: Session, dv: DatasetVersion, slide_ids: set[str]) -> list[dict]:
+    """Decisions naming an included slide, plus every ``duplicate`` decision of a duplicate chain that reaches one
+    (``A~X``, ``X~Y``, ``Y~B`` with X and Y not included), so the manifest alone determines the transitive groups."""
+    decisions = _decisions(db, dv.project_id)
+    dup = [k for k, nd in sorted(decisions.items()) if nd.decision == "duplicate"]
+    reach = set(slide_ids)
+    changed = True
+    while changed:  # slides joined to an included slide by a chain of duplicate decisions
+        changed = False
+        for a, b in dup:
+            if (a in reach) != (b in reach):
+                reach |= {a, b}
+                changed = True
     out = []
-    for (a, b), nd in sorted(_decisions(db, dv.project_id).items()):
-        if a in slide_ids or b in slide_ids:
+    for (a, b), nd in sorted(decisions.items()):
+        if a in slide_ids or b in slide_ids or (nd.decision == "duplicate" and a in reach and b in reach):
             out.append({"slide_a": a, "slide_b": b, "decision": nd.decision, "reason": nd.reason,
                         "reviewer_id": nd.reviewer_id, "decided_at": nd.created_at.isoformat(),
                         "both_in_dataset": a in slide_ids and b in slide_ids})
@@ -1209,7 +1316,7 @@ def build_manifest(db: Session, dv: DatasetVersion, frozen_at, frozen_by: str, *
                                 "new": len(version_patients - set(fam_existing)),
                                 "dropped": len(set(fam_existing) - version_patients)},
         "split_diagnostics": diag,
-        "evaluation_cohorts": evaluation_cohorts(rows, splits, exposure),
+        "evaluation_cohorts": evaluation_cohorts(rows, splits, exposure, diag),
         "near_duplicate_decisions": _decisions_in_force(db, dv, {r["slide_id"] for r in rows}),
         "exclusions": dv.exclusions_json,
         "audit": audit(db, dv, exposure=exposure),
@@ -1309,6 +1416,19 @@ def _near_duplicate_warnings(db: Session, dv: DatasetVersion, rows: list[dict], 
                              "status": "human_recorded_pair",
                              "human_decision": {"decision": nd.decision, "reason": nd.reason,
                                                 "reviewer_id": nd.reviewer_id}}
+    # Included slides joined only THROUGH other decided slides (``A~X``, ``X~B`` with X not included) are the same
+    # material too (union-find is transitive): a chain across splits blocks like a direct pair.
+    decided = [k for k, nd in sorted(decisions.items()) if nd.decision == "duplicate"]
+    for a, b in splitlib.duplicate_closure_pairs(decided, {s: s for s in by_id}):
+        if (a, b) not in pairs:
+            ra, rb = by_id[a], by_id[b]
+            pairs[(a, b)] = {"slide_a": a, "slide_b": b, "dhash_distance": None,
+                             "same_patient": ra["coded_patient_id"] == rb["coded_patient_id"],
+                             "cross_split": ra.get("split") is not None and ra.get("split") != rb.get("split"),
+                             "status": "confirmed_duplicate_chain",
+                             "human_decision": {"decision": "duplicate", "reviewer_id": None,
+                                                "reason": "joined transitively through confirmed duplicate decisions "
+                                                          "on other slides"}}
     out: dict[str, list[dict]] = {"unreviewed_near_duplicates": [], "unsure_near_duplicates": [],
                                   "duplicates_across_splits": []}
     for key in sorted(pairs):

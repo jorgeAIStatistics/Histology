@@ -40,11 +40,11 @@ from ..config import WORKBENCH_DIR
 from ..db import session_scope, utcnow
 from ..models import DatasetVersion, Job, Project
 from . import PIPELINE_TEST_BANNER, RESEARCH_NOTICE
-from .comparison import ComparisonRefused, ScoreSet, paired_comparison
+from .comparison import ScoreSet, prediction_unit, restrict_to_common
 from .config import EVALUATION_PROTOCOLS, HEADS, feature_params, resolve_experiment_params
 from .encoders import get_encoder
 from .engine_models import EXECUTION_MODES, ComparisonFamily, FeatureSet
-from .evaluation import reference_standard_fields
+from .evaluation import paired_runs_comparison, reference_standard_fields
 from .heads import OPTIMISATION_BUDGETS
 from .models import Prediction, TrainingRun
 
@@ -61,7 +61,10 @@ SELECTION_NOTE = ("No winner is declared. Comparisons use development prediction
                   "read here. Selecting a candidate (and locking the family before any test release) is a human "
                   "decision.")
 LEARNING_CURVE_NOTE = ("Nested stratified subsets of training patients; every point is evaluated on the same "
-                       "development set (validation or out-of-fold), never on test.")
+                       "development set (validation or out-of-fold), never on test. Under dev_cv a point's "
+                       "train_patients are the patients the FOLD models that produced its out-of-fold scores were "
+                       "fitted on (low median over the folds; per fold in train_patients_by_fold); the final refit's "
+                       "count is final_model_patients.")
 
 
 class BenchmarkError(ValueError):
@@ -265,7 +268,8 @@ def _run_record(run: TrainingRun, variant: dict, db=None) -> dict:
            "feature_set_id": run.feature_set_id, "identity_sha256": run.identity_sha256,
            "checkpoint_sha256": run.checkpoint_sha256, "threshold": run.threshold_value,
            "threshold_rule": run.threshold_rule,
-           "threshold_selection_status": (run.threshold_json or {}).get("selection_status")}
+           "threshold_selection_status": (run.threshold_json or {}).get("selection_status"),
+           "label_scope": run.label_scope, "prediction_unit": prediction_unit(run.label_scope)}
     if s:
         rec["development"] = {
             "n_items": s.get("n_items"), "n_patients": s.get("n_patients"), "n_unscorable": s.get("n_unscorable"),
@@ -275,7 +279,16 @@ def _run_record(run: TrainingRun, variant: dict, db=None) -> dict:
         lc = (m.get("protocol") or {}).get("learning_curve")
         sc = run.split_counts_json or {}
         pool = ("train", "val") if run.evaluation_protocol == "dev_cv" else ("train",)
-        rec["train_patients"] = lc["n_patients"] if lc else sum((sc.get(k) or {}).get("patients", 0) for k in pool)
+        final_patients = lc["n_patients"] if lc else sum((sc.get(k) or {}).get("patients", 0) for k in pool)
+        rec["train_patients"] = final_patients
+        rec["final_model_patients"] = final_patients
+        if run.evaluation_protocol == "dev_cv":
+            # An out-of-fold metric is produced by the fold models: label it with THEIR fitting patients.
+            from .training import oof_fitting_patients
+
+            fitting = oof_fitting_patients(m)
+            if fitting is not None:
+                rec.update({**fitting, "final_model_patients": final_patients})
         rec["training"] = {k: (m.get("training") or {}).get(k) for k in ("epochs_run", "best_epoch", "n_iter",
                                                                         "converged", "train_bags", "fit_bags")}
         rec["training"].update(_abmil_fit_counts(m.get("training") or {}))
@@ -299,19 +312,8 @@ def _score_set(db, run: TrainingRun, name: str, dv: DatasetVersion) -> ScoreSet:
 
 def _restrict(sets: list[ScoreSet]) -> tuple[list[ScoreSet], list[str]]:
     """Paired comparisons need the identical bag set: bags unscorable under any model are dropped
-    (and listed)."""
-    common = set(sets[0].bag_ids)
-    for ss in sets[1:]:
-        common &= set(ss.bag_ids)
-    excluded = sorted(set().union(*[set(ss.bag_ids) for ss in sets]) - common)
-    out = []
-    for ss in sets:
-        keep = [i for i, b in enumerate(ss.bag_ids) if b in common]
-        out.append(ScoreSet(name=ss.name, bag_ids=[ss.bag_ids[i] for i in keep],
-                            patients=[ss.patients[i] for i in keep], labels=[ss.labels[i] for i in keep],
-                            scores=[ss.scores[i] for i in keep], threshold=ss.threshold,
-                            manifest_sha256=ss.manifest_sha256, split_fingerprint=ss.split_fingerprint))
-    return out, excluded
+    (and listed). Kept for callers; the comparison itself uses :func:`paired_runs_comparison`."""
+    return restrict_to_common(sets)
 
 
 def _compare(db, dv, runs: dict[str, TrainingRun], *, fixed: dict, n_boot: int, seed: int,
@@ -327,13 +329,12 @@ def _compare(db, dv, runs: dict[str, TrainingRun], *, fixed: dict, n_boot: int, 
     refusal = comparison_refusal(db, list(done.values()))
     if refusal is not None:
         return {**entry, "status": "refused", **refusal}
-    sets, excluded = _restrict([_score_set(db, r, name, dv) for name, r in sorted(done.items())])
-    try:
-        res = paired_comparison(sets, n_boot=n_boot, seed=seed, min_patients=min_patients)
-    except ComparisonRefused as exc:
-        return {**entry, "status": "refused", "code": exc.code, "reason": exc.detail}
-    return {**entry, "status": "ok", "split": (next(iter(done.values())).threshold_json or {}).get("selected_on"),
-            "excluded_bags_unscorable_under_some_model": excluded, "result": res}
+    split = (next(iter(done.values())).threshold_json or {}).get("selected_on") or "val"
+    # One shared accounting (family, benchmark, driver): paired evaluable subjects, unscorable subjects counted per
+    # model (including bags no model could score), tuning-estimate labels and the prediction unit.
+    out = paired_runs_comparison(db, dict(sorted(done.items())), split, manifest=dv.manifest_json, n_boot=n_boot,
+                                 seed=seed, min_patients=min_patients, refuse_unaccounted=False)
+    return {**entry, **out}
 
 
 def _learning_curves(records: list[dict], cfg: dict) -> list[dict]:
@@ -353,6 +354,8 @@ def _learning_curves(records: list[dict], cfg: dict) -> list[dict]:
                 points.append({
                     "fraction": f, "repeats": [{"repeat": r["repeat"], "run_id": r["run_id"],
                                                 "train_patients": r.get("train_patients"),
+                                                "train_patients_by_fold": r.get("train_patients_by_fold"),
+                                                "final_model_patients": r.get("final_model_patients"),
                                                 "auroc": a or None,
                                                 "auprc": ((r.get("development") or {}).get("threshold_free") or {})
                                                 .get("auprc")} for r, a in zip(rows, aurocs)],
@@ -384,6 +387,9 @@ def run_benchmark(config: dict, *, run_jobs: bool = True, report_path: str | Pat
         dv = resolve_dataset(db, project.id, cfg)
         dv_id, manifest = dv.id, dv.manifest_json
         specs = [get_encoder(e).spec for e in cfg["encoders"]]
+        # Refused before any feature set, comparison family, reference fit or run is recorded (owner's brief item
+        # 3): every variant's declared preprocessing is checked first, as create_experiment would check it.
+        _precheck_fold_safety(cfg)
         mode = cfg.get("execution_mode") or ("synthetic_pipeline_test" if any(s.synthetic for s in specs)
                                              else "supervised_experiment")
         sets = _feature_sets(db, actor, project, dv, cfg, mode)
@@ -423,8 +429,9 @@ def run_benchmark(config: dict, *, run_jobs: bool = True, report_path: str | Pat
     runs: dict[tuple, str] = {}
     job_ids = []
     if family_id is not None:
-        for v in variants:
-            with session_scope() as db:
+        # One transaction for the whole family: a refusal of any variant leaves no queued run behind.
+        with session_scope() as db:
+            for v in variants:
                 run, job = create_experiment(
                     db, actor, db.get(Project, cfg["project_id"]), dataset_version_id=dv_id, encoder_id=v["encoder"],
                     head=v["head"], params=_variant_params(cfg, v["head"], fraction=v["fraction"], repeat=v["repeat"]),
@@ -451,6 +458,30 @@ def run_benchmark(config: dict, *, run_jobs: bool = True, report_path: str | Pat
                              after={"report_path": str(path), "runs": len(runs),
                                     "succeeded": sum(1 for r in report["runs"] if r["status"] == "succeeded")})
     return report
+
+
+def _precheck_fold_safety(cfg: dict) -> None:
+    """``BenchmarkError`` (``fold_unsafe_preprocessing``) when any variant's declared learned preprocessing is not
+    fold-safe for its protocol / learning-curve fraction (the check create_experiment applies to the declared stain
+    plan), before anything is created or built."""
+    from .training import FOLD_UNSAFE_CODE, preprocessing_fold_safety
+
+    for v in _variants(cfg):
+        try:
+            resolved = resolve_experiment_params(_variant_params(cfg, v["head"], fraction=v["fraction"],
+                                                                 repeat=v["repeat"]),
+                                                 encoder_spec=get_encoder(v["encoder"]).spec)
+        except ValueError as exc:
+            raise BenchmarkError(f"invalid_params: variant {_run_name(cfg, v)!r}: {exc}") from exc
+        stain = resolved.get("stain_normalization", "none")
+        if stain == "none":
+            continue
+        safety = preprocessing_fold_safety({"method": stain, "deferred": True},
+                                           protocol=cfg["evaluation_protocol"], params=resolved)
+        if safety.get("status") == "fold_unsafe":
+            raise BenchmarkError(
+                f"{FOLD_UNSAFE_CODE}: variant {_run_name(cfg, v)!r}: " + "; ".join(safety.get("problems") or [])
+                + f" (remedy: {safety.get('remedy')}); nothing was created or built")
 
 
 def _key(v: dict) -> tuple:
@@ -503,6 +534,11 @@ def _plan(cfg: dict, mode: str, policy: dict) -> dict:
             "learning_curve": cfg["learning_curve"], "optimisation_budgets": _budgets(cfg),
             "policy": policy, "comparisons": "encoder effects with the head fixed; head effects with the encoder "
                                              "fixed; development predictions only"}
+
+
+def _scope_of(records: list[dict]) -> str | None:
+    scopes = {r.get("label_scope") for r in records if r.get("label_scope")}
+    return next(iter(scopes)) if len(scopes) == 1 else None
 
 
 def _report(cfg: dict, mode: str, dv_id: str, fs_ids: dict, policy: dict, family_id: str | None,
@@ -579,6 +615,9 @@ def _report(cfg: dict, mode: str, dv_id: str, fs_ids: dict, policy: dict, family
         "evaluation_protocol": cfg["evaluation_protocol"],
         **standard,
         "dataset": {"dataset_version_id": dv_id, "name": dv.name, "version": dv.version,
+                    "label_scope": (manifest.get("config") or {}).get("label_scope") or _scope_of(records),
+                    "prediction_unit": prediction_unit((manifest.get("config") or {}).get("label_scope")
+                                                       or _scope_of(records)),
                     "manifest_sha256": dv.manifest_sha256, "split_fingerprint": manifest.get("split_fingerprint"),
                     "data_mode": manifest.get("data_mode"), "patients": (manifest.get("counts") or {}).get("patients"),
                     **standard},

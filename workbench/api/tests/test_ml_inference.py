@@ -142,7 +142,9 @@ def test_infer_job_is_label_free_identity_verified_and_never_writes_a_label(clie
     job_id = r.json()["job_id"]
     assert lead.post(f"/api/v1/bundles/{bid}/infer", json={"slide_id": sid}).json()["job_id"] == job_id  # idempotent
     with session_scope() as db:
-        assert set(db.get(Job, job_id).payload_json) == {"bundle_id", "slide_id"}  # no label in the payload
+        # No label in the payload. The request-time input identity travels with the job (verify2 inference fix:
+        # a job's result can then be matched to the identity it was requested for); it is a snapshot hash, not a label.
+        assert set(db.get(Job, job_id).payload_json) == {"bundle_id", "slide_id", "expected_input_snapshot_sha256"}
     out = run_jobs(["infer_slide"])
     assert [o.status for o in out] == ["succeeded"], [o.error for o in out]
     # Extraction used the bundle's pins and policies, with nothing label-like.

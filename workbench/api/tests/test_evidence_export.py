@@ -55,7 +55,11 @@ def _metric(v, lo, hi):
 
 
 def bodies(m) -> dict:
-    """Stage bodies shaped like the driver's real reports, with identifiers in the places real reports have them."""
+    """Stage bodies shaped like the driver's real reports, with identifiers in the places real reports have them.
+
+    Corrected in fix round 2: the failed s3 run was a GRID run while s3 was expected to count as valid evidence,
+    which is the defect the verifier confirmed (an incomplete four-way comparison published as evidence); it is now
+    a learning-curve run, which leaves the grid complete."""
     run = lambda e, h, s, st="succeeded": {  # noqa: E731
         "run_id": f"run-{e[:4]}-{h[:4]}-{s}", "encoder": e, "head": h, "seed": s, "role": "grid", "fraction": 1.0,
         "repeat": 0, "status": st, "error": None if st == "succeeded" else f"failed on {FILES[0]}",
@@ -92,8 +96,11 @@ def bodies(m) -> dict:
             "feature_set": {"feature_set": {"feature_set_id": "fs-tech", "spec_sha256": "t" * 64},
                             "aggregate": {"patches_total": 15360},
                             "per_slide": [{"slide_id": SLIDE_IDS[0], "source_file": FILES[0]}]}}}},
+        # The failed run is a learning-curve run (fix round 2: a failed GRID run makes s3 invalid, in the driver
+        # and in the exporter alike, so it could no longer stand in a valid s3 here); its error text still has to
+        # be sanitized in exclusions.failed_runs.
         "s3": {"runs": [run(m.HANDCRAFTED, h, s) for h in m.HEADS for s in (0, 1, 2)]
-               + [run(m.MIDNIGHT, "abmil", 0, "failed")],
+               + [{**run(m.MIDNIGHT, "meanpool_logreg", 0, "failed"), "role": "learning_curve", "fraction": 0.5}],
                "feature_sets": {m.HANDCRAFTED: {"supervised_feature_set_id": "fs-sup"}},
                "comparisons": {"encoder_effects": [], "head_effects": [comp], "four_way": comp, "primary_seed": 0,
                                "by_seed": {"0": {"head_effects": [comp], "encoder_effects": [], "four_way": comp}}},

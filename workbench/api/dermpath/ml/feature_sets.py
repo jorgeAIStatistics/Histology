@@ -222,6 +222,17 @@ def _input_changed(detail: str) -> FeatureError:
     return FeatureError(f"input_changed: {detail}")
 
 
+#: Prefix of the extraction error raised when the slide's ingest state moved after the snapshot (a re-ingest in
+#: flight). That state is not part of any input snapshot, so it is TRANSIENT: a build records it as an item failure
+#: (retried by the next build), inference never records it as the outcome of a snapshot (it retries the job).
+NOT_INGESTED = "slide_not_ingested"
+
+
+def _not_ingested(slide_id: str, status: str | None) -> FeatureError:
+    return FeatureError(f"{NOT_INGESTED}: slide {slide_id} is not ingested ({status}); its ingest state moved after "
+                        "the input snapshot (a re-ingest in progress?)")
+
+
 # --------------------------------------------------------------------------- small helpers
 
 
@@ -1080,6 +1091,25 @@ def _verify_slide_bytes(slide: Slide, snap: dict) -> None:
                              f"{snap['slide_sha256'][:16]}…")
 
 
+def verify_snapshot_objects(slide: Slide, snap: dict) -> None:
+    """Raise ``FeatureError("input_changed: …")`` unless the stored objects still are the snapshot's: the slide's
+    bytes hash to ``snap["slide_sha256"]`` (:func:`object_sha256`, memoised per key/size/mtime/inode/ctime, so an
+    unchanged object costs a ``stat``) and the QC mask object to ``snap["mask_sha256"]``. Extraction makes the same
+    checks; inference also runs this before it serves a STORED prediction for the snapshot (the reuse path), so a
+    prediction is never presented as the answer for bytes it was not computed from."""
+    if snap.get("slide_id") != slide.id:
+        raise _input_changed(f"the snapshot is for slide {snap.get('slide_id')}, not {slide.id}")
+    _verify_slide_bytes(slide, snap)
+    key, sha = snap.get("mask_object_key"), snap.get("mask_sha256")
+    if key and sha:
+        try:
+            data = get_store().get_bytes(key)
+        except (OSError, StoreError) as exc:
+            raise _input_changed(f"mask object {key} of slide {slide.id} is missing ({exc})") from exc
+        if sha256_hex(data) != sha:
+            raise _input_changed(f"mask object {key} of slide {slide.id} no longer matches its sha256")
+
+
 def _snapshot_mask(snap: dict) -> tuple[np.ndarray | None, tuple[float, float] | None, dict]:
     key, sha = snap.get("mask_object_key"), snap.get("mask_sha256")
     if not key or not sha:
@@ -1122,7 +1152,7 @@ def _prepare(snap: dict, *, patch_policy: PatchPolicy, sampling: SamplingPolicy,
         if live != frozen:
             raise _input_changed(f"slide {slide.id} {name} changed since the snapshot ({frozen!r} -> {live!r})")
     if slide.ingest_status != "succeeded":
-        raise FeatureError(f"slide {slide.id} is not ingested ({slide.ingest_status})")
+        raise _not_ingested(slide.id, slide.ingest_status)
     _verify_slide_bytes(slide, snap)
     mask, mask_ds, mask_info = _snapshot_mask(snap)
     regions = _snapshot_regions(snap)

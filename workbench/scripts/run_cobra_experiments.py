@@ -162,8 +162,9 @@ STATUS_MEANING = {
     "failed": "the last attempt raised (see _state/<stage>.error.json); a previous report, if any, is not reused",
     "stale": "inputs changed since the report was written (changed components listed) or an upstream stage is not "
              "valid",
-    "invalid": "the report is unreadable or was edited after it was written, has no integrity record, or its "
-               "artifacts are missing or changed in the database",
+    "invalid": "the report is unreadable or was edited after it was written, has no integrity record, records "
+               "crashed or incomplete work (a grid run or an ablation that did not finish), or its artifacts are "
+               "missing or changed in the database or the object store",
     "obsolete": "s6 only: a historical test release whose candidate no longer matches the current development "
                 "stage; immutable, never re-run automatically",
 }
@@ -530,23 +531,32 @@ def comparison_seed_summary(per_seed: dict) -> list[dict]:
 
 def paired_accounting(models: dict) -> dict:
     """``models``: ``{name: {"scored": {bag_id: patient}, "unscorable": {bag_id: patient}}}``. Paired evaluable
-    subjects are the bags scored by EVERY model; unscorable bags are counted per model, never imputed."""
-    scored = {n: dict(m.get("scored") or {}) for n, m in models.items()}
-    unsc = {n: dict(m.get("unscorable") or {}) for n, m in models.items()}
-    names = list(models)
-    common = set(scored[names[0]]) if names else set()
-    for n in names[1:]:
-        common &= set(scored[n])
-    patient_of: dict[str, str] = {}
-    for d in list(scored.values()) + list(unsc.values()):
-        patient_of.update(d)
-    every = set(patient_of)
-    excluded = every - common
-    return {"paired_evaluable": {"bags": len(common), "patients": len({patient_of[b] for b in common})},
-            "unscorable": {n: {"bags": len(unsc[n]), "patients": len(set(unsc[n].values()))} for n in names},
-            "excluded_from_pairing": {"bags": len(excluded), "patients": len({patient_of[b] for b in excluded})},
-            "note": "deltas use only bags scored by every model (paired evaluable subjects); bags unscorable under "
-                    "any model are excluded from the pairing and counted here per model, never imputed"}
+    subjects are the bags scored by EVERY model; unscorable bags are counted per model, never imputed. The engine's
+    shared accounting (:func:`dermpath.ml.comparison.subject_accounting`, also used by comparison families and the
+    benchmark harness)."""
+    from dermpath.ml.comparison import subject_accounting
+
+    return subject_accounting(models)
+
+
+def calibration_block(cal: dict, selection: dict | None = None) -> dict:
+    """A run summary's development calibration as the s3 record and the evidence package report it: raw Brier and
+    ECE (equal-width bins; the engine nests them under ``raw.equal_width``), the calibrated values when a map was
+    applied, the in-sample labels, and the operating point's calibration-selection status and evidence."""
+    def ew(part: str) -> dict:
+        return (cal.get(part) or {}).get("equal_width") or {}
+
+    raw, calibrated = ew("raw"), ew("calibrated")
+    out = {"brier": cal.get("brier") if cal.get("brier") is not None else raw.get("brier"),
+           "ece": cal.get("ece") if cal.get("ece") is not None else raw.get("ece"),
+           "binning": "equal_width (raw scores)",
+           "calibrated_brier": calibrated.get("brier"), "calibrated_ece": calibrated.get("ece"),
+           "calibrated_in_sample": cal.get("calibrated_in_sample"), "calibrated_note": cal.get("calibrated_note"),
+           "calibration_status": cal.get("calibration_status")}
+    if isinstance(selection, dict):
+        out["selection"] = {k: selection.get(k) for k in ("status", "method", "evaluated_in_sample",
+                                                          "reliability_note", "evidence")}
+    return out
 
 
 DEVELOPMENT_SPLITS = ("oof", "val", "train")
@@ -617,6 +627,113 @@ def paired_coverage(current_rows: list[dict], higher_rows: list[dict], dev_slide
     out["note"] = ("tissue coverage of sampled patches on development slides only; it is not lesion coverage (no "
                    "lesion annotations are used)")
     return out
+
+
+# ============================================================================================ report content rules
+
+#: s4 / s4b entry statuses that are results: a measured arm, an engine refusal (blocked), an arm whose result is
+#: recorded but never counted (invalid_for_cv_comparison), or work that its own valid upstream excluded (not_run).
+#: Anything else (``error``, ``feature_set_failed``, a run that did not succeed, no status) is crashed or unfinished
+#: work: the stage is invalid and a re-run resumes from its state and retries only that work.
+RESULT_ENTRY_STATUSES = ("succeeded", "blocked", "invalid_for_cv_comparison", "not_run")
+#: Statuses of the s4 precision study and its fp16 downstream arm that are results (not crashes).
+PRECISION_RESULT_STATUSES = (None, "not_run", "skipped", *RESULT_ENTRY_STATUSES)
+
+
+def _entry_problem(label: str, entry) -> str | None:
+    if not isinstance(entry, dict):
+        return f"{label}: malformed entry"
+    st = entry.get("status")
+    if st not in RESULT_ENTRY_STATUSES:
+        why = entry.get("error") or ((entry.get("run") or {}).get("error") if isinstance(entry.get("run"), dict)
+                                     else None)
+        return (f"{label}: {st or 'no status'}{f' ({str(why)[:200]})' if why else ''}: crashed or unfinished work is "
+                "not a result (a re-run resumes from the stage state and retries it)")
+    run = entry.get("run")
+    if run is not None and not isinstance(run, dict):
+        return f"{label}: malformed run record"
+    if st == "succeeded" and isinstance(run, dict) and run.get("status") != "succeeded":
+        return f"{label}: entry succeeded but its run is {run.get('status')}"
+    return None
+
+
+def report_content_problems(stage: str, rep) -> list[str]:
+    """Database-free validity rules of a stage report, shared by :meth:`Driver.artifact_problems` and the evidence
+    exporter (``export_evidence.py``), so the exporter never counts a report the driver holds invalid.
+
+    s3: a run list, every record well-formed, every ``grid`` run succeeded (else the four-way comparison is
+    incomplete). s4 / s4b: every entry well-formed and a result (:data:`RESULT_ENTRY_STATUSES`); the s4 precision
+    study and its fp16 downstream arm did not crash."""
+    if not isinstance(rep, dict):
+        return ["the report is not a JSON object"]
+    probs: list[str] = []
+    if stage == "s3":
+        runs = rep.get("runs")
+        if not isinstance(runs, list):
+            return ["the report has no run list"]
+        for r in runs:
+            if not isinstance(r, dict) or not r.get("run_id"):
+                probs.append("s3: malformed run record")
+            elif r.get("role") == "grid" and r.get("status") != "succeeded":
+                probs.append(f"s3: grid run {r.get('run_id')} ({r.get('encoder')} {r.get('head')} seed "
+                             f"{r.get('seed')}) did not succeed: the four-way comparison is incomplete")
+    elif stage in ("s4", "s4b"):
+        groups = rep.get("arms") if stage == "s4" else {"budget": rep.get("encoders")}
+        if groups is not None and not isinstance(groups, dict):
+            return [f"{stage}: malformed {'arms' if stage == 's4' else 'encoders'}"]
+        for arm, by in (groups or {}).items():
+            if by is not None and not isinstance(by, dict):
+                probs.append(f"{stage} {arm}: malformed entries")
+                continue
+            for e, entry in (by or {}).items():
+                p = _entry_problem(f"{stage} {arm} {e}", entry)
+                if p:
+                    probs.append(p)
+        if stage == "s4" and rep.get("precision") is not None:
+            prec = rep.get("precision")
+            if not isinstance(prec, dict):
+                probs.append("s4 precision: malformed")
+            else:
+                if prec.get("status") not in PRECISION_RESULT_STATUSES:
+                    probs.append(f"s4 precision study: {prec.get('status')} ({str(prec.get('error'))[:200]}): "
+                                 "crashed work is not a result (a re-run retries it)")
+                down = prec.get("downstream_fp16")
+                if isinstance(down, dict) and down.get("status") not in PRECISION_RESULT_STATUSES:
+                    probs.append(_entry_problem("s4 precision downstream fp16", down)
+                                 or f"s4 precision downstream fp16: {down.get('status')}")
+    return probs
+
+
+def release_history_labels(rows: list[dict], current_sha256: str | None, current_status: str | None) -> list[dict]:
+    """Status of every write-once test-release record, labelled by ``test_release_id`` (shared by the s8 summary
+    and the evidence exporter). ``rows`` carry ``sha256``, ``test_release_id``, ``release_number`` and
+    ``finished_at``; each gets ``status`` and ``record_kind``.
+
+    A copy of the current s6 report has the current status. An earlier copy of the SAME release (a forced, audited
+    re-read writes another record of one release) is an earlier record of the current release, not a separate look.
+    "superseded by a later release" is used only when a different, later release (higher release number, or written
+    later) is on record."""
+    cur_rid = next((r.get("test_release_id") for r in rows if current_sha256 and r.get("sha256") == current_sha256),
+                   None)
+
+    def order(r):
+        n = r.get("release_number")
+        return (n if isinstance(n, (int, float)) else -1, str(r.get("finished_at") or ""))
+
+    for r in rows:
+        rid = r.get("test_release_id")
+        if current_sha256 and r.get("sha256") == current_sha256:
+            r["status"], r["record_kind"] = current_status, "current s6 report"
+        elif cur_rid is not None and rid == cur_rid:
+            r["status"] = (f"earlier record of the current release {rid} (written {r.get('finished_at')}; the same "
+                           "release re-read, not a separate test look)")
+            r["record_kind"] = "earlier record of the current release"
+        elif any(o.get("test_release_id") != rid and order(o) > order(r) for o in rows):
+            r["status"], r["record_kind"] = "historical (superseded by a later release)", "superseded release"
+        else:
+            r["status"] = f"historical record of release {rid} (not the current s6 report)"
+            r["record_kind"] = "historical release record"
+    return rows
 
 
 # =================================================================================================== arguments
@@ -1166,6 +1283,7 @@ class Driver:
             out["recorded_fingerprint_sha256"] = recorded.get("sha256")
             side = self.read_json_safe(self.integrity_path(stage))
             actual = sha256_file(path)
+            out["report_sha256"] = actual  # lets the evidence exporter match this verdict to the report bytes
             if not recorded:
                 stale.append("the report has no input fingerprint (written by an earlier driver, sha "
                              f"{_short((rep.get('driver') or {}).get('sha256'))}): its inputs cannot be verified, so "
@@ -1245,17 +1363,29 @@ class Driver:
         except Exception as exc:  # noqa: BLE001 - informational only
             self.log(f"status snapshot not written: {type(exc).__name__}: {exc}")
 
-    # ------------------------------------------------------------------ artifact integrity (database)
+    # ------------------------------------------------------------------ artifact integrity (database, object store)
     def artifact_problems(self, stage: str, rep: dict) -> list[str]:
         """What the report refers to must still exist unchanged: dataset version frozen with the same manifest,
-        feature sets ready with the same spec, runs with the recorded status, identity and checkpoint (grid runs
-        succeeded), the test release present. A malformed report is a problem, never a crash."""
+        feature sets ready with the same spec and every pinned artifact object present with its recorded sha256 (or a
+        repaired generation that reproduces those bytes), runs with the recorded status, identity and checkpoint (the
+        checkpoint object present with its recorded sha256), the test release present. The database-free content
+        rules (:func:`report_content_problems`: grid runs succeeded, no crashed s4 / s4b work) come first and are
+        shared with the evidence exporter. A malformed report is a problem, never a crash."""
+        from sqlalchemy import select
+
         from dermpath.db import session_scope
-        from dermpath.ml.engine_models import FeatureSet, TestRelease
-        from dermpath.ml.models import TrainingRun
+        from dermpath.ml import feature_sets as fsets
+        from dermpath.ml.engine_models import FeatureSet, FeatureSetItem, TestRelease
+        from dermpath.ml.models import FeatureArtifact, TrainingRun
         from dermpath.models import DatasetVersion
 
-        probs: list[str] = []
+        probs: list[str] = list(report_content_problems(stage, rep))
+        if not isinstance(rep, dict):
+            return probs
+
+        def object_ok(key, sha) -> bool:
+            # streamed once per process per (key, size, mtime, inode, ctime): cheap on re-evaluation
+            return bool(key) and bool(sha) and fsets._object_ok(key, sha)
 
         def check_set(db, fs_id, spec=None, label=""):
             if not fs_id:
@@ -1268,11 +1398,22 @@ class Driver:
                 probs.append(f"{label}: feature set {fs_id} is {fs.status}, not ready")
             elif spec and fs.spec_sha256 != spec:
                 probs.append(f"{label}: feature set {fs_id} spec sha256 differs from the report")
+            else:
+                art_ids = [a for (a,) in db.execute(select(FeatureSetItem.artifact_id).where(
+                    FeatureSetItem.feature_set_id == fs_id, FeatureSetItem.artifact_id.is_not(None))).all()]
+                arts = {a.id: a for a in db.scalars(select(FeatureArtifact).where(
+                    FeatureArtifact.id.in_(art_ids))).all()} if art_ids else {}
+                gone = sum(1 for a in art_ids if a not in arts)
+                broken = sum(1 for a in arts.values() if fsets._resolve_valid_artifact(a) is None)
+                if gone or broken:
+                    probs.append(f"{label}: feature set {fs_id}: {gone + broken} of {len(art_ids)} pinned artifact(s) "
+                                 "are missing or their objects no longer match the recorded sha256 (no repaired "
+                                 "generation reproduces them); a repair build (POST /feature-sets/{id}/build) "
+                                 "re-extracts them")
 
         def check_run(db, r, label=""):
             if not isinstance(r, dict) or not r.get("run_id"):
-                probs.append(f"{label}: malformed run record")
-                return
+                return  # reported by report_content_problems
             run = db.get(TrainingRun, r["run_id"])
             if run is None:
                 probs.append(f"{label}: run {r['run_id']} is not in the database")
@@ -1285,6 +1426,10 @@ class Driver:
                 ck = (r.get("checkpoint") or {}).get("sha256")
                 if ck and run.checkpoint_sha256 != ck:
                     probs.append(f"{label}: run {run.id} checkpoint sha256 differs from the report")
+                elif run.checkpoint_key and not object_ok(run.checkpoint_key, run.checkpoint_sha256):
+                    probs.append(f"{label}: run {run.id} checkpoint object is missing or no longer matches its "
+                                 "recorded checkpoint sha256 (its numbers cannot be reproduced; --force on the stage "
+                                 "starts new runs)")
 
         try:
             with session_scope() as db:
@@ -1303,24 +1448,17 @@ class Driver:
                         check_set(db, c.get("feature_set_id"), c.get("spec_sha256"), f"s2 {e}")
                 elif stage == "s3":
                     runs = rep.get("runs")
-                    if not isinstance(runs, list):
-                        probs.append("the report has no run list")
-                    else:
+                    if isinstance(runs, list):
                         for e, v in (rep.get("feature_sets") or {}).items():
                             check_set(db, (v or {}).get("supervised_feature_set_id"), None, f"s3 {e}")
                         for r in runs:
                             check_run(db, r, "s3")
-                            if isinstance(r, dict) and r.get("role") == "grid" and r.get("status") != "succeeded":
-                                probs.append(f"s3: grid run {r.get('run_id')} ({r.get('encoder')} {r.get('head')} "
-                                             f"seed {r.get('seed')}) did not succeed: the four-way comparison is "
-                                             "incomplete")
                 elif stage in ("s4", "s4b"):
                     groups = (rep.get("arms") or {}) if stage == "s4" else {"budget": rep.get("encoders") or {}}
-                    for arm, by in groups.items():
-                        for e, entry in (by or {}).items():
+                    for arm, by in (groups if isinstance(groups, dict) else {}).items():
+                        for e, entry in (by if isinstance(by, dict) else {}).items():
                             if not isinstance(entry, dict):
-                                probs.append(f"{stage} {arm} {e}: malformed entry")
-                                continue
+                                continue  # reported by report_content_problems
                             if entry.get("run"):
                                 check_run(db, entry["run"], f"{stage} {arm} {e}")
                             fsid = (((entry.get("feature_set") or {}).get("created") or {}).get("feature_set_id"))
@@ -1603,6 +1741,30 @@ class Driver:
             run = db.get(TrainingRun, run_id)
             return run.status if run is not None else None
 
+    def retry_unfinished_run(self, stage: str, st: dict, key: str, *, keep_fold_unsafe: bool = False) -> None:
+        """A resumed s4 / s4b retries a run whose previous attempt failed or was canceled, as s3 does (the stage was
+        invalid because of it: crashed work is never a result). The replaced run is recorded in the state and in
+        ``skipped_work``; nothing is deleted. A fold-safety refusal of the engine is a result (``blocked``), not
+        retried."""
+        rid = (st.get("runs") or {}).get(key)
+        if rid is None:
+            return
+        try:  # the same record the stage judges the run by
+            rec = self.run_record(rid)
+            prev, err = rec.get("status"), rec.get("error")
+        except Exception:  # noqa: BLE001 - a run that cannot be read back is gone: retried
+            prev, err = None, None
+        if prev not in ("failed", "canceled", "cancelled", None):
+            return
+        if keep_fold_unsafe and is_fold_unsafe(None, err):
+            return
+        st.setdefault("replaced_runs", []).append({"key": key, "run_id": rid, "status": prev, "at": now_iso(),
+                                                   "reason": "retried: the previous attempt did not finish"})
+        self.skip_work(f"{stage} run {key}", "previous attempt replaced by a new run", replaced_run_id=rid,
+                       previous_status=prev)
+        del st["runs"][key]
+        self.save_state(stage, st)
+
     def run_train_jobs(self, run_ids: list[str], label: str) -> dict:
         from dermpath.db import session_scope
         from dermpath.ml.models import TrainingRun
@@ -1621,6 +1783,7 @@ class Driver:
         from dermpath.ml.evaluation import reference_standard_fields
         from dermpath.ml.models import Prediction, TrainingRun
         from dermpath.ml.service import run_dict
+        from dermpath.ml.training import development_unscored, oof_fitting_patients
 
         from dermpath.models import DatasetVersion
 
@@ -1628,6 +1791,9 @@ class Driver:
             self.authorize(db, "experiment.read")
             run = db.get(TrainingRun, run_id)
             d = run_dict(db, run)
+            # Every development bag is an OOF subject under dev_cv (engine rule, also for runs recorded before it).
+            unscored = development_unscored(run, "oof") if d["status"] == "succeeded" else []
+            fitting = oof_fitting_patients(run.metrics_json) if d["status"] == "succeeded" else None
             manifest = db.get(DatasetVersion, run.dataset_version_id).manifest_json
             test_used = (run.provenance_json or {}).get("test_items_used")
             splits_scored = sorted({s for (s,) in db.execute(
@@ -1637,7 +1803,8 @@ class Driver:
         lc = protocol.get("learning_curve")
         sc = d.get("split_counts") or {}
         fold_map = (protocol.get("cv") or {}).get("fold_of_patient_code")
-        unscored = [u for u in (d.get("unscored_bags") or []) if isinstance(u, dict) and u.get("split") == "oof"]
+        final_patients = (lc or {}).get("n_patients") if lc else \
+            sum((sc.get(k) or {}).get("patients", 0) for k in ("train", "val"))
         rec = {"run_id": run_id, "name": d["name"], "encoder": d["encoder_id"], "head": d["head"],
                "seed": d.get("seed"),
                "fold_assignment_sha256": sha256_json(fold_map) if fold_map else None,
@@ -1656,8 +1823,12 @@ class Driver:
                "timings_seconds": d.get("timings_seconds"), "attempts": d.get("attempts"),
                "train_patient_fraction": (d["params"] or {}).get("train_patient_fraction", 1.0),
                "subset_repeat": (d["params"] or {}).get("subset_repeat", 0),
-               "train_patients": (lc or {}).get("n_patients") if lc else
-               sum((sc.get(k) or {}).get("patients", 0) for k in ("train", "val")),
+               # An OOF point is produced by the fold models: labelled with THEIR fitting patients (engine
+               # oof_fitting_patients); the final refit's count is final_model_patients.
+               "train_patients": (fitting or {}).get("train_patients", final_patients),
+               "train_patients_by_fold": (fitting or {}).get("train_patients_by_fold"),
+               "train_patients_basis": (fitting or {}).get("train_patients_basis"),
+               "final_model_patients": final_patients,
                "learning_curve": lc, "effective_sampling": d.get("effective_sampling"),
                "training_summary": {**{k: v for k, v in (d.get("training_summary") or {}).items()
                                        if k in ("head", "epochs_run", "best_epoch", "n_iter", "converged",
@@ -1679,7 +1850,8 @@ class Driver:
                 "at_operating_point": {k: metric_entry(v) for k, v in (oof.get("at_operating_point") or {}).items()},
                 "intention_to_evaluate": oof.get("intention_to_evaluate"),
                 "evaluation_prevalence": oof.get("evaluation_prevalence"),
-                "calibration": {k: (oof.get("calibration") or {}).get(k) for k in ("brier", "ece")},
+                "calibration": calibration_block(oof.get("calibration") or {},
+                                                 (d.get("operating_point") or {}).get("calibration")),
                 "bootstrap": oof.get("bootstrap")}
         return rec
 
@@ -1700,22 +1872,23 @@ class Driver:
             return None
 
     def compare(self, run_ids: dict[str, str], *, split: str = "oof") -> dict:
-        """Paired patient-level bootstrap on the stored development predictions of finished runs (identical bag
-        set: bags unscorable under any model are dropped and listed). Family seed shared by every comparison."""
-        from sqlalchemy import select
-
+        """Paired patient-level bootstrap on the stored development predictions of finished runs, through the
+        engine's shared comparison (:func:`dermpath.ml.evaluation.paired_runs_comparison`, also used by comparison
+        families and the benchmark): paired evaluable subjects, unscorable bags accounted per model (including bags
+        no model could score), tuning-estimate labels and the prediction unit. Runs the engine refuses to pair
+        (fold-unsafe preprocessing, different outer folds: ``comparison_refusal``) are refused here too. Family seed
+        shared by every comparison."""
         from dermpath.db import session_scope
-        from dermpath.ml.comparison import ComparisonRefused, ScoreSet, paired_comparison
-        from dermpath.ml.evaluation import reference_standard_fields
-        from dermpath.ml.models import Prediction, TrainingRun
+        from dermpath.ml.evaluation import paired_runs_comparison, reference_standard_fields
+        from dermpath.ml.models import TrainingRun
+        from dermpath.ml.training import comparison_refusal
         from dermpath.models import DatasetVersion
 
         entry = {"models": sorted(run_ids), "run_ids": dict(run_ids), "split": split, "n_boot": self.n_boot,
                  "bootstrap_seed": self.boot_seed, "min_patients": self.boot_min_patients}
         if split not in DEVELOPMENT_SPLITS:
             raise StageError(f"the driver compares development predictions only, not {split!r}")
-        sets, manifest = [], None
-        accounting: dict = {}
+        runs, manifest = {}, None
         with session_scope() as db:
             for name, rid in sorted(run_ids.items()):
                 run = db.get(TrainingRun, rid)
@@ -1731,45 +1904,28 @@ class Driver:
                                  reason=f"{name} ({rid}): its learned preprocessing is not fold-safe: "
                                         + "; ".join(validity.get("problems") or [])[:600])
                     return entry
-                preds = db.scalars(select(Prediction).where(Prediction.run_id == rid, Prediction.split == split)
-                                   .order_by(Prediction.bag_id)).all()
-                unsc = [u for u in ((run.metrics_json or {}).get("unscored_bags") or [])
-                        if isinstance(u, dict) and u.get("split") == split]
-                accounting[name] = {"scored": {p.bag_id: p.patient_code or p.coded_patient_id for p in preds},
-                                    "unscorable": {u["bag_id"]: u.get("patient_code") or u.get("patient_id")
-                                                   for u in unsc if u.get("bag_id")}}
-                sets.append(ScoreSet(name=name, bag_ids=[p.bag_id for p in preds],
-                                     patients=[p.patient_code or p.coded_patient_id for p in preds],
-                                     labels=[p.label for p in preds], scores=[p.score for p in preds],
-                                     threshold=float(run.threshold_value), manifest_sha256=run.dataset_manifest_sha256,
-                                     split_fingerprint=(manifest or {}).get("split_fingerprint")))
-        common = set(sets[0].bag_ids)
-        for ss in sets[1:]:
-            common &= set(ss.bag_ids)
-        excluded = sorted(set().union(*[set(ss.bag_ids) for ss in sets]) - common)
-        restricted = []
-        for ss in sets:
-            keep = [i for i, b in enumerate(ss.bag_ids) if b in common]
-            restricted.append(ScoreSet(name=ss.name, bag_ids=[ss.bag_ids[i] for i in keep],
-                                       patients=[ss.patients[i] for i in keep], labels=[ss.labels[i] for i in keep],
-                                       scores=[ss.scores[i] for i in keep], threshold=ss.threshold,
-                                       manifest_sha256=ss.manifest_sha256, split_fingerprint=ss.split_fingerprint))
-        entry.update(reference_standard_fields(manifest))
-        entry["excluded_bags_unscorable_under_some_model"] = excluded
-        entry["subject_accounting"] = paired_accounting(accounting)
-        entry["unscorable_bags_by_model"] = {n: sorted(a["unscorable"]) for n, a in accounting.items()}
-        try:
-            res = paired_comparison(restricted, n_boot=self.n_boot, seed=self.boot_seed,
-                                    min_patients=self.boot_min_patients)
-        except ComparisonRefused as exc:
-            entry.update(status="refused", code=exc.code, reason=exc.detail)
+                runs[name] = run
+            entry.update(reference_standard_fields(manifest))
+            refusal = comparison_refusal(db, list(runs.values()))
+            if refusal is not None:  # e.g. mixed_fold_assignment: never paired, not evidence
+                names = {r.id: n for n, r in runs.items()}
+                entry.update(status="refused", code=refusal["code"], reason=refusal.get("reason"),
+                             refusal={k: v for k, v in refusal.items() if k not in ("code", "reason")},
+                             refused_models=sorted(names.get(i, i) for i in refusal.get("run_ids") or []))
+                return entry
+            out = paired_runs_comparison(db, runs, split, manifest=manifest, n_boot=self.n_boot,
+                                         seed=self.boot_seed, min_patients=self.boot_min_patients,
+                                         refuse_unaccounted=False)
+        entry.update({k: v for k, v in out.items() if k != "split"})
+        if out.get("status") != "ok":
             return entry
-        entry["status"] = "ok"
-        entry["result"] = res
+        res = out["result"]
         entry["deltas"] = [{"a": p["a"], "b": p["b"], "delta": p["delta"],
-                            **{m: {k: v.get(k) for k in ("value", "ci", "ci_reason", "fraction_favouring")}
+                            **{m: {**{k: v.get(k) for k in ("value", "ci", "ci_reason", "fraction_favouring")},
+                                   **({"tuning_set": True} if v.get("tuning_set") else {})}
                                for m, v in p["deltas"].items()},
-                            "mcnemar_p": (p["mcnemar"]["all"] or {}).get("p_value")} for p in res["pairs"]]
+                            "mcnemar_p": (p["mcnemar"]["all"] or {}).get("p_value"),
+                            "mcnemar_tuning_set": p["mcnemar"].get("tuning_set", False)} for p in res["pairs"]]
         return entry
 
     # =============================================================================================== stages
@@ -2269,16 +2425,21 @@ class Driver:
                 vals = [self.oof_auroc(r) for r in rows if r["status"] == "succeeded" and self.oof_auroc(r) is not None]
                 points.append({"fraction": f, "n_repeats": len(rows), "n_succeeded": len(vals),
                                "train_patients": stats(r["train_patients"] for r in rows),
+                               "final_model_patients": stats(r.get("final_model_patients") for r in rows),
                                "auroc_mean": statistics.fmean(vals) if vals else None,
                                "auroc_min": min(vals) if vals else None, "auroc_max": max(vals) if vals else None,
                                "repeats": [{"repeat": r["repeat"], "run_id": r["run_id"], "status": r["status"],
                                             "train_patients": r["train_patients"],
+                                            "train_patients_by_fold": r.get("train_patients_by_fold"),
+                                            "final_model_patients": r.get("final_model_patients"),
                                             "auroc": ((r.get("oof") or {}).get("threshold_free") or {}).get("auroc"),
                                             "auprc": ((r.get("oof") or {}).get("threshold_free") or {}).get("auprc"),
                                             "error": r["error"]} for r in rows]})
             curves.append({"encoder": e, "head": "meanpool_logreg", "evaluated_on": "oof", "points": points,
                            "note": "nested stratified subsets of development patients restrict each fold's fitting "
-                                   "part and the refit; every point is scored on the same full out-of-fold set"})
+                                   "part and the refit; every point is scored on the same full out-of-fold set; "
+                                   "train_patients are the patients the fold models behind the out-of-fold scores "
+                                   "were fitted on (final_model_patients: the refit, which scores no OOF bag)"})
         # ---- pre-declared test candidate (written BEFORE any test access)
         seeds_view = seed_summary(records, self.seeds)
         mean_auroc = {(m["encoder"], m["head"]): (m["auroc"] or {}).get("mean") for m in seeds_view["per_model"]
@@ -2514,6 +2675,7 @@ class Driver:
             return entry
 
         key = f"{arm}|{enc}"
+        self.retry_unfinished_run("s4", st, key, keep_fold_unsafe=needs_fold_safety)
         if needs_fold_safety and key not in st["runs"]:
             pre = self.fold_safety_precheck(enc, overrides)
             if pre is not None and pre.get("status") == "fold_unsafe":
@@ -2591,6 +2753,14 @@ class Driver:
             return entry
         entry["counts_as_evidence"] = True
         entry["comparison"] = self.compare({"ablation": rec["run_id"], "baseline": entry["baseline_run_id"]})
+        if entry["comparison"].get("status") in ("refused", "invalid_for_cv_comparison"):
+            # The engine refuses to pair these runs (e.g. different outer folds): no paired evidence.
+            entry["status"] = "invalid_for_cv_comparison"
+            entry["counts_as_evidence"] = False
+            entry["reason"] = (f"the paired comparison with the baseline was refused "
+                               f"({entry['comparison'].get('code') or entry['comparison'].get('status')}): "
+                               f"{str(entry['comparison'].get('reason'))[:400]}")
+            self.warnings.append(f"s4: {arm} {enc} comparison refused; not counted as evidence")
         return entry
 
     def s4(self) -> dict:
@@ -2796,6 +2966,7 @@ class Driver:
                 entry.update(status="feature_set_failed", error=sup["build"].get("error"))
                 self.warnings.append(f"s4b: {enc} feature set failed: {str(entry['error'])[:300]}")
                 continue
+            self.retry_unfinished_run("s4b", st, enc)
             if enc not in st["runs"]:
                 params = self.base_run_params(SAMPLING_HEAD, enc, max_patches_per_slide=self.sampling_budget)
                 rid, _ = self.create_run(dv_id=dv_id, encoder=enc, head=SAMPLING_HEAD, params=params,
@@ -2828,6 +2999,10 @@ class Driver:
             entry["prediction_changes"] = prediction_changes(self.dev_predictions(base["run_id"]),
                                                              self.dev_predictions(rec["run_id"]))
             entry["comparison"] = self.compare({"higher_budget": rec["run_id"], "current_budget": base["run_id"]})
+            entry["counts_as_evidence"] = entry["comparison"].get("status") == "ok"
+            if not entry["counts_as_evidence"]:
+                self.warnings.append(f"s4b: {enc} budget comparison {entry['comparison'].get('status')} "
+                                     f"({entry['comparison'].get('code')}); not counted as evidence")
         return {"budgets": {"current": self.max_patches, "higher": self.sampling_budget,
                             "higher_source": self.sampling_budget_source,
                             "declared": "before any budget comparison was run (driver constant "
@@ -3163,15 +3338,14 @@ class Driver:
         for p in sorted(hist.glob("s6.*.json")) if hist.is_dir() else []:
             r = self.read_json_safe(p) or {}
             digest = sha256_file(p)
-            current = digest == cur_sha
             out.append({"file": p.name, "sha256": digest, "test_release_id": r.get("test_release_id"),
                         "release_number": r.get("release_number"), "finished_at": r.get("finished_at"),
+                        "action": r.get("action"),
                         "candidate": {k: ((r.get("candidate") or {}).get("chosen") or {}).get(k)
                                       for k in ("encoder", "head", "run_id")},
                         "reason": r.get("reason"), "justification": r.get("justification"),
-                        "is_current_s6": current,
-                        "status": cur["status"] if current else "historical (superseded by a later release)"})
-        return out
+                        "is_current_s6": digest == cur_sha})
+        return release_history_labels(out, cur_sha, cur["status"])
 
     def s8(self) -> dict:
         evs = {s: self.evaluate(s) for s in STAGES if s != "s8"}
@@ -3423,6 +3597,10 @@ class Driver:
         self.error_path(stage).unlink(missing_ok=True)
         self._memo.clear()
         self.log(f"{stage}: done in {time.perf_counter() - self.t_stage:.1f}s -> {path}")
+        own = self.evaluate(stage)
+        if own["status"] != "valid":
+            self.log(f"{stage}: the report was written but is {own['status']} (never reused; a re-run retries the "
+                     f"unfinished work): " + "; ".join(own["reasons"][:6]))
         stale = [s for s in STAGES if s != stage and self.report_path(s).is_file()
                  and (stage in DEPENDS[s] or stage in OPTIONAL_DEPENDS.get(s, ()))
                  and self.evaluate(s)["status"] != "valid"]

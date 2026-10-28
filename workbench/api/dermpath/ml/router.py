@@ -347,7 +347,10 @@ def infer(body: InferIn, scope: Scope = Depends(entity_scope("experiment.write",
     """Enqueue label-free research inference of this bundle on one slide (``infer_slide``): one job per (bundle,
     slide, current input identity). ``prediction`` is the stored prediction for the slide's CURRENT input snapshot
     (null when the input changed since the last one, or for rows recorded without input-snapshot provenance).
-    A bundle trained on case bags is refused (409 ``scope_mismatch``)."""
+    The job returned always answers the current input identity (a job that scored another identity, failed or was
+    canceled is followed by a new one). A stored prediction whose slide image or mask object no longer matches its
+    snapshot (replaced in place) is refused (409 ``input_changed``). A bundle trained on case bags is refused (409
+    ``scope_mismatch``)."""
     b = scope.obj
     job, _ = request_inference(db, scope.actor, b, body.slide_id)
     current, snapshot_sha = current_prediction(db, b, body.slide_id)

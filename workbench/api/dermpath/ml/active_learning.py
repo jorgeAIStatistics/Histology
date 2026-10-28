@@ -13,8 +13,9 @@ Pool (:func:`development_pool`): development-eligible slides of the run's projec
 * a patient new to the run's split family is not reserved for evaluation by the partition's label-free rule
   (temporal: latest case on or after the validation cutoff; external_site: a case at a test site;
   :func:`dermpath.datasets.evaluation_reservation`);
-* the slide (or its case, for case-level tasks) has NO reference label, or an OPEN reader
-  disagreement;
+* the slide (or its case, for case-level tasks) has NO reference label under the dataset's reference standard
+  (``imported_reference``: an imported reference label counts; ``disputed`` counts as labelled), or an OPEN
+  reader disagreement;
 * never proposed before in this project (earlier ``al_proposal`` rows).
 
 Exposure (owner's brief item 6): committing a proposal also writes, in the SAME transaction, the patient-level
@@ -63,6 +64,7 @@ from ..datasets import (
     lineage_family,
     lock_project_writes,
     record_acquisition_exposure,
+    reference_standard_of,
     sealed_constraints,
     sealed_slides,
 )
@@ -115,6 +117,10 @@ def development_pool(db, run: TrainingRun, dv: DatasetVersion) -> tuple[list[dic
                                                                 QCIssue.dataset_eligibility_effect == "exclude_slide"))
                       .all())
     scope = run.label_scope or "slide"
+    # Labelled means labelled under the DATASET's reference standard: under ``imported_reference`` (COBRA) an
+    # imported reference label is the label, so such a slide is never offered as unlabelled (proposing it would
+    # expose its patient and pin it to train although no model-prompted review produced its label).
+    standard = reference_standard_of(manifest.get("config") or dv.config_json)
     evaluation = evaluation_patients(db, run.project_id)  # val/test (and sealed) in ANY split family
     groups = duplicate_patient_groups(db, run.project_id, duplicate_links(db, run.project_id))
     reserved: dict[str, bool] = {}
@@ -163,8 +169,8 @@ def development_pool(db, run: TrainingRun, dv: DatasetVersion) -> tuple[list[dic
             if open_disagreement(db, run.project_id, scope, target) is not None:
                 pool_reason = "open_reader_disagreement"
             else:
-                _ref, status = reference_label(db, run.project_id, scope, target)
-                if status == "unlabeled":
+                _ref, status = reference_label(db, run.project_id, scope, target, reference_standard=standard)
+                if status == "unlabeled":  # imported_reference / disputed / expert statuses all count as labelled
                     pool_reason = "no_reference_label"
                 else:
                     reason = "has_reference_label"
