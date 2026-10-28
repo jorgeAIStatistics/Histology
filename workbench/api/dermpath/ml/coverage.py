@@ -150,11 +150,15 @@ def coverage(*, dims: tuple[int, int], plan: PatchPlan, mask: np.ndarray, mask_d
         big = np.zeros(n + 1, dtype=bool)
         big[1:] = sizes[1:] * px_um2 >= float(min_area)
         has = np.bincount(labels[cand_cover & (labels > 0)], minlength=n + 1) > 0
+        has_sampled = np.bincount(labels[samp_cover & (labels > 0)], minlength=n + 1) > 0
         out["fragments_total"] = int(big.sum())
         out["fragments_without_candidate"] = int((big & ~has).sum())
+        # A fragment can have a candidate yet no embedded patch (sampling dropped it): reported separately.
+        out["fragments_without_sampled_patch"] = int((big & ~has_sampled).sum())
         out["fragment_tissue_without_candidate_um2"] = um2(int(sizes[big & ~has].sum()))
     else:
         out["fragments_total"] = out["fragments_without_candidate"] = None
+        out["fragments_without_sampled_patch"] = None
         out["fragment_tissue_without_candidate_um2"] = None
     if isinstance(candidates, Candidates):
         out["fragments_rescued"] = candidates.origin_counts()["fragment_rescue"]

@@ -67,8 +67,9 @@ Legacy API (deprecated; phase 3 migrates callers)
 ``embed(patches, coords, ctx)``, ``cache_identity``, ``config_from_params``,
 ``weights_sha256``, ``describe``, ``list_encoders`` and ``get_encoder`` keep their signatures.
 ``EmbedContext(..., fixture_label=x)`` with ``x is not None`` returns a
-:class:`dermpath.ml.fixture.LegacySyntheticContext` (a label carrier that is NOT an
-``EmbedContext``); only the synthetic adapter accepts it, every real adapter refuses it.
+:class:`dermpath.ml.fixture.LegacySyntheticContext` (an inert label carrier that is NOT an
+``EmbedContext``); every adapter, the synthetic one included, refuses it. The fixture signal is
+applied only through :func:`dermpath.ml.fixture.fixture_context`.
 """
 
 from __future__ import annotations
@@ -498,8 +499,8 @@ class EmbedContext:
 
     Deprecated legacy constructor: ``EmbedContext(slide_sha256, seed, fixture_label=..., config=...)``.
     With ``fixture_label is None`` it is a plain, label-free ``EmbedContext``. With any other
-    value it returns a :class:`dermpath.ml.fixture.LegacySyntheticContext` instead (which is not
-    an ``EmbedContext``); only the synthetic adapter accepts that, and every real adapter refuses it.
+    value it returns an inert :class:`dermpath.ml.fixture.LegacySyntheticContext` instead (which is
+    not an ``EmbedContext``); every adapter, the synthetic one included, refuses it.
     """
 
     __slots__ = ("slide_sha256", "seed", "config")
@@ -850,15 +851,20 @@ class SyntheticDeterministicEncoder(_SpecAdapter):
                              embed_fn=None, runtime={"device": "cpu", "device_class": "cpu", "precision": "fp32"})
 
     def embed(self, patches, coords: np.ndarray, ctx) -> np.ndarray:
-        """DEPRECATED legacy path (phase 3 migrates callers to :func:`dermpath.ml.fixture.synthetic_embeddings`)."""
-        if isinstance(ctx, LegacySyntheticContext):
-            label = ctx.fixture_label
-        elif type(ctx) is EmbedContext:
-            label = None
-        else:
+        """DEPRECATED legacy path: label-free embeddings only.
+
+        The label-derived signal is applied only through a ``FixtureContext`` from
+        :func:`dermpath.ml.fixture.fixture_context` (design §1 invariant 3), via
+        :func:`dermpath.ml.fixture.synthetic_embeddings`. A legacy label carrier is refused here
+        like in every real adapter, whatever its label, because it carries no provenance or mode.
+        """
+        if isinstance(ctx, (LegacySyntheticContext, fixture.FixtureContext)):
+            raise SyntheticSignalForbidden(f"{self.id} legacy embed is label-free; the fixture signal is applied only "
+                                           "through fixture.synthetic_embeddings(fixture_context(...))")
+        if type(ctx) is not EmbedContext:
             raise TypeError(f"{self.id} legacy embed expects an EmbedContext, not {type(ctx).__name__}")
         return fixture.legacy_synthetic_embeddings(coords, slide_sha256=ctx.slide_sha256, seed=ctx.seed,
-                                                   config=ctx.config or None, fixture_label=label)
+                                                   config=ctx.config or None, fixture_label=None)
 
 
 class HandcraftedStainTextureEncoder(_SpecAdapter):

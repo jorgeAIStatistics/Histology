@@ -588,7 +588,7 @@ def run_dev_cv(dev_pool: list[Bag], *, head: str, params: dict, seed: int, acces
             reason = (f"fold {f}: the fitting part has class(es) {sorted(classes)} only; its held-out bags are not "
                       "scored (counted as unscorable)")
             unscored.extend({"bag_id": b.bag_id, "split": "oof", "reason": reason, "label": b.label,
-                             "patient_id": b.patient_id} for b in held)
+                             "patient_id": b.patient_id, "patient_code": b.patient_code} for b in held)
             fold_summaries.append({**entry, "status": "not_fitted", "reason": reason})
             continue
         arrays, meta, summary = fit_head(head, fit_bags, params, seed, progress.sub(f * span, (f + 1) * span),
@@ -670,12 +670,15 @@ def development_summary(dev: list[ScoredBag], unscored: list[dict], op: dict, pa
     tuning = op["threshold"].get("selection_status") == "selected"
     y = np.array([sb.bag.label for sb in dev], dtype=np.int64)
     s = np.array([sb.score for sb in dev], dtype=np.float64)
-    patients = [sb.bag.patient_id for sb in dev]
+    # Bootstrap clusters by content-stable patient keys (patient code), never database uuids: the same cohort
+    # re-imported under new ids gives the same CIs.
+    patients = [sb.bag.patient_key for sb in dev]
     cal_s = apply_calibration(op["calibration"], s) if (s.size and op["calibration"].get("method") != "none") \
         else None
     ev = evaluate_binary(y, s, patients, threshold=float(op["threshold"]["value"]),
                          unscorable_y=[u["label"] for u in unscored if "label" in u],
-                         unscorable_patients=[u["patient_id"] for u in unscored if "label" in u],
+                         unscorable_patients=[u.get("patient_code") or u["patient_id"] for u in unscored
+                                              if "label" in u],
                          target_prevalence=params.get("target_prevalence"), calibrated_scores=cal_s,
                          n_boot=int(params.get("n_boot", 1000)), seed=int(seed),
                          min_patients=int(params.get("boot_min_patients", 10)), tuning_set=tuning)
@@ -1010,7 +1013,7 @@ def _run_training(run_id: str, ctx, state: dict) -> dict:
                 access.describe(b)
                 if b.n_patches == 0:
                     unscored.append({"bag_id": b.bag_id, "split": sp, "reason": "no tissue patches in the feature set",
-                                     "label": b.label, "patient_id": b.patient_id})
+                                     "label": b.label, "patient_id": b.patient_id, "patient_code": b.patient_code})
         train_bags = [b for b in train_bags if b.n_patches > 0]
         val_bags = [b for b in val_bags if b.n_patches > 0]
         if protocol == "dev_cv":

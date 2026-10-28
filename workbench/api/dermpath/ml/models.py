@@ -171,6 +171,9 @@ RUN_IDENTITY = frozenset({
     "id", "project_id", "dataset_version_id", "dataset_manifest_sha256", "encoder_id", "head", "params_json",
     "seed", "synthetic", "label_scope", "positive_class", "negative_class", "execution_mode", "feature_set_id",
     "evaluation_protocol", "identity_json", "identity_sha256", "created_by", "created_at",
+    # Recorded once at creation and shown as the run's code revision and dependencies (and the
+    # bundle's fallback code identity); no worker path writes them afterwards.
+    "code_revision", "deps_json",
 })
 #: Columns that may be set once from null and never changed afterwards.
 RUN_SET_ONCE = frozenset({"weights_sha256", "family_id", "bundle_id"})

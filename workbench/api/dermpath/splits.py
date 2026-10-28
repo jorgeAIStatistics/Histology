@@ -31,13 +31,16 @@ import hashlib
 import json
 import math
 from collections import Counter, defaultdict
+from fractions import Fraction
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 
 from .errors import unprocessable
 
-ALGORITHM = "dermpath.splits/2"
+#: /3: exact-rational largest remainder (ties by split order) and the class-presence repair of families and
+#: grouping units (see :func:`_allocate_stratified`); allocations that /2 already got right are unchanged.
+ALGORITHM = "dermpath.splits/3"
 SPLITS = ("train", "val", "test")
 PARTITIONS = ("random", "temporal", "external_site")
 PATIENT_LABEL_RULES = ("any_positive", "majority")
@@ -209,9 +212,12 @@ def split_fingerprint(assignments: Iterable[tuple[str, str]]) -> str:
 
 
 def largest_remainder(n: int, ratios: Mapping[str, float], order: Sequence[str] = SPLITS) -> dict[str, int]:
-    """Integer counts summing to ``n`` from ``ratio × n`` by largest remainder (ties: ``order``)."""
-    raw = {s: float(ratios.get(s, 0.0)) * n for s in order}
-    base = {s: math.floor(raw[s] + 1e-9) for s in order}
+    """Integer counts summing to ``n`` from ``ratio × n`` by largest remainder (ties: ``order``).
+
+    Computed in exact rationals (``Fraction(str(ratio))``, the decimal the ratio was written as), so remainders that
+    tie exactly (0.7 × 8 → 5.6 and 0.2 × 8 → 1.6) are broken by ``order``, never by floating-point noise."""
+    raw = {s: Fraction(str(float(ratios.get(s, 0.0)))) * n for s in order}
+    base = {s: math.floor(raw[s]) for s in order}
     left = n - sum(base.values())
     candidates = sorted((s for s in order if ratios.get(s, 0.0) > 0),
                         key=lambda s: (-(raw[s] - base[s]), order.index(s)))
@@ -313,7 +319,7 @@ def _allocate_stratified(units: list[list[_Patient]], unit_split: dict[int, str]
     for i, u in enumerate(units):
         strata[_unit_label(u, rule, positive_class)].append(i)
     active = [s for s in order if ratios.get(s, 0.0) > 0]
-    targets, moves, infeasible = {}, {}, []
+    targets, moves, infeasible, repairs = {}, {}, [], {}
     for label in sorted(strata):
         idx = strata[label]
         n = sum(len(units[i]) for i in idx)
@@ -331,8 +337,38 @@ def _allocate_stratified(units: list[list[_Patient]], unit_split: dict[int, str]
             s = max(active, key=lambda s: (t[s] - counts[s], -order.index(s)))
             unit_split[i] = s
             counts[s] += len(units[i])
+        n_repairs = _repair_class_presence(units, unit_split, keys, set(free), t, counts, active, order)
+        if n_repairs:
+            repairs[label] = n_repairs
     return {"targets": targets, "min_one_adjustments": {k: v for k, v in moves.items() if v},
-            "min_one_infeasible": infeasible}
+            "min_one_infeasible": infeasible, "class_presence_repairs": repairs}
+
+
+def _repair_class_presence(units: list[list[_Patient]], unit_split: dict[int, str], keys: dict[str, str],
+                           movable: set[int], t: Mapping[str, int], counts: dict[str, int], active: Sequence[str],
+                           order: Sequence[str]) -> int:
+    """Design §2: every active split gets a patient of the stratum whenever that is feasible. The deficit fill can
+    miss it when units are not singletons (two duplicate pairs fill train's deficit) or when inherited or sealed
+    patients already overshoot a split's target (they inflate the deficits elsewhere). For each active split still
+    without the stratum (and with a target), move one NEWLY allocated unit there: from the split with the largest
+    surplus (count − target; train on ties), the smallest such unit, in key order; the donor keeps at least one unit
+    of the stratum. Inherited units never move. Returns the number of moves (0 when the fill already did it)."""
+    moved = 0
+    for s in active:
+        if counts[s] > 0 or t.get(s, 0) < 1:
+            continue
+        candidates = [i for i in movable if unit_split[i] != s
+                      and counts[unit_split[i]] - len(units[i]) >= (1 if t.get(unit_split[i], 0) >= 1 else 0)]
+        if not candidates:
+            continue  # infeasible: class_absent reports it
+        best = min(candidates, key=lambda i: (-(counts[unit_split[i]] - t.get(unit_split[i], 0)),
+                                              unit_split[i] != "train", order.index(unit_split[i]), len(units[i]),
+                                              min(keys[p.id] for p in units[i])))
+        counts[unit_split[best]] -= len(units[best])
+        unit_split[best] = s
+        counts[s] += len(units[best])
+        moved += 1
+    return moved
 
 
 def _by_date(p: _Patient, test_cut: date, val_cut: date | None) -> str:
@@ -443,9 +479,20 @@ def allocate(patients: Sequence[Mapping], split: Mapping, *, salt: str = "",
             spanning += bool(p.dates and cut and min(p.dates) < cut)
         diag["patients_spanning_a_cutoff"] = spanning
         diag["rule"] = "a patient is assigned by their LATEST case date (later material never trains)"
-        diag["inherited_against_rule"] = sorted(p.code for p in pts
-                                                if p.id in inherited and p.dates
-                                                and _by_date(p, test_cut, val_cut) != mapping[p.id])
+        against = [p for p in pts if p.dates and _by_date(p, test_cut, val_cut) != mapping[p.id]]
+        # Every patient whose split disagrees with the date rule: inherited ones, and new patients placed with their
+        # grouping unit (a confirmed duplicate pair joined to a patient holding another split).
+        diag["inherited_against_rule"] = sorted(p.code for p in against if p.id in inherited)
+        diag["unit_members_against_rule"] = sorted(p.code for p in against if p.id not in inherited)
+        diag["against_rule"] = sorted(p.code for p in against)
+    if partition == "external_site":
+        # Inheritance wins (nobody moves), but an inherited train or val patient who now has a case at a test site
+        # (or a test patient without one) is named: site-disjoint external validation is weakened by them.
+        against = [p for p in pts if bool(p.sites & test_sites) != (mapping[p.id] == "test")
+                   and (p.id in inherited or bool(p.sites & test_sites))]
+        diag["inherited_against_rule"] = sorted(p.code for p in against if p.id in inherited)
+        diag["unit_members_against_rule"] = sorted(p.code for p in against if p.id not in inherited)
+        diag["against_rule"] = sorted(p.code for p in against)
     diag.update(_composition(pts, mapping, split, classes))
     diag["grouping"] = {"constraints_applied": groups_used,
                         "multi_patient_units": [sorted(p.code for p in u) for u in units if len(u) > 1][:_DIAG_LIST_CAP],

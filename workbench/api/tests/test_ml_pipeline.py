@@ -155,15 +155,18 @@ def test_feature_cache_hit_on_re_extraction(env, ids):
 # --------------------------------------------------------------------------- real path on the CMU fixture
 
 
-def test_real_path_extraction_on_cmu_fixture_is_a_labelled_pipeline_test(clients, ids, run_worker):
+def test_real_path_extraction_on_cmu_fixture_with_a_real_encoder(clients, ids, run_worker):
     from dermpath.db import session_scope
     from dermpath.ml.features import load_features
     from dermpath.ml.models import FeatureArtifact
 
     lead = clients(LEAD)
     sid = ids["slides"]["cmu_cc0"]
+    # Design §1 invariant 2: the synthetic fixture encoder is refused on a real (public_cc0) slide here too.
     r = lead.post(f"/api/v1/slides/{sid}/features", json={"encoder_id": SYNTH, "seed": 0})
-    assert r.status_code == 202 and r.json()["synthetic"] is True and r.json()["banner"] == BANNER
+    assert r.status_code == 409 and r.json()["error"]["code"] == "mode_mismatch", r.text
+    r = lead.post(f"/api/v1/slides/{sid}/features", json={"encoder_id": "handcrafted-stain-texture-v1", "seed": 0})
+    assert r.status_code == 202 and r.json()["synthetic"] is False and r.json()["banner"] is None
     t0 = time.perf_counter()
     outcomes = run_jobs(types=("extract_features",))
     elapsed = time.perf_counter() - t0
@@ -171,11 +174,11 @@ def test_real_path_extraction_on_cmu_fixture_is_a_labelled_pipeline_test(clients
     items = lead.get(f"/api/v1/slides/{sid}/features").json()["items"]
     assert len(items) == 1
     a = items[0]
-    assert a["synthetic"] is True and a["banner"] == BANNER
+    assert a["synthetic"] is False and a["banner"] is None
     assert a["calibrated"] is True and a["scale_key"] == "mpp=0.5"  # CMU-1-Small-Region: 0.499 µm/px
     st = a["stats"]
     assert st["tissue_source"] == "qc_tissue_mask" and st["qc_review_id"]  # the seed's QC screen mask
-    assert st["pixels_read"] is True and st["encoder_reads_pixels"] is False
+    assert st["pixels_read"] is True and st["encoder_reads_pixels"] is True
     assert 0 < a["n_patches"] <= 64 and a["embedding_dim"] == 64
     assert st["scale"]["slide_mpp"][0] == pytest.approx(0.499)
     with session_scope() as db:
@@ -185,8 +188,8 @@ def test_real_path_extraction_on_cmu_fixture_is_a_labelled_pipeline_test(clients
     assert ext[0] == round(224 * 0.5 / 0.499)  # level-0 pixels per 224-px patch at 0.5 µm/px
     W, H = 2220, 2967
     assert (arr["coords"][:, 0] + ext[0] <= W).all() and (arr["coords"][:, 1] + ext[1] <= H).all()
-    # Unlabelled public slide: no fixture label, so no injected signal.
-    assert a["key_extra"]["fixture_label"] is None
+    # A real encoder: no fixture label or synthetic config in the cache key.
+    assert "fixture_label" not in a["key_extra"]
     print(f"\nCMU extraction via job: {a['n_patches']} patches, {elapsed:.3f}s wall (job), "
           f"{st['total_seconds']}s in extractor")
 
@@ -200,7 +203,8 @@ def test_excluded_regions_are_respected(clients, ids):
     asst = clients("user-assistant")
     sid = ids["slides"]["cmu_cc0"]
     params = resolve_params({"max_patches_per_slide": 4096})
-    before = extract_slide_features(sid, encoder_id=SYNTH, params=params, seed=0, fixture_label=None)
+    hand = "handcrafted-stain-texture-v1"  # a real slide: the synthetic fixture encoder is refused here
+    before = extract_slide_features(sid, encoder_id=hand, params=params, seed=0, fixture_label=None)
     region = {"type": "rectangle", "x": 0, "y": 0, "width": 1200, "height": 1500}
     issue = asst.post(f"/api/v1/slides/{sid}/qc/issues", json={"category": "fold", "region": region,
                                                               "note": "fold (test)"}).json()
@@ -209,7 +213,7 @@ def test_excluded_regions_are_respected(clients, ids):
         "action": "resolve", "resolution": "fold region excluded", "dataset_eligibility_effect": "exclude_region",
         "reason": "fold over the upper-left area"})
     assert r.status_code == 200, r.text
-    after = extract_slide_features(sid, encoder_id=SYNTH, params=params, seed=0, fixture_label=None)
+    after = extract_slide_features(sid, encoder_id=hand, params=params, seed=0, fixture_label=None)
     assert after.artifact_id != before.artifact_id and after.cache_hit is False
     with session_scope() as db:
         a0 = load_features(db.get(FeatureArtifact, before.artifact_id))

@@ -15,7 +15,7 @@ import importlib
 import logging
 
 from ..db import utcnow
-from ..jobs.registry import JobContext, PermanentJobError, register, register_settle_hook
+from ..jobs.registry import JobContext, PermanentJobError, refuse_label_payload, register, register_settle_hook
 from .config import resolve_params
 from .encoders import EncoderUnavailable
 
@@ -32,11 +32,10 @@ ACTIVE_JOB_STATUSES = ("queued", "running")
 def train(ctx: JobContext, payload: dict) -> dict:
     from .training import run_training
 
+    refuse_label_payload(payload)
     run_id = payload.get("run_id")
     if not run_id:
         raise PermanentJobError("payload.run_id is required")
-    if any(k in payload for k in ("label", "labels", "fixture_label")):
-        raise PermanentJobError("job payloads never carry labels")
     return run_training(run_id, ctx)
 
 
@@ -101,13 +100,10 @@ def _settle_inline_feature_set(db, job, run, status: str, error: str | None) -> 
 def extract_features(ctx: JobContext, payload: dict) -> dict:
     from .features import FeatureError, extract_slide_features
 
+    refuse_label_payload(payload)  # design §1 invariant 4
     slide_id, encoder_id = payload.get("slide_id"), payload.get("encoder_id")
     if not slide_id or not encoder_id:
         raise PermanentJobError("payload.slide_id and payload.encoder_id are required")
-    if "fixture_label" in payload or "label" in payload:
-        # Design §1 invariant 4: no job payload carries a label or a fixture label.
-        raise PermanentJobError("job payloads never carry labels (fixture labels are derived in the worker "
-                                "from a frozen manifest)")
     try:
         params = resolve_params(payload.get("params") or {})
     except ValueError as exc:

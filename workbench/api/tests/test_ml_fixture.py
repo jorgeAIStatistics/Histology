@@ -97,26 +97,28 @@ def test_synthetic_config_bounds():
             fixture.synthetic_config(bad)
 
 
-def test_legacy_path_matches_the_fixture_and_is_confined_to_the_synthetic_encoder():
-    """features.py (until phase 3) builds EmbedContext(..., fixture_label=...): it must give the
-    same embeddings as the fixture, and the label carrier it returns is not an EmbedContext."""
+def test_legacy_path_is_label_free_and_every_adapter_refuses_the_label_carrier():
+    """The legacy synthetic embed gives the fixture's label-free embeddings; the inert carrier returned by
+    EmbedContext(..., fixture_label=...) is not an EmbedContext and every adapter (the synthetic one included)
+    refuses it, as does legacy_synthetic_embeddings with a label: the signal comes only through fixture_context."""
     syn = encoders.get_encoder(encoders.SYNTHETIC_ID)
     cfg = syn.config_from_params({"synthetic_dim": 64, "synthetic_signal_strength": 2.0,
                                   "synthetic_signal_fraction": 0.3})
-    for label in (1, 0, None):
-        ctx = encoders.EmbedContext(slide_sha256=SHA, seed=7, fixture_label=label, config=cfg)
-        assert (type(ctx) is encoders.EmbedContext) is (label is None)
-        assert not hasattr(ctx, "fixture_label") if label is None else ctx.fixture_label == label
-        legacy = syn.embed(None, COORDS, ctx)
-        assert np.array_equal(legacy, fixture.synthetic_embeddings(_ctx(label), COORDS, slide_sha256=SHA, seed=7,
-                                                                   config=cfg))
+    plain = encoders.EmbedContext(slide_sha256=SHA, seed=7, config=cfg)
+    assert type(plain) is encoders.EmbedContext and not hasattr(plain, "fixture_label")
+    for label in (None, 0):
+        assert np.array_equal(syn.embed(None, COORDS, plain),
+                              fixture.synthetic_embeddings(_ctx(label), COORDS, slide_sha256=SHA, seed=7, config=cfg))
     assert syn.cache_identity(cfg) == (encoders.SYNTHETIC_WEIGHTS_MARKER, {"encoder_config": cfg})
-    # Every real adapter refuses the legacy label carrier, even before looking at pixels.
-    carrier = encoders.EmbedContext(slide_sha256=SHA, seed=7, fixture_label=1)
-    for encoder_id in (encoders.HANDCRAFTED_ID, encoders.UNI_ID, encoders.MIDNIGHT_ID, encoders.HIBOU_B_ID,
-                       encoders.RESNET_ID):
+    for label in (1, 0):
+        carrier = encoders.EmbedContext(slide_sha256=SHA, seed=7, fixture_label=label, config=cfg)
+        assert type(carrier) is not encoders.EmbedContext and carrier.fixture_label == label
+        for encoder_id in (encoders.SYNTHETIC_ID, encoders.HANDCRAFTED_ID, encoders.UNI_ID, encoders.MIDNIGHT_ID,
+                           encoders.HIBOU_B_ID, encoders.RESNET_ID):
+            with pytest.raises(SyntheticSignalForbidden):
+                encoders.get_encoder(encoder_id).embed([], COORDS[:0], carrier)
         with pytest.raises(SyntheticSignalForbidden):
-            encoders.get_encoder(encoder_id).embed([], COORDS[:0], carrier)
+            fixture.legacy_synthetic_embeddings(COORDS, slide_sha256=SHA, seed=7, config=cfg, fixture_label=label)
 
 
 def test_synthetic_loaded_encoder_has_identity_but_never_embeds_pixels():

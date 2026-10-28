@@ -611,6 +611,10 @@ def _evaluate_core(y: np.ndarray, s: np.ndarray, patients: list, t: float, *, uy
     if target_prevalence is not None:
         adjusted = prevalence_adjusted_predictive_values(metrics["sensitivity"]["value"],
                                                          metrics["specificity"]["value"], target_prevalence)
+    # Intention-to-evaluate and prevalence-adjusted values are computed at the same threshold: they are optimistic
+    # on the tuning split too, and say so like the scored-only metrics.
+    for entry in (ite["sensitivity"], ite["specificity"], *((adjusted["ppv"], adjusted["npv"]) if adjusted else ())):
+        entry.update({"threshold_dependent": True, "tuning_set": bool(tuning_set)})
 
     # One bootstrap over scored AND unscorable bags: patients carry all of their bags.
     all_y = np.r_[y, uy].astype(np.int64)
@@ -732,8 +736,10 @@ def calibration_report(y, s, *, n_bins: int = 10, strategy: str = "uniform") -> 
     if n == 0:
         return {**base, "bins": [], "ece": None, "mce": None, "brier": None, "n_empty_bins": n_bins,
                 "undefined_reason": "undefined: no scored items"}
+    # Exactly sklearn's grids (``linspace(0, 1, k+1)``; quantile edges ``percentile(s, linspace(0, 1, k+1) * 100)``):
+    # ``linspace(0, 100, k+1)`` differs in the last bit, which moves a score sitting on an edge to another bin.
     edges = (np.linspace(0.0, 1.0, n_bins + 1) if strategy == "uniform"
-             else np.percentile(s, np.linspace(0.0, 100.0, n_bins + 1)))
+             else np.percentile(s, np.linspace(0.0, 1.0, n_bins + 1) * 100))
     ids = np.searchsorted(edges[1:-1], s)
     cnt = np.bincount(ids, minlength=n_bins)
     ssum = np.bincount(ids, weights=s, minlength=n_bins)
@@ -1087,13 +1093,15 @@ def selective_evaluation(y, s, policy: Mapping, *, patients=None, n_boot: int = 
 
 def subgroup_analysis(y, s, patients, attrs: Sequence[Mapping | None], *, threshold: float,
                       keys: Sequence[str] = SUBGROUP_KEYS, min_patients: int = 10, n_boot: int = 1000, seed: int = 0,
-                      stratify_bootstrap: bool = False) -> dict:
+                      stratify_bootstrap: bool = False, tuning_set: bool = False) -> dict:
     """Metrics per subgroup (scanner, site, stain, stain batch) at the frozen threshold.
 
     ``min_patients`` counts PATIENTS, not bags: below it the subgroup is
     ``insufficient_evidence`` with no metrics. Otherwise the subgroup gets the scored-only
     metrics of :func:`evaluate_binary` with a patient-cluster bootstrap over the subgroup's own
-    patients (same seed for every subgroup). A key that no item records is ``not_recorded``."""
+    patients (same seed for every subgroup). A key that no item records is ``not_recorded``.
+    ``tuning_set=True`` (the threshold was chosen on these data) flags every subgroup's
+    threshold-dependent metrics as optimistic, like the body's own."""
     y = binary_labels(y)
     s = finite_scores(s, y.size)
     patients = _patient_list(patients, y.size)
@@ -1126,7 +1134,7 @@ def subgroup_analysis(y, s, patients, attrs: Sequence[Mapping | None], *, thresh
             else:
                 core = _evaluate_core(yy, s[idx], sp, t, uy=np.empty(0, dtype=np.int64), up=[],
                                       target_prevalence=None, n_boot=n_boot, seed=seed, min_patients=min_patients,
-                                      stratify=stratify_bootstrap, tuning_set=False)
+                                      stratify=stratify_bootstrap, tuning_set=tuning_set)
                 row.update({"status": "ok", "metrics": core["metrics"], "confusion": core["confusion"],
                             "reason": None, "bootstrap": core["bootstrap"]})
             rows.append(row)

@@ -42,4 +42,6 @@ workbench/api/.pytest_cache/
 workbench/web/.next/
 workbench/web/node_modules/
 workbench/fixtures/large/
+# Benchmark reports (python -m dermpath.ml.cli benchmark; default location, generated per run)
+workbench/experiments/reports/
 playwright-report-*/

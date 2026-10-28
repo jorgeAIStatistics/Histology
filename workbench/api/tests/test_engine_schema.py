@@ -414,7 +414,8 @@ def test_training_run_identity_is_immutable_from_creation(db):
                         ("dataset_version_id", "dv2"), ("dataset_manifest_sha256", _h("n")),
                         ("positive_class", "x"), ("label_scope", "case"), ("execution_mode", "real_image_technical"),
                         ("feature_set_id", "fs2"), ("identity_json", {"k": "w"}), ("identity_sha256", _h("j")),
-                        ("evaluation_protocol", "dev_cv"), ("synthetic", True)):
+                        ("evaluation_protocol", "dev_cv"), ("synthetic", True),
+                        ("code_revision", "forged"), ("deps_json", {"numpy": "9"})):
         setattr(run, attr, value)
         _flush_refused(db, "identity is immutable once the run is created")
     # Even when the old value was never loaded (expired attributes), the guard reads the row.
@@ -423,7 +424,7 @@ def test_training_run_identity_is_immutable_from_creation(db):
     _flush_refused(db, "identity is immutable")
     # Status and outputs remain the worker's to write until success.
     run = db.get(type(run), run.id)
-    run.status, run.code_revision, run.deps_json = "running", "rev", {"numpy": "2"}
+    run.status = "running"
     run.calibration_json, run.abstention_json = {"method": "platt", "a": 1.0}, {"policy": "none"}
     db.commit()
     run.weights_sha256, run.family_id = _h("w"), "fam1"

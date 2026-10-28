@@ -4,7 +4,8 @@ Pool (:func:`development_pool`): development-eligible slides of the run's projec
 
 * QC-eligible (ingested, not a field image, not excluded by review or by a resolved
   ``exclude_slide`` QC issue) and of the run's data mode (synthetic or real);
-* the slide's patient is NOT sealed (any test release, this lineage or an ancestor's) and has no
+* the slide's patient is NOT sealed (any test release in ANY lineage of the project), the slide was
+  never a test item a release looked at, and the patient has no
   ``test`` or ``val`` assignment in the split family or in the run's frozen manifest;
 * the slide (or its case, for case-level tasks) has NO reference label, or an OPEN reader
   disagreement;
@@ -33,12 +34,12 @@ import numpy as np
 from sqlalchemy import select
 
 from .. import audit
-from ..datasets import family_assignments, item_data_mode, lineage_family, sealed_constraints
+from ..datasets import family_assignments, item_data_mode, lineage_family, sealed_constraints, sealed_slides
 from ..db import session_scope
 from ..errors import conflict
 from ..hierarchy import slide_lineage
 from ..jobs import queue
-from ..jobs.registry import PermanentJobError, register
+from ..jobs.registry import PermanentJobError, refuse_label_payload, register
 from ..labels import open_disagreement, reference_label
 from ..models import DatasetVersion, Job, QCIssue, Slide, new_id
 from . import PIPELINE_TEST_BANNER
@@ -52,8 +53,8 @@ NOTICE = ("Proposals for expert review only. Nothing is labelled, relabelled or 
           "expert truth. The pool holds development-eligible slides without a reference label (or with an open "
           "reader disagreement); validation, test and sealed patients are never proposed.")
 EXCLUSION_ORDER = ("not_ingested", "field_image", "review_excluded", "qc_excluded", "other_data_mode", "no_hierarchy",
-                   "sealed_test_patient", "test_patient", "validation_patient", "has_reference_label",
-                   "previously_proposed")
+                   "sealed_test_patient", "sealed_test_slide", "test_patient", "validation_patient",
+                   "has_reference_label", "previously_proposed")
 
 
 def _data_mode(manifest: dict) -> str:
@@ -70,6 +71,7 @@ def development_pool(db, run: TrainingRun, dv: DatasetVersion) -> tuple[list[dic
     mode = _data_mode(manifest)
     assign = family_assignments(db, lineage_family(db, dv.lineage_id))
     sealed = sealed_constraints(db, dv)
+    sealed_slide_ids = set(sealed_slides(db, dv.project_id))  # test items a release looked at, wherever they moved
     man_split = {s["coded_patient_id"]: s["split"] for s in manifest.get("splits", [])}
     for it in manifest.get("items", []):
         man_split.setdefault(it.get("coded_patient_id"), it.get("split"))
@@ -102,6 +104,8 @@ def development_pool(db, run: TrainingRun, dv: DatasetVersion) -> tuple[list[dic
                 reason = "no_hierarchy"
             elif pid in sealed:
                 reason = "sealed_test_patient"
+            elif s.id in sealed_slide_ids:
+                reason = "sealed_test_slide"
             elif split == "test" or (fam is not None and fam.split == "test"):
                 reason = "test_patient"
             elif split == "val" or (fam is not None and fam.split == "val"):
@@ -314,8 +318,7 @@ def run_batch(payload: dict, ctx=None) -> dict:
 
 @register(AL_JOB, description="Active-learning proposals scored out-of-sample through a bundle (never labels)")
 def active_learning_job(ctx, payload: dict) -> dict:
-    if any(k in payload for k in ("label", "labels", "fixture_label", "label_value")):
-        raise PermanentJobError("job payloads never carry labels")
+    refuse_label_payload(payload)  # design §1 invariant 4
     if not payload.get("batch_id"):
         raise PermanentJobError("payload.batch_id is required")
     return run_batch(payload, ctx)

@@ -34,6 +34,8 @@ class FakeSlideFeatures:
     policy_sha256: str = ""
     n_patches: int = 0
     stain_policy_sha256: str | None = None  # the real SlideFeatures carries the effective stain policy sha
+    extraction_env_sha256: str | None = None  # ... and the extraction environment sha of its artifact
+    meta: dict = field(default_factory=dict)  # ... and the artifact's key fields (extractor version)
 
 
 def fake_embeddings(slide_id: str, n: int = 6, dim: int = DIM) -> np.ndarray:
@@ -189,12 +191,17 @@ def install_fakes(monkeypatch, *, corrupt=(), weights_override: dict | None = No
                               "extra": sorted(extra)})
         if extract_raises is not None:
             raise extract_raises
+        from dermpath.ml.artifacts import extraction_env
+        from dermpath.ml.feature_sets import EXTRACTOR_VERSION
+
         n = (n_patches or {}).get(slide_id, 6)
         emb = fake_embeddings(slide_id, n=n)
         return FakeSlideFeatures(slide_id=slide_id, embeddings=emb, coords=np.zeros((n, 2), dtype=np.int64),
                                  artifact_id=None, weights_sha256=extract_weights or weights_sha256,
                                  encoder_spec_sha256=encoder_spec_sha256, policy_sha256=patch_policy.policy_sha256,
-                                 n_patches=n, stain_policy_sha256=stain_policy.policy_sha256)
+                                 n_patches=n, stain_policy_sha256=stain_policy.policy_sha256,
+                                 extraction_env_sha256=extraction_env(device, precision)[1],
+                                 meta={"fields": {"extractor_version": EXTRACTOR_VERSION}})
 
     def score(run, bags):
         calls.score += 1

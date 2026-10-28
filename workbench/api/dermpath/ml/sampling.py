@@ -28,6 +28,14 @@ Strategies
     without them and must never be used for validation or test slides (the caller decides
     the split; this module refuses anything not declared train).
 
+Rescued fragments
+-----------------
+A candidate of origin ``fragment_rescue`` (a tissue fragment that no grid cell covers, given one
+tissue-centred patch by the patching step) is always selected by ``uniform``, ``spatial`` and
+``lesion_aware`` when the budget allows (up to ``max_patches``, lowest ranks first); the rest of
+the budget follows the strategy. Otherwise the rescue would only guarantee a candidate, and
+default sampling would usually drop the fragment again.
+
 The sampling seed (``SamplingPolicy.seed``) is independent of any model-training seed, so
 head-seed variance and sampling variance are not confounded. The optional ``salt`` (for
 example the slide sha256) decorrelates slides that share a candidate layout.
@@ -205,24 +213,33 @@ def select_indices(candidates, policy, *, permitted_lesion_regions=None, salt: s
             stats["safety_cap"] = {"cap": cap, "applied": False, "dropped": 0}
     else:
         k = int(sp.max_patches)
+        reserved = _reserved_rescues(candidates, ranks, k) if n > k else np.zeros(0, dtype=np.int64)
+        allowed = np.ones(n, dtype=bool)
+        allowed[reserved] = False
+        k_rest = k - reserved.size
+        if n > k:
+            stats["fragment_rescue_reserved"] = int(reserved.size)
         if n <= k:
             idx = np.arange(n, dtype=np.int64)
         elif sp.strategy == "uniform":
-            idx = np.sort(np.argsort(ranks, kind="stable")[:k])
+            free = np.flatnonzero(allowed)
+            rest = free[np.argsort(ranks[free], kind="stable")[:k_rest]]
+            idx = np.sort(np.concatenate([reserved, rest]))
         elif sp.strategy == "spatial":
-            idx = np.sort(stratified_pick(np.ones(n, dtype=bool), k, _centres2(coords, extent), ranks))
+            rest = stratified_pick(allowed, k_rest, _centres2(coords, extent), ranks)
+            idx = np.sort(np.concatenate([reserved, rest]))
             stats["algorithm"] = "kd_strata_seeded_pick"
         else:  # lesion_aware
             from .patching import cells_hit_regions
 
             inside = cells_hit_regions(coords, extent, [r["region"] for r in permitted])
-            n_les = int(round(k * float(sp.lesion_fraction)))
+            n_les = min(int(round(k * float(sp.lesion_fraction))), k_rest)
             centres = _centres2(coords, extent)
-            les = stratified_pick(inside, n_les, centres, ranks)
-            rest_allowed = np.ones(n, dtype=bool)
+            les = stratified_pick(inside & allowed, n_les, centres, ranks)
+            rest_allowed = allowed.copy()
             rest_allowed[les] = False
-            rest = stratified_pick(rest_allowed, k - les.size, centres, ranks)
-            idx = np.sort(np.concatenate([les, rest]))
+            rest = stratified_pick(rest_allowed, k_rest - les.size, centres, ranks)
+            idx = np.sort(np.concatenate([reserved, les, rest]))
             stats["algorithm"] = "kd_strata_seeded_pick (lesion budget first)"
             stats["lesion"] = {"permitted_regions": len(permitted), "candidates_in_regions": int(inside.sum()),
                                "selected_in_regions": int(inside[idx].sum()), "budget_in_regions": n_les,
@@ -230,6 +247,19 @@ def select_indices(candidates, policy, *, permitted_lesion_regions=None, salt: s
     stats["selected"] = int(idx.size)
     stats["saturated"] = bool(idx.size < n)  # True when the bound (or cap) dropped candidates
     return idx.astype(np.int64), stats
+
+
+def _reserved_rescues(candidates, ranks: np.ndarray, k: int) -> np.ndarray:
+    """Indices of ``fragment_rescue`` candidates kept ahead of the strategy (at most ``k``, lowest ranks first)."""
+    origin = getattr(candidates, "origin", None)
+    if origin is None or k <= 0:
+        return np.zeros(0, dtype=np.int64)
+    from .patching import ORIGIN_RESCUE
+
+    rescue = np.flatnonzero(np.asarray(origin) == ORIGIN_RESCUE)
+    if rescue.size > k:
+        rescue = rescue[np.argsort(ranks[rescue], kind="stable")[:k]]
+    return np.sort(rescue).astype(np.int64)
 
 
 def sample(candidates, policy, *, permitted_lesion_regions=None, salt: str = "") -> tuple[np.ndarray, dict]:

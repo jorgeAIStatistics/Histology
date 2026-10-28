@@ -77,6 +77,35 @@ class PermanentJobError(Exception):
     """A deterministic failure: do not retry."""
 
 
+#: Keys that would carry a label in a job payload (design §1 invariant 4: none may).
+LABEL_PAYLOAD_KEYS = frozenset({"label", "labels", "fixture_label", "label_value"})
+
+
+def _label_keys_in(value, path: str = "") -> list[str]:
+    found = []
+    if isinstance(value, dict):
+        for k, v in value.items():
+            here = f"{path}.{k}" if path else str(k)
+            if k in LABEL_PAYLOAD_KEYS:
+                found.append(here)
+            found.extend(_label_keys_in(v, here))
+    elif isinstance(value, (list, tuple)):
+        for i, v in enumerate(value):
+            found.extend(_label_keys_in(v, f"{path}[{i}]"))
+    return found
+
+
+def refuse_label_payload(payload: dict | None) -> None:
+    """Raise :class:`PermanentJobError` when a payload carries a label key (at any depth).
+
+    The one guard every engine handler calls before doing anything: fixture labels are derived
+    inside the worker from a frozen manifest, never passed in a payload."""
+    keys = _label_keys_in(payload or {})
+    if keys:
+        raise PermanentJobError(f"job payloads never carry labels (found {', '.join(sorted(keys))}); fixture "
+                                "labels are derived in the worker from a frozen manifest")
+
+
 class JobCanceled(Exception):
     pass
 

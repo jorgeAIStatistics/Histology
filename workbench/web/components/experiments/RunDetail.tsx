@@ -612,6 +612,10 @@ export function RunDetail({ runId }: { runId: string }) {
                   <Notice tone="warning" title={`${release.data.prior_releases_on_manifest} earlier test release(s) on this manifest`}>
                     This would be release {release.data.next_release_number}. Every further look weakens the independence of the test split, so it needs a justification and is shown with the results.
                   </Notice>
+                ) : release.data && (release.data.prior_releases_on_test_patients ?? 0) > 0 ? (
+                  <Notice tone="warning" title={`${release.data.prior_releases_on_test_patients} earlier test release(s) looked at these test patients`}>
+                    Another dataset version of this cohort was already released on the same test patients. This is a further look at that test set, so it needs a justification and is shown with the results.
+                  </Notice>
                 ) : null}
                 <TextArea label="Reason for the release" required value={rel.reason} onChange={(e) => setRel({ ...rel, reason: e.target.value })} data-testid="release-reason" />
                 {release.data?.justification_required ? (

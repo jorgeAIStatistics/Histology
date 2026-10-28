@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import audit
-from ..auth import Actor, Scope, authorize, current_actor, entity_scope, project_scope
+from ..auth import Actor, Scope, authorize, current_actor, entity_scope, project_scope, role_has
 from ..db import get_db
 from ..errors import ApiError, conflict, not_found, unprocessable
 from ..jobs import queue
@@ -35,6 +35,7 @@ from .evaluation import (
     errors_response,
     evaluation_response,
     family_dict,
+    family_run_ids,
     lock_family,
     prediction_for_slide,
     require_test_unlocked,
@@ -43,8 +44,8 @@ from .evaluation import (
     test_release_dict,
     test_release_status,
 )
-from .features import artifact_dict
-from .inference import build_bundle, bundle_dict, prediction_dict, request_inference
+from .features import artifact_dict, legacy_refusal
+from .inference import build_bundle, bundle_dict, prediction_dict, request_inference, test_material_reason
 from .models import FeatureArtifact, ModelVersion, TrainingRun
 from .review_priority import review_priorities
 from .service import cancel_experiment, create_experiment, model_dict, register_model, run_dict
@@ -350,10 +351,28 @@ def infer(body: InferIn, scope: Scope = Depends(entity_scope("experiment.write",
 @router.get("/bundles/{id}/predictions")
 def bundle_predictions(scope: Scope = Depends(entity_scope("experiment.read", InferenceBundle, entity_name="bundle")),
                        db: Session = Depends(get_db)):
+    """Stored research predictions of the bundle. Predictions of TEST material (test items or patients of the run's
+    manifest, sealed patients or slides) are test results: they are listed only for ``dataset.test_access`` (the
+    research lead), with one ``experiment.test_accessed`` audit row; other roles see how many were withheld."""
     b = scope.obj
     rows = db.scalars(select(InferencePrediction).where(InferencePrediction.bundle_id == b.id)
                       .order_by(InferencePrediction.created_at, InferencePrediction.id)).all()
-    return {"bundle_id": b.id, "items": [prediction_dict(p, b.content_json) for p in rows],
+    run = db.get(TrainingRun, b.run_id)
+    test_rows, cache = set(), {}
+    for p in rows:
+        slide = db.get(Slide, p.slide_id)
+        if slide is not None and test_material_reason(db, run, slide, cache=cache) is not None:
+            test_rows.add(p.id)
+    can_read_test = role_has(scope.actor.role, "dataset.test_access")
+    shown = [p for p in rows if p.id not in test_rows or can_read_test]
+    if test_rows and can_read_test:
+        audit.record_for(db, scope.actor, project_id=b.project_id, action="experiment.test_accessed",
+                         entity_type="training_run", entity_id=b.run_id,
+                         after={"what": f"bundle_predictions:{b.id}", "slide_ids": sorted(
+                             p.slide_id for p in rows if p.id in test_rows)})
+        db.commit()
+    return {"bundle_id": b.id, "items": [prediction_dict(p, b.content_json) for p in shown],
+            "withheld_test_predictions": 0 if can_read_test else len(test_rows),
             "notice": "Research outputs only: never labels, never diagnoses, never routed to care."}
 
 
@@ -446,8 +465,16 @@ def get_family(n_boot: int | None = Query(None, ge=0, le=5000),
                                                    entity_name="comparison_family")),
                db: Session = Depends(get_db)):
     """The family with paired comparisons from stored development predictions (test only after a family
-    test release, research lead only)."""
-    return family_dict(db, scope.obj, actor_role=scope.actor.role, n_boot=n_boot)
+    test release, research lead only). Returning the TEST comparison is a read of stored test results: one
+    ``experiment.test_accessed`` audit row per member run, like GET evaluation?split=test."""
+    out = family_dict(db, scope.obj, actor_role=scope.actor.role, n_boot=n_boot)
+    if (out.get("test_comparison") or {}).get("status") == "ok":
+        for rid in family_run_ids(db, scope.obj):
+            run = db.get(TrainingRun, rid)
+            ev = stored_evaluation(db, rid, "test") if run is not None else None
+            if ev is not None:
+                _audit_test_read(db, scope.actor, run, f"comparison_family:{scope.obj.id}:test_comparison", ev)
+    return out
 
 
 @router.post("/comparison-families/{id}/members")
@@ -496,6 +523,13 @@ def extract(body: FeaturesIn, scope: Scope = Depends(entity_scope("experiment.wr
     slide = scope.obj
     if slide.ingest_status != "succeeded" or slide.image_kind == "field_image":
         raise conflict("slide_not_extractable", "Only ingested whole-slide or synthetic tiled images are patched")
+    refusal = legacy_refusal(slide, encoder, params)
+    if refusal is not None:
+        code, message = refusal
+        if code == "mode_mismatch":
+            raise conflict(code, message, encoder_id=encoder.id, provenance=slide.provenance,
+                           image_kind=slide.image_kind)
+        raise unprocessable(code, message, reason="would_upsample")
     import hashlib
     import json
 

@@ -42,7 +42,7 @@ from ..slides.reader import open_slide_record
 from ..storage import StoreError, get_store
 from .artifacts import canonical_json, load_npz, npz_bytes, sha256_hex
 from .encoders import EmbedContext, EncoderAdapter, get_encoder
-from .fixture import SYNTHETIC_PIPELINE_TEST, fixture_context
+from .fixture import SYNTHETIC_PIPELINE_TEST, fixture_context, synthetic_embeddings
 from .models import FeatureArtifact
 from .patching import (
     PATCHING_VERSION,
@@ -55,6 +55,8 @@ from .patching import (
 )
 
 CHUNK = 32
+#: Same bound as the policy pipeline (``PatchPolicy.max_upsample_ratio``).
+MAX_UPSAMPLE_RATIO = 1.05
 
 
 class FeatureError(Exception):
@@ -88,10 +90,42 @@ def _latest_mask(db, slide_id: str) -> tuple[str | None, tuple[float, float] | N
     return r.mask_object_key, ds, r.id
 
 
-def compute_coordinates(slide: Slide, osr, *, params: dict, seed: int, db_info: dict) -> Coordinates:
+def legacy_plan(slide: Slide, params: dict):
+    """The legacy scale plan, refused (``FeatureError("scale_refused: would_upsample …")``) when a calibrated
+    slide is scanned coarser than the target beyond the policy pipeline's ``max_upsample_ratio``: this path
+    never upsamples silently (a coarse scan resized up is not the target physical scale)."""
     plan = plan_scale(mpp_x=slide.mpp_x, mpp_y=slide.mpp_y,
                       level_downsamples=slide.level_downsamples_json or [1.0], patch_size=params["patch_size"],
                       target_mpp=params["target_mpp"], fallback_downsample=params["fallback_downsample"])
+    if plan.calibrated and plan.upsample_ratio is not None and plan.upsample_ratio > MAX_UPSAMPLE_RATIO + 1e-12:
+        raise FeatureError(f"scale_refused: would_upsample: slide scanned at ({slide.mpp_x:g}, {slide.mpp_y:g}) "
+                           f"µm/px is coarser than the target {params['target_mpp']:g} µm/px; reading would "
+                           f"upsample by {plan.upsample_ratio:.3f} (max {MAX_UPSAMPLE_RATIO:g})")
+    return plan
+
+
+def legacy_refusal(slide: Slide, encoder: EncoderAdapter, params: dict) -> tuple[str, str] | None:
+    """``(code, message)`` when the legacy route must refuse this slide and encoder, else None.
+
+    * ``mode_mismatch``: design §1 invariant 2 has no exception for this route; the synthetic fixture
+      encoder runs only on synthetic data (``demo_synthetic`` + ``synthetic_tiles``).
+    * ``scale_refused``: a calibrated slide scanned coarser than the target (``would_upsample``).
+    """
+    from ..datasets import item_data_mode
+
+    if encoder.synthetic and item_data_mode(slide.provenance, slide.image_kind) != "synthetic":
+        return ("mode_mismatch", f"the synthetic fixture encoder {encoder.id} runs only on synthetic data "
+                                 f"(demo_synthetic synthetic_tiles); slide {slide.id} is {slide.provenance} "
+                                 f"{slide.image_kind}")
+    try:
+        legacy_plan(slide, params)
+    except FeatureError as exc:
+        return ("scale_refused", str(exc).removeprefix("scale_refused: "))
+    return None
+
+
+def compute_coordinates(slide: Slide, osr, *, params: dict, seed: int, db_info: dict) -> Coordinates:
+    plan = legacy_plan(slide, params)
     dims = (int(slide.width), int(slide.height))
     sseed = _sample_seed(slide.sha256, seed)
     excluded = db_info["excluded"]
@@ -161,12 +195,17 @@ def extract_slide_features(slide_id: str, *, encoder_id: str, params: dict, seed
         info = {"excluded": excluded_regions(db, slide_id), "mask_key": mask_key, "mask_ds": mask_ds,
                 "qc_review_id": qc_id}
         db.expunge(slide)
+    fixture_ctx = None
     if encoder.synthetic and fixture_label is not None:
         # Design §1 invariant 3: a label-derived fixture signal only ever reaches demo_synthetic
         # synthetic_tiles. This legacy path has no execution mode; a labelled synthetic
         # extraction is by definition a synthetic pipeline test, so fixture.py's rule applies
         # (raises SyntheticSignalForbidden for real or public slides, before any cache lookup).
-        fixture_context(slide.provenance, slide.image_kind, SYNTHETIC_PIPELINE_TEST, fixture_label)
+        # The signal is applied only through this FixtureContext (never a bare label carrier).
+        fixture_ctx = fixture_context(slide.provenance, slide.image_kind, SYNTHETIC_PIPELINE_TEST, fixture_label)
+    refusal = legacy_refusal(slide, encoder, params)
+    if refusal is not None:
+        raise FeatureError(f"{refusal[0]}: {refusal[1]}")
     project_id = slide.project_id
     osr = None
     try:
@@ -184,8 +223,7 @@ def extract_slide_features(slide_id: str, *, encoder_id: str, params: dict, seed
         # Compute.
         n = coords.coords.shape[0]
         cfg = encoder.config_from_params(params) if encoder.synthetic else {}
-        ectx = EmbedContext(slide_sha256=slide.sha256, seed=seed,
-                            fixture_label=fixture_label if encoder.synthetic else None, config=cfg)
+        ectx = EmbedContext(slide_sha256=slide.sha256, seed=seed, config=cfg)  # label-free
         embs, means = [], []
         t_read = t_embed = 0.0
         for start in range(0, n, CHUNK):
@@ -197,7 +235,11 @@ def extract_slide_features(slide_id: str, *, encoder_id: str, params: dict, seed
                 means.append(m)
                 t_read += time.perf_counter() - tr
             te = time.perf_counter()
-            embs.append(encoder.embed(patches, chunk, ectx))
+            if fixture_ctx is not None:
+                embs.append(synthetic_embeddings(fixture_ctx, chunk, slide_sha256=slide.sha256, seed=seed,
+                                                 config=cfg))
+            else:
+                embs.append(encoder.embed(patches, chunk, ectx))
             t_embed += time.perf_counter() - te
             if ctx is not None:
                 frac = (start + len(chunk)) / max(n, 1)

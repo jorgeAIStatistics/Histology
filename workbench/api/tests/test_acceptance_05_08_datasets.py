@@ -638,7 +638,7 @@ def test_diagnostics_are_persisted_on_every_path(clients):
     lead = clients("user-research-lead")
     ds = _create(lead, "diag", split={"partition": "random", "seed": 3})
     d = ds["config"]["split_diagnostics"]
-    assert d["algorithm"] == "dermpath.splits/2" and d["patient_label_rule"] == "any_positive"
+    assert d["algorithm"] == "dermpath.splits/3" and d["patient_label_rule"] == "any_positive"
     assert {"per_split_class", "class_absent", "mixed_label_patients", "targets", "family"} <= set(d)
     refreshed = lead.post(f"/api/v1/datasets/{ds['id']}/refresh").json()
     assert refreshed["config"]["split_diagnostics"]["patients_per_split"] == d["patients_per_split"]

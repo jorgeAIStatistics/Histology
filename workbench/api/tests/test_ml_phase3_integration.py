@@ -52,8 +52,13 @@ def test_macenko_bundle_carries_the_effective_stain_policy_and_reproduces_the_se
     assert stain["policy"]["method"] == "macenko-v1" and stain["policy"]["reference"] is not None
     assert stain["policy_sha256"] == effective.policy_sha256 != fs.stain_policy_sha256
     assert stain["declared_policy"]["deferred"] is True and stain["reference_sha256"] == fs.stain_reference_sha256
-    # Label-free inference on a held-out (test) slide of the set reproduces the set's pinned embeddings bit for bit.
-    sid = next(s for s, sp in sorted(rc["split_of"].items()) if sp == "test")
+    # Before any test release a TEST slide of the bundle's own manifest is refused (bundle inference is not a side
+    # door to test predictions); label-free inference on a training slide of the set reproduces the set's pinned
+    # embeddings bit for bit.
+    test_sid = next(s for s, sp in sorted(rc["split_of"].items()) if sp == "test")
+    r = lead.post(f"/api/v1/bundles/{reg['bundle_id']}/infer", json={"slide_id": test_sid})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "test_release_required", r.text
+    sid = next(s for s, sp in sorted(rc["split_of"].items()) if sp == "train")
     r = lead.post(f"/api/v1/bundles/{reg['bundle_id']}/infer", json={"slide_id": sid})
     assert r.status_code == 202, r.text
     out = run_jobs(["infer_slide"])

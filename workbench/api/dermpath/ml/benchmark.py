@@ -44,6 +44,7 @@ from .comparison import ComparisonRefused, ScoreSet, paired_comparison
 from .config import EVALUATION_PROTOCOLS, HEADS, feature_params, resolve_experiment_params
 from .encoders import get_encoder
 from .engine_models import EXECUTION_MODES, ComparisonFamily, FeatureSet
+from .evaluation import reference_standard_fields
 from .heads import OPTIMISATION_BUDGETS
 from .models import Prediction, TrainingRun
 
@@ -267,7 +268,8 @@ def _score_set(db, run: TrainingRun, name: str, dv: DatasetVersion) -> ScoreSet:
     split = (run.threshold_json or {}).get("selected_on") or "val"
     preds = db.scalars(select(Prediction).where(Prediction.run_id == run.id, Prediction.split == split)
                        .order_by(Prediction.bag_id)).all()
-    return ScoreSet(name=name, bag_ids=[p.bag_id for p in preds], patients=[p.coded_patient_id for p in preds],
+    return ScoreSet(name=name, bag_ids=[p.bag_id for p in preds],
+                    patients=[p.patient_code or p.coded_patient_id for p in preds],  # content-stable clusters
                     labels=[p.label for p in preds], scores=[p.score for p in preds],
                     threshold=float(run.threshold_value), manifest_sha256=dv.manifest_sha256,
                     split_fingerprint=(dv.manifest_json or {}).get("split_fingerprint"))
@@ -526,6 +528,16 @@ def _report(cfg: dict, mode: str, dv_id: str, fs_ids: dict, policy: dict, family
     failed = [r for r in records if r["status"] != "succeeded"]
     if failed:
         warnings.append(f"{len(failed)} run(s) did not succeed; see runs[].error")
+    # Every metric and comparison below is measured against the manifest's reference standard; imported reference
+    # labels (an external dataset's own standard, not expert reads here) are stated wherever results appear.
+    standard = reference_standard_fields(manifest)
+    if standard.get("reference_standard_notice"):
+        warnings.append(standard["reference_standard_notice"])
+    for rec in records:
+        rec.update(standard)
+    for group in comparisons.values():
+        for entry in group:
+            entry.update(standard)
     synthetic = mode == "synthetic_pipeline_test"
     return {
         "schema": BENCHMARK_SCHEMA,
@@ -537,9 +549,11 @@ def _report(cfg: dict, mode: str, dv_id: str, fs_ids: dict, policy: dict, family
         "created_at": utcnow().isoformat(),
         "execution_mode": mode,
         "evaluation_protocol": cfg["evaluation_protocol"],
+        **standard,
         "dataset": {"dataset_version_id": dv_id, "name": dv.name, "version": dv.version,
                     "manifest_sha256": dv.manifest_sha256, "split_fingerprint": manifest.get("split_fingerprint"),
-                    "data_mode": manifest.get("data_mode"), "patients": (manifest.get("counts") or {}).get("patients")},
+                    "data_mode": manifest.get("data_mode"), "patients": (manifest.get("counts") or {}).get("patients"),
+                    **standard},
         "family": None if fam is None else {"family_id": fam.id, "status": fam.status,
                                             "bootstrap_seed": fam.bootstrap_seed,
                                             "lock_note": "the family stays open; locking it (before any test release) "

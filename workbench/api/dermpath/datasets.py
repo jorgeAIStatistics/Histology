@@ -459,15 +459,52 @@ def _lineages_in_scope(db: Session, dv: DatasetVersion) -> list[str]:
 
 
 def sealed_constraints(db: Session, dv: DatasetVersion) -> dict[str, dict]:
-    """``{coded_patient_id: {split, family_id, sealed_at, sealed_reason}}`` sealed in this version's family or in
-    the family of any ancestor lineage. Sealed patients never change split."""
+    """``{coded_patient_id: {split, family_id, lineage_id, sealed_at, sealed_reason}}`` sealed by a test release in
+    ANY split family of the project. Sealing is patient-level per project: a fresh root lineage, a new lineage or a
+    child of another lineage of the same cohort sees every seal, so a sealed test patient can never reach train or
+    val by re-splitting elsewhere. This version's own lineage and its ancestors come first (their family is named
+    when a patient was sealed in several)."""
     out: dict[str, dict] = {}
-    for lineage_id in _lineages_in_scope(db, dv):
-        fam = lineage_family(db, lineage_id)
+    scope = _lineages_in_scope(db, dv)
+    rank = {lineage_id: i for i, lineage_id in enumerate(scope)}
+    fams = db.scalars(select(SplitFamily).where(SplitFamily.project_id == dv.project_id)).all()
+    for fam in sorted(fams, key=lambda f: (rank.get(f.lineage_id, len(rank)), f.created_at, f.id)):
         for a in family_assignments(db, fam).values():
             if a.sealed_at is not None and a.coded_patient_id not in out:
-                out[a.coded_patient_id] = {"split": a.split, "family_id": a.family_id, "patient_code": a.patient_code,
-                                           "sealed_at": a.sealed_at.isoformat(), "sealed_reason": a.sealed_reason}
+                out[a.coded_patient_id] = {"split": a.split, "family_id": a.family_id, "lineage_id": fam.lineage_id,
+                                           "patient_code": a.patient_code, "sealed_at": a.sealed_at.isoformat(),
+                                           "sealed_reason": a.sealed_reason}
+    return out
+
+
+def project_sealed_patients(db: Session, project_id: str) -> set[str]:
+    """Coded patient ids sealed by a test release in any split family of the project."""
+    return set(db.scalars(select(SplitFamilyAssignment.coded_patient_id)
+                          .join(SplitFamily, SplitFamily.id == SplitFamilyAssignment.family_id)
+                          .where(SplitFamily.project_id == project_id,
+                                 SplitFamilyAssignment.sealed_at.is_not(None))).all())
+
+
+def sealed_slides(db: Session, project_id: str) -> dict[str, dict]:
+    """``{slide_id: {slide_sha256, coded_patient_id, family_id, lineage_id, dataset_version_id}}``: every slide that
+    was a TEST item of a sealed patient in a frozen version of that patient's split family (the slides a test release
+    looked at). A slide later moved to another patient keeps this record, so freeze can refuse it outside test."""
+    rows = db.execute(
+        select(DatasetItem.slide_id, DatasetItem.slide_sha256, DatasetItem.coded_patient_id, SplitFamily.id,
+               SplitFamily.lineage_id, DatasetVersion.id)
+        .join(DatasetVersion, DatasetVersion.id == DatasetItem.dataset_version_id)
+        .join(SplitAssignment, (SplitAssignment.dataset_version_id == DatasetItem.dataset_version_id)
+              & (SplitAssignment.coded_patient_id == DatasetItem.coded_patient_id))
+        .join(SplitFamily, SplitFamily.lineage_id == DatasetVersion.lineage_id)
+        .join(SplitFamilyAssignment, (SplitFamilyAssignment.family_id == SplitFamily.id)
+              & (SplitFamilyAssignment.coded_patient_id == DatasetItem.coded_patient_id))
+        .where(DatasetVersion.project_id == project_id, DatasetVersion.status == "frozen",
+               SplitAssignment.split == "test", SplitFamilyAssignment.sealed_at.is_not(None))
+        .order_by(DatasetVersion.frozen_at, DatasetItem.slide_id)).all()
+    out: dict[str, dict] = {}
+    for slide_id, sha, pid, fam_id, lineage_id, dv_id in rows:
+        out.setdefault(slide_id, {"slide_sha256": sha, "coded_patient_id": pid, "family_id": fam_id,
+                                  "lineage_id": lineage_id, "dataset_version_id": dv_id})
     return out
 
 
@@ -817,6 +854,12 @@ def build_manifest(db: Session, dv: DatasetVersion, frozen_at, frozen_by: str, *
 
 def _draft_state(db: Session, dv: DatasetVersion) -> tuple[dict | None, list[dict]]:
     """Re-materialise in memory and diff against the stored draft: ``(diff or None, fresh exclusions)``."""
+    diff, exclusions, _ = _draft_state_with_plan(db, dv)
+    return diff, exclusions
+
+
+def _draft_state_with_plan(db: Session, dv: DatasetVersion) -> tuple[dict | None, list[dict], dict | None]:
+    """:func:`_draft_state` plus the fresh split diagnostics of the re-plan (None when nothing was re-planned)."""
     fresh, exclusions = _snapshot(db, dv)
     stored = {it.slide_id: _item_snapshot(it) for it in _stored_items(db, dv)}
     fresh_by = {r["slide_id"]: r for r in fresh}
@@ -830,8 +873,9 @@ def _draft_state(db: Session, dv: DatasetVersion) -> tuple[dict | None, list[dic
             changed.append({"slide_id": sid, "fields": fields})
     split_changes = []
     cfg = dv.config_json
+    fresh_diag = None
     if not (added or removed or changed) and cfg.get("split"):
-        _, mapping, _, _ = _plan_splits(db, dv, cfg["split"])
+        _, mapping, fresh_diag, _ = _plan_splits(db, dv, cfg["split"])
         stored_sa = {sa.coded_patient_id: sa.split for sa in db.scalars(
             select(SplitAssignment).where(SplitAssignment.dataset_version_id == dv.id)).all()}
         codes = {it["coded_patient_id"]: it["patient_code"] for it in stored.values()}
@@ -840,7 +884,7 @@ def _draft_state(db: Session, dv: DatasetVersion) -> tuple[dict | None, list[dic
                 split_changes.append({"patient_code": codes.get(pid, pid), "draft": stored_sa.get(pid),
                                       "now": mapping.get(pid)})
     if not (added or removed or changed or split_changes):
-        return None, exclusions
+        return None, exclusions, fresh_diag
     return {
         "materialized_at": dv.materialized_at.isoformat() if dv.materialized_at else None,
         "counts": {"items_added": len(added), "items_removed": len(removed), "items_changed": len(changed),
@@ -848,7 +892,7 @@ def _draft_state(db: Session, dv: DatasetVersion) -> tuple[dict | None, list[dic
         "items_added": added[:_DIFF_CAP], "items_removed": removed[:_DIFF_CAP], "items_changed": changed[:_DIFF_CAP],
         "splits_changed": split_changes[:_DIFF_CAP],
         "action": "Refresh the draft (POST /datasets/{id}/refresh), review it, then freeze.",
-    }, exclusions
+    }, exclusions, fresh_diag
 
 
 def draft_diff(db: Session, dv: DatasetVersion) -> dict | None:
@@ -972,6 +1016,8 @@ def freeze_blockers(db: Session, dv: DatasetVersion) -> list[dict]:
     if mode["mode"] == "mixed":
         out.append({"code": "mixed_data_mode", "message": "Synthetic and real items cannot be frozen together; "
                     "restrict include_provenance", "item_counts": mode["item_counts"]})
+    if rows and not any(r["split"] is None for r in rows):
+        out.extend(_family_freeze_problems(db, dv))
     return out
 
 
@@ -984,33 +1030,72 @@ def freeze_check(db: Session, dv: DatasetVersion) -> dict:
             "requires_acknowledgement": any(w[k] for k in ACKNOWLEDGEABLE_WARNINGS)}
 
 
-def _family_freeze_check(db: Session, dv: DatasetVersion) -> None:
+def _family_freeze_problems(db: Session, dv: DatasetVersion) -> list[dict]:
+    """Split-family violations that refuse a freeze (each a blocker dict with ``code``, ``message`` and details):
+
+    * ``sealed_patient_moved``: a patient sealed by a test release anywhere in the project is outside test (for
+      example a child of another lineage that inherited the patient as train);
+    * ``sealed_slide_moved``: a slide a test release looked at (a test item of a sealed patient) is outside test,
+      for example after it was moved to another patient's block;
+    * ``family_split_locked``: an existing family patient holds another split.
+    """
     assigned = {sa.coded_patient_id: sa.split for sa in db.scalars(
         select(SplitAssignment).where(SplitAssignment.dataset_version_id == dv.id)).all()}
+    out = []
     sealed = sealed_constraints(db, dv)
     moved = [{"patient_code": s["patient_code"], "sealed_split": s["split"], "split": assigned[pid],
-              "split_family_id": s["family_id"]}
+              "split_family_id": s["family_id"], "sealed_in_lineage": s["lineage_id"]}
              for pid, s in sorted(sealed.items()) if pid in assigned and assigned[pid] != s["split"]]
     if moved:
-        raise conflict("sealed_patient_moved", "Test patients sealed by a test release can never change split",
-                       patients=moved)
+        out.append({"code": "sealed_patient_moved",
+                    "message": "Test patients sealed by a test release can never change split (sealing is "
+                               "project-wide: it holds in every lineage of the project)",
+                    "patients": moved[:_DIFF_CAP]})
+    seal_slides = sealed_slides(db, dv.project_id)
+    if seal_slides:
+        slides_moved = []
+        for it in _stored_items(db, dv):
+            seal = seal_slides.get(it.slide_id)
+            split = assigned.get(it.coded_patient_id)
+            if seal is not None and split is not None and split != "test":
+                slides_moved.append({"slide_id": it.slide_id, "slide_sha256": it.slide_sha256, "split": split,
+                                     "patient_code": it.patient_code, "sealed_with_patient": seal["coded_patient_id"],
+                                     "split_family_id": seal["family_id"],
+                                     "released_in_dataset_version": seal["dataset_version_id"]})
+        if slides_moved:
+            out.append({"code": "sealed_slide_moved",
+                        "message": "Slides a test release looked at (test items of sealed patients) can never become "
+                                   "train or validation items, also after a lineage correction moved them to another "
+                                   "patient",
+                        "slides": slides_moved[:_DIFF_CAP]})
     existing = family_assignments(db, lineage_family(db, dv.lineage_id))
     conflicts = [{"patient_code": a.patient_code, "family_split": a.split, "split": assigned[pid]}
                  for pid, a in sorted(existing.items()) if pid in assigned and assigned[pid] != a.split]
     if conflicts:
-        raise conflict("family_split_locked", "These patients already hold another split in this lineage's split "
-                       "family; child versions inherit them", patients=conflicts[:_DIFF_CAP])
+        out.append({"code": "family_split_locked", "message": "These patients already hold another split in this "
+                    "lineage's split family; child versions inherit them", "patients": conflicts[:_DIFF_CAP]})
+    return out
+
+
+def _family_freeze_check(db: Session, dv: DatasetVersion) -> None:
+    for problem in _family_freeze_problems(db, dv):
+        details = {k: v for k, v in problem.items() if k not in ("code", "message")}
+        raise conflict(problem["code"], problem["message"], **details)
 
 
 def freeze(db: Session, actor: Actor, dv: DatasetVersion, reason: str | None = None,
            acknowledge_warnings: bool = False) -> DatasetVersion:
     if dv.status != "draft":
         raise conflict("dataset_frozen", "Already frozen")
-    diff, exclusions = _draft_state(db, dv)
+    diff, exclusions, fresh_diag = _draft_state_with_plan(db, dv)
     if diff:
         raise conflict("draft_stale", "Eligibility, labels, lineage, provenance or the split allocation changed "
                        "since this draft was materialised. Refresh the draft, review it, then freeze.", diff=diff)
     dv.exclusions_json = exclusions  # same items; exclusions as of freeze time
+    if fresh_diag is not None:
+        # The mapping is unchanged (else draft_stale), but its diagnostics (date ranges, cutoff spanning, unknown
+        # sites, per-site table, sealed pins) are recomputed now, so the immutable manifest records them as frozen.
+        dv.config_json = {**dv.config_json, "split_diagnostics": fresh_diag}
     rows = item_rows(db, dv)
     if not rows:
         raise conflict("empty_dataset", "Cannot freeze a dataset version with no eligible items")

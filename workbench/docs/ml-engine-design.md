@@ -29,6 +29,11 @@ The audit that motivated this design is summarised in `docs/ml-engine-report.md`
 4. No job payload carries a label or a fixture label. Fixture labels are derived inside the worker from the frozen manifest.
 5. `run.synthetic` is derived (encoder synthetic, or `data_mode == synthetic`) and re-derived in the worker. On disagreement the run fails permanently.
 
+**Implemented differently (verification round, recorded with the reason):**
+- *Legacy extraction route.* Invariant 2 has no exception: `POST /slides/{id}/features` and its `extract_features` job refuse the synthetic encoder unless the slide is `demo_synthetic` + `synthetic_tiles` (`409 mode_mismatch`), and refuse calibrated slides that would be upsampled (`422 scale_refused`), like the feature-set path.
+- *Label carrier.* `EmbedContext(..., fixture_label=…)` still returns an inert `LegacySyntheticContext` (so old callers fail loudly, not silently), but every adapter, the synthetic one included, refuses it, and `legacy_synthetic_embeddings` is label-free. The legacy path applies a labelled pipeline-test signal only through `fixture_context` + `synthetic_embeddings`.
+- *Invariant 4.* One shared guard (`jobs.registry.refuse_label_payload`, keys `label`, `labels`, `fixture_label`, `label_value` at any depth) runs first in every engine handler.
+
 ## 2. Patient splits (`dermpath/splits.py`, pure functions, no DB)
 
 - **Patient key for ordering** is content-stable: `sha256(f"{salt}|{patient_code}")`, never uuids and never `random.shuffle`. `salt = f"{family_salt}|{seed}"`.
@@ -67,6 +72,12 @@ Rules:
 - Changing a child's partition or seed is refused (`409 family_split_locked`) unless the caller starts a new lineage with a reason.
 - Patients become **sealed** when a test release happens on any version of the lineage (all its test patients). Sealed patients can never change split, and freeze verifies it.
 - Every manifest records `split_family_id`, a `split_fingerprint` (sha256 over the sorted (`patient_code`, split) pairs), and the counts inherited, new and dropped.
+
+**Implemented differently (verification round, recorded with the reason):**
+- *Sealing is project-wide.* A seal applies to the patient in every lineage of the project, not only in the releasing lineage and its descendants: otherwise a fresh root dataset, or a child of another lineage, put sealed test patients in train. New allocations pin sealed patients to test; freeze refuses `409 sealed_patient_moved` when an inherited split contradicts a seal from another lineage (start a new lineage instead), and `409 sealed_slide_moved` when a slide that was a test item of a sealed patient (what a release looked at) is outside test, for example after a lineage correction moved it to another patient. Both are also freeze-check blockers.
+- *Class presence with families and units* (`dermpath.splits/3`). The deficit fill can leave a split without a class when inherited or sealed patients overshoot a target, or when grouping units are not singletons. A repair step then moves one newly allocated unit (from the split with the largest surplus, train on ties; the smallest unit; the donor keeps one) into each active split still missing the class. Allocations that were already complete are unchanged. Largest remainder is computed in exact rationals so ties follow the split order.
+- *Rule exceptions are named.* Temporal and external-site diagnostics list every patient whose split contradicts the partition rule (`against_rule`; inherited ones in `inherited_against_rule`, unit members in `unit_members_against_rule`).
+- *Diagnostics at freeze.* `freeze()` writes the re-plan's diagnostics into the manifest (the mapping is unchanged, else `draft_stale`), so date ranges, spanning counts and per-site tables are those of the frozen inputs.
 
 ### Freeze and dataset items
 
@@ -259,6 +270,14 @@ Extraction:
 - *Coverage floor.* `COVERAGE_FLOOR = 0.5` on `tissue_within_radius_of_sample_fraction` is an untuned research default. Torch technical-validation tolerances (1e-4 abs, cosine 0.9999) are proposals not yet measured on real weights.
 - *Inline builds.* A train job builds its run's set inline when it is not ready. Deterministic build failures (input or environment changed, integrity, mode) fail the run permanently; if the queue ends the train job while the set is still `building` and no other job can finish it, the set becomes `failed` (resumable).
 
+**Implemented differently (verification round, recorded with the reason):**
+- *Extraction code identity.* The set's pinned `extraction.extractor_version` is compared with the running `EXTRACTOR_VERSION` before every build, repair and technical validation (`extraction_code_changed`), and `load_slide_features` checks it on every artifact, so one set never mixes extractor versions. `EXTRACTOR_VERSION` is now `dermpath.feature_sets/2` (the changes below alter coordinates or coverage for some slides); sets pinned to `/1` stay readable but cannot be extended or repaired.
+- *Repair reproducibility.* A newer generation replaces a pinned artifact only when it reproduces the pinned embeddings and coords/quality sha256 (deterministic encoders repair transparently); otherwise reads refuse `repair_not_reproducible` and the repair report lists the slide. An appended row with other numbers is never served.
+- *Read footprint.* After choosing the level, the plan's extent is the level-0 rectangle of the actual read (`ceil(read × downsample)`), and the effective mpp is that of the footprint, so exclusion checks and coverage contain every pixel read.
+- *Exclusion geometry.* Exclusions use the nonzero winding rule (a lasso drawn twice around a fold excludes its inner loop), evaluated in blocks of edges so memory does not grow with the outline's vertex count (up to `annotations.MAX_POINTS`). Excluded areas are rasterised by the same pixel-centre rule as candidate coverage.
+- *Rescued fragments.* When the tissue-centred rescue patch touches an exclusion, aligned placements that still contain the anchor pixel are tried. `uniform`, `spatial` and `lesion_aware` sampling keep `fragment_rescue` candidates ahead of the strategy (up to the budget), and coverage reports `fragments_without_sampled_patch` and the sampled origins.
+- *Embedding sink.* The trimmed `.npy` copy is bounded by the kept rows, so read-time rejections (pen, background) never break a build.
+
 Build job `build_feature_set`:
 - resumable: slides already `done` are skipped;
 - cancellable;
@@ -328,6 +347,7 @@ API (router `ml/router_features.py`):
 - *Unscorable folds.* A `dev_cv` fold whose fitting part lacks a class is not fitted; its held-out bags are recorded as unscorable (counted in intention-to-evaluate), never imputed.
 - *Outputs.* Prediction rows carry `calibrated_score`, `fold` and `manifest_split` in `attributes_json`; `train` rows under `dev_cv` are the final model's in-sample scores on the whole development pool. Checkpoints are `dermpath.checkpoint/2` (`/1` still loads). Legacy runs without identity, mode or feature set fail permanently with `legacy_run`.
 - *Labels.* Training labels must satisfy `labels.label_source_permitted(source, manifest.config.reference_standard)`; model suggestions never qualify.
+- *Run provenance (verification round).* `code_revision` and `deps_json` are part of the immutable run identity columns from creation.
 
 ## 7. Evaluation (`ml/metrics.py`, `ml/comparison.py`, `ml/calibration.py`, `ml/failure.py`, `ml/evaluation.py`)
 
@@ -367,6 +387,16 @@ API (router `ml/router_features.py`):
   "BCC absent" is never rendered as "benign".
 - **Subgroups** by scanner, site and stain batch: min_n counts **patients**, patient-cluster CIs are reported, and the subgroup is marked `insufficient_evidence` below threshold.
 
+**Implemented differently (verification round, recorded with the reason):**
+- *Looks are counted per test patient set.* A release needs a justification when an earlier release anywhere in the project looked at any of its test patients (a child version inherits them; a fresh dataset of the same cohort reproduces them), not only on a second release of the same manifest. `release_number` stays per manifest; bodies add `prior_releases_on_test_patients`.
+- *Family test reads are audited.* Returning a family's test comparison appends `experiment.test_accessed` per member run.
+- *Reference standard.* Failure analysis, paired comparisons (families and benchmark reports) and review-priority discordances state the manifest's reference standard and the imported-reference notice.
+- *Tuning flags.* Subgroup, intention-to-evaluate and prevalence-adjusted threshold-dependent metrics carry `tuning_set` like the body's own.
+- *Bootstrap clusters* are keyed by patient code (content-stable), never by database uuid.
+- *OOF domain shift.* Each out-of-fold bag is judged against the development items of the other folds (its fold model's fitting data).
+- *Platt slope.* The Platt map is constrained to slope ≥ 0; anti-informative development scores give the intercept-only map, recorded in its parameters.
+- *Test rows* carry `calibrated_score` like development rows.
+
 ## 8. Inference bundle (`ml/inference.py`)
 
 `inference_bundle` columns: `id`, `project_id`, `run_id`, `bundle_sha256`, `content_json`, `object_key`, `created_by`, `created_at`. It is immutable.
@@ -392,6 +422,7 @@ The bundle is built at registration (`POST /experiments/{id}/register`). `POST /
 - *Release candidate.* When the run belongs to a **locked** comparison family, the family is the default candidate (all members released together); otherwise the run's bundle. A run already released is refused (`409 test_already_released`): `Evaluation` is unique per (run, split). Test predictions store no attention yet (`409 attention_unavailable`).
 - *Bundles.* The bundle carries the feature set's **effective** stain policy (macenko with its fitted reference) and the reference standard of the training labels. Pipeline-test bundles (synthetic encoder) refuse inference with `409 mode_mismatch`: their signal is label-derived by construction. `inference_prediction` is unique per (bundle, slide), so a slide recorded as unscorable needs a new bundle to be re-scored.
 - *Active learning* is asynchronous (`202` + job `active_learning`) and needs the run's registered bundle; scored candidates are stored as `inference_prediction` rows. Patients new to the split family can be proposed (recorded per proposal as `new_to_family`) and may later be allocated to val or test by the family allocator; this is reported, not prevented.
+- *Test material (verification round).* Bundle inference refuses (`409 test_release_required`, again in the worker) a test item or test patient of the bundle's manifest, a patient sealed anywhere in the project or a slide a release looked at, unless a recorded release covers the run; afterwards such predictions are listed only for `dataset.test_access`, with an audit row. The worker also refuses a bundle whose pinned `extractor_version` or extraction environment is not its own (`extraction_code_changed`, `extraction_env_changed`).
 
 ## 9. Data and label quality (`dermpath/datasets.py` audit; `ml/active_learning.py`)
 

@@ -95,8 +95,8 @@ from ..config import get_settings
 from ..db import session_scope, utcnow
 from ..errors import ApiError, conflict, not_found, unprocessable
 from ..jobs import queue
-from ..jobs.registry import JobContext, PermanentJobError, register, register_settle_hook
-from ..models import DatasetVersion, Job, Project, QCIssue, QCReview, Slide
+from ..jobs.registry import JobContext, PermanentJobError, refuse_label_payload, register, register_settle_hook
+from ..models import DatasetVersion, ImmutableRecordError, Job, Project, QCIssue, QCReview, Slide
 from ..qc import tissue as qc_tissue
 from ..slides import reader as slide_reader
 from ..slides.synthetic import spec_sha256 as synthetic_spec_sha256
@@ -144,7 +144,10 @@ SNAPSHOT_SCHEMA = "dermpath.feature_input_snapshot/1"
 ARTIFACT_SCHEMA = "dermpath.features/2"
 VALIDATION_SCHEMA = "dermpath.feature_set_validation/1"
 #: Bump on any change in this module that alters embeddings, coordinates or stored bytes.
-EXTRACTOR_VERSION = "dermpath.feature_sets/1"
+#: /2 (engine verification round): the read footprint is the plan extent, exclusions use the nonzero winding rule and
+#: the pixel-centre raster, rescued fragments are kept by sampling and may shift away from an exclusion, and the
+#: embedding sink trims exactly after read-time rejections. Sets and bundles pinned to /1 refuse to extract with /2.
+EXTRACTOR_VERSION = "dermpath.feature_sets/2"
 
 SYNTHETIC_MODE, TECHNICAL_MODE, SUPERVISED_MODE = EXECUTION_MODES
 BATCH_SIZE_ENV = "WB_ML_BATCH_SIZE"
@@ -934,6 +937,7 @@ class SlideFeatures:
     stain_policy_sha256: str | None = None
     cache_key: str | None = None
     cache_hit: bool = False
+    extraction_env_sha256: str | None = None
     coverage: dict | None = None
     stats: dict = field(default_factory=dict)
     meta: dict = field(default_factory=dict)
@@ -961,7 +965,8 @@ def _materialise(art: FeatureArtifact, *, mmap: bool = True) -> SlideFeatures:
                          weights_sha256=art.weights_sha256, encoder_spec_sha256=art.encoder_spec_sha256 or "",
                          policy_sha256=art.policy_sha256 or "", n_patches=int(art.n_patches),
                          stain_policy_sha256=art.stain_policy_sha256, cache_key=art.cache_key,
-                         coverage=art.coverage_json, stats=dict(art.stats_json or {}), meta=meta or {})
+                         coverage=art.coverage_json, stats=dict(art.stats_json or {}), meta=meta or {},
+                         extraction_env_sha256=art.extraction_env_sha256)
 
 
 def _artifact_ok(art: FeatureArtifact) -> bool:
@@ -1152,7 +1157,8 @@ class _EmbeddingSink:
         out = self.directory / "embeddings.npy"
         dst = np.lib.format.open_memmap(out, mode="w+", dtype=np.float32, shape=(self.n, self.dim))
         for s in range(0, self.n, 8192):
-            dst[s:s + 8192] = self._mm[s:s + 8192]
+            e = min(s + 8192, self.n)  # bound by n: the source memmap has `capacity` rows, the trimmed one n
+            dst[s:e] = self._mm[s:e]
         dst.flush()
         del dst
         del self._mm
@@ -1425,7 +1431,8 @@ def _extract(snap: dict, *, project_id: str, encoder_id: str, encoder_spec: Enco
                                      quality=run.quality, artifact_id=None, weights_sha256=weights_sha256,
                                      encoder_spec_sha256=encoder_spec_sha256, policy_sha256=patch_policy.policy_sha256,
                                      n_patches=run.n, stain_policy_sha256=stain_policy.policy_sha256,
-                                     cache_key=cache_key, coverage=cov, stats=stats, meta={"fields": fields})
+                                     cache_key=cache_key, coverage=cov, stats=stats, meta={"fields": fields},
+                                     extraction_env_sha256=env_sha256)
             art = _store_run(prep, run, fields=fields, cache_key=cache_key, generation=generation,
                              project_id=project_id, encoder_spec=encoder_spec, patch_policy=patch_policy,
                              stain_policy=stain_policy, device=device, precision=precision, env_sha256=env_sha256,
@@ -1599,21 +1606,41 @@ def _fixture_labels(db: Session, plan: _Plan) -> dict[str, int]:
     return {it["slide_id"]: int(it.get("label_value") == pos) for it in manifest.get("items") or []}
 
 
-def _check_env(plan: _Plan) -> None:
-    device = plan.extraction.get("device", "cpu")
-    env, env_sha = extraction_env(device, plan.env_json.get("precision", "fp32"))
-    if env_sha != plan.env_sha256:
-        diff = {k: [plan.env_json.get("libraries", {}).get(k), v] for k, v in env.get("libraries", {}).items()
-                if plan.env_json.get("libraries", {}).get(k) != v}
+def check_extraction_env(env_json: dict, env_sha256: str, extraction: dict, *, what: str = "feature set",
+                         remedy: str = "create a new feature set in this environment") -> None:
+    """Raise ``FeatureError("extraction_env_changed: …")`` unless this worker's extraction environment (library
+    versions, device class, precision, machine, torch CPU threads) is the pinned one."""
+    env_json = env_json or {}
+    device = extraction.get("device") or env_json.get("device_class") or "cpu"
+    env, env_sha = extraction_env(device, env_json.get("precision", "fp32"))
+    if env_sha != env_sha256:
+        diff = {k: [env_json.get("libraries", {}).get(k), v] for k, v in env.get("libraries", {}).items()
+                if env_json.get("libraries", {}).get(k) != v}
         for k in ("device_class", "precision", "machine", "cuda"):
-            if plan.env_json.get(k) != env.get(k):
-                diff[k] = [plan.env_json.get(k), env.get(k)]
-        raise FeatureError(f"extraction_env_changed: this worker's extraction environment differs from the feature "
-                           f"set's ({diff}); create a new feature set in this environment")
-    threads = plan.extraction.get("cpu_threads")
+            if env_json.get(k) != env.get(k):
+                diff[k] = [env_json.get(k), env.get(k)]
+        raise FeatureError(f"extraction_env_changed: this worker's extraction environment differs from the {what}'s "
+                           f"({diff}); {remedy}")
+    threads = extraction.get("cpu_threads")
     if threads is not None and devices.cpu_threads() != threads:
-        raise FeatureError(f"extraction_env_changed: WB_ML_CPU_THREADS is {devices.cpu_threads()}, the feature set "
-                           f"pins {threads}")
+        raise FeatureError(f"extraction_env_changed: WB_ML_CPU_THREADS is {devices.cpu_threads()}, the {what} "
+                           f"pins {threads}; {remedy}")
+
+
+def check_extractor_version(extraction: dict, *, what: str = "feature set",
+                            remedy: str = "create a new feature set") -> None:
+    """Raise ``FeatureError("extraction_code_changed: …")`` when the pinned ``extractor_version`` is not the one this
+    worker runs (:data:`EXTRACTOR_VERSION`): artifacts of two extractor versions never mix in one set or bundle."""
+    pinned = (extraction or {}).get("extractor_version")
+    if pinned is not None and pinned != EXTRACTOR_VERSION:
+        raise FeatureError(f"extraction_code_changed: the {what} pins {pinned}, this worker runs {EXTRACTOR_VERSION}; "
+                           f"{remedy}")
+
+
+def _check_env(plan: _Plan) -> None:
+    check_extractor_version(plan.extraction)
+    check_extraction_env(plan.env_json, plan.env_sha256, {**plan.extraction,
+                                                          "device": plan.extraction.get("device", "cpu")})
 
 
 def _fenced(ctx: JobContext | None, db: Session) -> None:
@@ -1684,7 +1711,8 @@ def _coverage_summary(cov: dict | None) -> dict | None:
     keys = ("calibrated", "n_candidates", "n_sampled", "n_sampled_before_read_filters", "tissue_area_um2",
             "candidate_tissue_fraction", "sampled_tissue_fraction", "tissue_within_radius_of_sample_fraction",
             "radius_um", "edge_uncovered_tissue_area_um2", "fragments_total", "fragments_without_candidate",
-            "fragments_rescued", "rejected_at_read", "mask_um_per_px", "mask_coarse", "excluded_area_um2")
+            "fragments_without_sampled_patch", "fragments_rescued", "sampled_origins", "rejected_at_read",
+            "mask_um_per_px", "mask_coarse", "excluded_area_um2")
     return {"version": COVERAGE_VERSION, **{k: cov.get(k) for k in keys}}
 
 
@@ -1758,7 +1786,8 @@ def _build(fs_id: str, ctx: JobContext | None, t0: float) -> dict:
                                   fixture_label=labels.get(slide_id) if plan.execution_mode == SYNTHETIC_MODE else None,
                                   ctx=ctx, progress=progress)
         except (FeatureError, SamplingError, stainlib.StainError) as exc:
-            if isinstance(exc, FeatureSetIntegrityError) or str(exc).startswith(("input_changed", "extraction_env")):
+            if isinstance(exc, FeatureSetIntegrityError) or str(exc).startswith(("input_changed", "extraction_env",
+                                                                                 "extraction_code_changed")):
                 raise
             failures.append({"slide_id": slide_id, "error": str(exc)})
             with session_scope() as db:
@@ -1769,20 +1798,27 @@ def _build(fs_id: str, ctx: JobContext | None, t0: float) -> dict:
             continue
         built += 1
         hits += int(feats.cache_hit)
-        with session_scope() as db:
-            item = db.get(FeatureSetItem, item_id)
-            if item.status == "done":  # built concurrently (e.g. two runs building one set inline): keep it
+        try:
+            with session_scope() as db:
+                item = db.get(FeatureSetItem, item_id)
+                if item.status == "done":  # built concurrently (e.g. two runs building one set inline): keep it
+                    _fenced(ctx, db)
+                    continue
+                item.status, item.artifact_id, item.error = "done", feats.artifact_id, None
+                item.coverage_json = _coverage_summary(feats.coverage)
+                item.stats_json = _jsonable({k: feats.stats.get(k) for k in (
+                    "read_seconds", "pixel_read_seconds", "preprocess_seconds", "embed_seconds", "write_seconds",
+                    "total_seconds", "patches_per_second", "n_patches", "n_sampled", "n_candidates",
+                    "peak_rss_bytes", "peak_rss_delta_bytes", "rejected_at_read", "pixels_read", "mask_source",
+                    "calibrated", "stain_source_sha256")} | {"cache_hit": bool(feats.cache_hit)})
+                item.done_at = utcnow()
                 _fenced(ctx, db)
-                continue
-            item.status, item.artifact_id, item.error = "done", feats.artifact_id, None
-            item.coverage_json = _coverage_summary(feats.coverage)
-            item.stats_json = _jsonable({k: feats.stats.get(k) for k in (
-                "read_seconds", "pixel_read_seconds", "preprocess_seconds", "embed_seconds", "write_seconds",
-                "total_seconds", "patches_per_second", "n_patches", "n_sampled", "n_candidates", "peak_rss_bytes",
-                "peak_rss_delta_bytes", "rejected_at_read", "pixels_read", "mask_source", "calibrated",
-                "stain_source_sha256")} | {"cache_hit": bool(feats.cache_hit)})
-            item.done_at = utcnow()
-            _fenced(ctx, db)
+        except (IntegrityError, ImmutableRecordError):
+            # A concurrent builder marked the item done between our read and our commit (the done item is
+            # immutable): it was built concurrently, which is not a failure of this build.
+            with session_scope() as db:
+                if db.get(FeatureSetItem, item_id).status != "done":
+                    raise
     summary = {"feature_set_id": plan.id, "slides": n_items, "built_now": built, "cache_hits": hits,
                "skipped_done": n_items - len(todo), "failed": failures, "seconds": round(time.perf_counter() - t0, 3)}
     if failures:
@@ -1801,12 +1837,18 @@ def _build(fs_id: str, ctx: JobContext | None, t0: float) -> dict:
         if pending:
             raise FeatureError(f"feature set {plan.id}: slides still pending: {sorted(pending)[:10]}")
         row = db.get(FeatureSet, plan.id)
+        if row.status == "failed":
+            # Every item is done: a concurrent builder that failed (and marked the set failed) did not leave the set
+            # incomplete. Resume it (failed -> building) and finish it, so no builder reports a status the row lacks.
+            row.status = "building"
+            db.flush()
         if row.status == "building":
             row.status, row.ready_at, row.error = "ready", utcnow(), None
         _fenced(ctx, db)
+        final = row.status
     if ctx is not None:
-        ctx.progress(1.0, f"feature set ready: {n_items} slides")
-    summary["status"] = "ready"
+        ctx.progress(1.0, f"feature set {final}: {n_items} slides")
+    summary["status"] = final
     return summary
 
 
@@ -1826,18 +1868,36 @@ def _repair(plan: _Plan, *, loaded, stain_policy, labels, ctx, t0) -> dict:
         feats = _extract_item(plan, slide_id, loaded=loaded, stain_policy=stain_policy,
                               fixture_label=labels.get(slide_id) if plan.execution_mode == SYNTHETIC_MODE else None,
                               ctx=ctx, progress=progress)
-        repaired.append({"slide_id": slide_id, "pinned_artifact_id": art_id, "new_artifact_id": feats.artifact_id})
+        new = None
+        if feats.artifact_id:
+            with session_scope() as db:
+                new = db.get(FeatureArtifact, feats.artifact_id)
+        reproducible = art is not None and new is not None and _reproduces(new, art)
+        entry = {"slide_id": slide_id, "pinned_artifact_id": art_id, "new_artifact_id": feats.artifact_id,
+                 "reproducible": reproducible}
+        if not reproducible:
+            # Never served in place of the pinned numbers (load_slide_features refuses): the set needs a rebuild.
+            entry["error"] = ("repair_not_reproducible: the re-extracted embeddings or coordinates differ from the "
+                              "pinned artifact's sha256; reads of this slide are refused; create a new feature set")
+            log.warning("feature set %s slide %s: %s", plan.id, slide_id, entry["error"])
+        repaired.append(entry)
     return {"feature_set_id": plan.id, "status": "ready", "verified": ok, "repaired": repaired,
+            "not_reproducible": [r["slide_id"] for r in repaired if not r["reproducible"]],
             "seconds": round(time.perf_counter() - t0, 3)}
+
+
+def _reproduces(candidate: FeatureArtifact, pinned: FeatureArtifact) -> bool:
+    """A replacement generation stands in for a pinned artifact only when it holds the identical bytes."""
+    return (candidate.cache_key == pinned.cache_key and candidate.embeddings_sha256 == pinned.embeddings_sha256
+            and candidate.quality_sha256 == pinned.quality_sha256)
 
 
 @register(BUILD_JOB, description="Build a frozen feature set: label-free, resumable per slide, bounded memory")
 def build_job(ctx: JobContext, payload: dict) -> dict:
+    refuse_label_payload(payload)  # design §1 invariant 4
     fs_id = payload.get("feature_set_id")
     if not fs_id:
         raise PermanentJobError("payload.feature_set_id is required")
-    if "label" in payload or "fixture_label" in payload or "labels" in payload:
-        raise PermanentJobError("job payloads never carry labels (design §1 invariant 4)")
     try:
         return build_feature_set(fs_id, ctx)
     except ModeMismatch as exc:
@@ -1867,7 +1927,9 @@ def settle_feature_set(db: Session, job, status: str, error: str | None) -> None
 
 
 def _resolve_valid_artifact(art: FeatureArtifact) -> FeatureArtifact | None:
-    """``art`` if its objects verify, else the newest valid generation under the same cache key."""
+    """``art`` if its objects verify, else the newest valid generation under the same cache key that REPRODUCES the
+    pinned bytes (same embeddings and coords/quality sha256). A generation with other numbers (a non-bit-identical
+    re-extraction, or a row appended to the append-only table) is never served in place of the pinned artifact."""
     if _artifact_ok(art):
         return art
     with session_scope() as db:
@@ -1875,7 +1937,14 @@ def _resolve_valid_artifact(art: FeatureArtifact) -> FeatureArtifact | None:
                                                         FeatureArtifact.cache_key == art.cache_key,
                                                         FeatureArtifact.generation > art.generation)
                           .order_by(FeatureArtifact.generation.desc())).all()
-    return next((r for r in rows if _artifact_ok(r)), None)
+    return next((r for r in rows if _reproduces(r, art) and _artifact_ok(r)), None)
+
+
+def _newer_generations(art: FeatureArtifact) -> list[str]:
+    with session_scope() as db:
+        return list(db.scalars(select(FeatureArtifact.id).where(FeatureArtifact.project_id == art.project_id,
+                                                                FeatureArtifact.cache_key == art.cache_key,
+                                                                FeatureArtifact.generation > art.generation)).all())
 
 
 def require_ready(db: Session, fs: FeatureSet, slide_ids) -> None:
@@ -1904,6 +1973,7 @@ def _expected_identity(db: Session, row: FeatureSet) -> dict:
     ident = {"encoder_id": plan.encoder_id, "encoder_spec_sha256": plan.encoder_spec_sha256,
              "weights_sha256": plan.weights_sha256, "policy_sha256": plan.patch_policy.policy_sha256,
              "stain_policy_sha256": _effective_stain(plan).policy_sha256, "extraction_env_sha256": plan.env_sha256,
+             "extractor_version": plan.extraction.get("extractor_version"),
              "slides": {sid: {"mask_sha256": s.get("mask_sha256"),
                               "excluded_regions_sha256": s.get("excluded_regions_sha256")}
                         for sid, s in plan.snapshots.items()}}
@@ -1941,11 +2011,20 @@ def load_slide_features(fs: FeatureSet | str, slide_id: str) -> SlideFeatures:
         "extraction_env_sha256")}, "mask_sha256": snap.get("mask_sha256"),
         "excluded_regions_sha256": snap.get("excluded_regions_sha256")}
     diff = {k: [v, getattr(art, k)] for k, v in expected.items() if getattr(art, k) != v}
+    pinned_version = ident.get("extractor_version")
+    if pinned_version is not None and (art.key_extra_json or {}).get("extractor_version") != pinned_version:
+        diff["extractor_version"] = [pinned_version, (art.key_extra_json or {}).get("extractor_version")]
     if diff:
         raise FeatureSetIntegrityError(f"feature set {fs_id}: artifact {art.id} of slide {slide_id} does not match "
                                        f"the set's identity: {sorted(diff)}")
     valid = _resolve_valid_artifact(art)
     if valid is None:
+        if _newer_generations(art):
+            raise FeatureSetIntegrityError(
+                f"repair_not_reproducible: feature set {fs_id}: the pinned artifact {art.id} of slide {slide_id} is "
+                f"missing or corrupt and no newer generation reproduces its embeddings sha256 "
+                f"{(art.embeddings_sha256 or '')[:12]}; its numbers are never replaced silently; create a new "
+                "feature set")
         raise FeatureSetIntegrityError(f"feature set {fs_id}: artifact objects of slide {slide_id} are missing or "
                                        "corrupt; POST /feature-sets/{id}/build re-extracts them (repair)")
     out = _materialise(valid)
@@ -1980,6 +2059,7 @@ def coverage_diagnostics(items: list[FeatureSetItem], snapshots: dict[str, dict]
                      "sampled_tissue_fraction": cov.get("sampled_tissue_fraction"),
                      "tissue_within_radius_of_sample_fraction": cov.get("tissue_within_radius_of_sample_fraction"),
                      "fragments_without_candidate": cov.get("fragments_without_candidate"),
+                     "fragments_without_sampled_patch": cov.get("fragments_without_sampled_patch"),
                      "rejected_at_read": cov.get("rejected_at_read"), "mask_coarse": cov.get("mask_coarse"),
                      "calibrated": snap.get("calibrated"), "mask_source": st.get("mask_source"),
                      "cache_hit": st.get("cache_hit"), "patches_per_second": st.get("patches_per_second"),
@@ -2207,6 +2287,7 @@ def validate_feature_set(fs_id: str, ctx: JobContext | None = None, *, seed: int
 @register(VALIDATE_JOB, description="Technical validation of a feature set: seeded re-extraction, determinism, "
                                     "throughput, memory")
 def validate_job(ctx: JobContext, payload: dict) -> dict:
+    refuse_label_payload(payload)  # design §1 invariant 4
     fs_id = payload.get("feature_set_id")
     if not fs_id:
         raise PermanentJobError("payload.feature_set_id is required")

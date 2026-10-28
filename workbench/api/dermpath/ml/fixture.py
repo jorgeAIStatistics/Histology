@@ -26,13 +26,12 @@ everything computed from it is a PIPELINE TEST, not pathology validation.
 
 Deprecated legacy path
 ----------------------
-Until the phase-3 callers migrate, :mod:`dermpath.ml.features` still constructs
-``EmbedContext(..., fixture_label=...)`` for the synthetic encoder. That constructor returns a
-:class:`LegacySyntheticContext` (not an ``EmbedContext``), which only the synthetic adapter's
-legacy ``embed`` accepts; every real adapter refuses it with
-:class:`SyntheticSignalForbidden`. :func:`legacy_synthetic_embeddings` gives output identical
-to :func:`synthetic_embeddings` for the same label. Both are removed once callers use
-:func:`fixture_context`.
+``EmbedContext(..., fixture_label=x)`` with ``x is not None`` still returns an inert
+:class:`LegacySyntheticContext` (not an ``EmbedContext``), but no adapter applies it any more:
+the synthetic adapter's legacy ``embed`` and every real adapter refuse it with
+:class:`SyntheticSignalForbidden`, and :func:`legacy_synthetic_embeddings` is label-free (a
+label raises). :mod:`dermpath.ml.features` applies a labelled pipeline-test signal only through
+:func:`fixture_context` + :func:`synthetic_embeddings`.
 """
 
 from __future__ import annotations
@@ -184,11 +183,11 @@ def synthetic_embeddings(ctx: FixtureContext, coords: np.ndarray, *, slide_sha25
 
 @dataclass(frozen=True)
 class LegacySyntheticContext:
-    """DEPRECATED label carrier for the pre-fixture synthetic path (removed in phase 3).
+    """DEPRECATED, inert label carrier of the pre-fixture synthetic path.
 
     Returned by ``EmbedContext(..., fixture_label=<not None>)``. It is deliberately NOT an
-    ``EmbedContext``: only the synthetic adapter's legacy ``embed`` accepts it, and every real
-    adapter refuses it.
+    ``EmbedContext``, and every adapter (the synthetic one included) refuses it: a label
+    without provenance and mode checks never reaches an embedding.
     """
 
     slide_sha256: str
@@ -199,9 +198,15 @@ class LegacySyntheticContext:
 
 def legacy_synthetic_embeddings(coords: np.ndarray, *, slide_sha256: str, seed: int, config: dict | None,
                                 fixture_label: int | None) -> np.ndarray:
-    """DEPRECATED: the pre-fixture synthetic path, kept so :mod:`dermpath.ml.features` keeps
-    working until phase 3. It applies the signal from a bare label without provenance or mode
-    checks; output is identical to :func:`synthetic_embeddings` for the same label."""
+    """DEPRECATED: label-free synthetic embeddings for the legacy path (identical to
+    :func:`synthetic_embeddings` with label 0 or ``None``).
+
+    A bare label carries no provenance, image kind or mode, so any ``fixture_label`` other than
+    ``None`` is refused with :class:`SyntheticSignalForbidden`: the signal is applied only through
+    a :class:`FixtureContext` from :func:`fixture_context`.
+    """
+    if fixture_label is not None:
+        raise SyntheticSignalForbidden("legacy_synthetic_embeddings never applies a label signal; use "
+                                       "synthetic_embeddings(fixture_context(...), ...)")
     cfg = synthetic_config(config) if config else dict(DEFAULT_CONFIG)
-    return _embed(coords, slide_sha256=slide_sha256, seed=int(seed), config=cfg,
-                  signal_label=_normalise_label(fixture_label))
+    return _embed(coords, slide_sha256=slide_sha256, seed=int(seed), config=cfg, signal_label=None)

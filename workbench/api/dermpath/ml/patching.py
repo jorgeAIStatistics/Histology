@@ -16,14 +16,17 @@ Policy-driven pipeline (``dermpath.patching/2``, research use only)
   (``implausible_mpp``), reads larger than ``max_read_ratio × patch_size`` (``read_size_cap``)
   and, unless ``allow_uncalibrated``, slides without mpp (``uncalibrated``). Uncalibrated
   plans read exactly ``uncalibrated_downsample`` level-0 px per output px, whatever the
-  pyramid layout, and are labelled uncalibrated.
+  pyramid layout, and are labelled uncalibrated. The plan's level-0 ``extent`` is the footprint
+  actually read (``ceil(read_size × level downsample)``), so exclusion checks and coverage
+  contain every pixel read; the effective mpp is that of the footprint.
 * :func:`candidate_grid` lays a grid of stride ``stride_fraction × extent``. With
   ``edge_mode="shift_inward"`` the last column and row are shifted inside the image, so tissue
   touching the right or bottom edge is reachable. Per-cell tissue fractions are exact area
   integrals over the mask. Cells below ``min_tissue_fraction`` or intersecting an excluded
-  polygon (exact geometry, level-0 units) are rejected and counted by reason. Mask fragments
-  (8-connected components) of at least ``fragment_rescue_min_area_um2`` that no candidate
-  overlaps get one tissue-centred patch (``fragment_rescue``).
+  polygon (exact geometry, level-0 units, nonzero winding rule, memory bounded whatever the
+  vertex count) are rejected and counted by reason. Mask fragments (8-connected components) of
+  at least ``fragment_rescue_min_area_um2`` that no candidate overlaps get one tissue-centred
+  patch (``fragment_rescue``), shifted away from an adjacent exclusion when one fits.
 * :func:`iter_patch_batches` streams ``uint8[B, H, W, 3]`` batches with bounded memory: one
   read per patch, one resize (BILINEAR, recorded) to ``patch_size``, a recorded background
   fill, and the read-time filters (``pen_marks``, ``background_at_read``, optional blur).
@@ -324,6 +327,13 @@ def _level_for_extent(downsamples: list[float], ext: tuple[int, int], patch_size
     return best
 
 
+def _footprint_extent(read: tuple[int, int], ds: float) -> tuple[int, int]:
+    """The whole level-0 rectangle covering a read of ``read`` px at a level of downsample ``ds`` (``read × ds``,
+    rounded UP for non-integer downsamples): exclusion checks and coverage use it, so they always contain every pixel
+    that is read."""
+    return (max(1, int(math.ceil(read[0] * ds - 1e-9))), max(1, int(math.ceil(read[1] * ds - 1e-9))))
+
+
 def plan_scale(*, mpp_x: float | None, mpp_y: float | None, level_downsamples: list[float],
                patch_size: int | None = None, target_mpp: float | None = None,
                fallback_downsample: float | None = None, policy: PatchPolicy | None = None) -> PatchPlan:
@@ -384,6 +394,11 @@ def _plan_scale_policy(*, mpp_x, mpp_y, level_downsamples, policy: PatchPolicy) 
         level = _level_for_extent(downsamples, ext, ps)
         ds = downsamples[level]
         read = (max(1, int(round(ext[0] / ds))), max(1, int(round(ext[1] / ds))))
+        # The extent is the footprint actually read (read size × level downsample), so the exclusion check and
+        # coverage describe the pixels that reach the encoder (never a sliver beyond the checked area), and the
+        # effective mpp is that of the true footprint.
+        foot = (read[0] * ds, read[1] * ds)
+        ext = _footprint_extent(read, ds)
         upsample = max(1.0, ps / read[0], ps / read[1])
         if upsample > policy.max_upsample_ratio + 1e-12:
             raise ScaleError("would_upsample", f"slide scanned at ({mx:g}, {my:g}) µm/px is coarser than the target "
@@ -392,7 +407,7 @@ def _plan_scale_policy(*, mpp_x, mpp_y, level_downsamples, policy: PatchPolicy) 
         if max(read) > policy.max_read_ratio * ps:
             raise ScaleError("read_size_cap", f"read size {read} at level {level} exceeds "
                                               f"{policy.max_read_ratio:g} × patch_size {ps}")
-        eff = (ext[0] * mx / ps, ext[1] * my / ps)
+        eff = (foot[0] * mx / ps, foot[1] * my / ps)
         scale = {"mode": "calibrated", "version": PATCHING_VERSION_V2, "target_mpp": target, "slide_mpp": [mx, my],
                  "effective_mpp": [round(eff[0], 6), round(eff[1], 6)], "read_level": level,
                  "read_level_downsample": ds, "read_size": list(read), "extent": list(ext),
@@ -411,6 +426,7 @@ def _plan_scale_policy(*, mpp_x, mpp_y, level_downsamples, policy: PatchPolicy) 
     level = _level_for_extent(downsamples, ext, ps)
     ds = downsamples[level]
     read = (max(1, int(round(ext[0] / ds))), max(1, int(round(ext[1] / ds))))
+    ext = _footprint_extent(read, ds)
     if max(read) > policy.max_read_ratio * ps:
         raise ScaleError("read_size_cap", f"read size {read} at level {level} exceeds "
                                           f"{policy.max_read_ratio:g} × patch_size {ps}")
@@ -499,13 +515,39 @@ def region_polygons(regions: list | None) -> list[np.ndarray]:
 
 
 def region_area_raster(regions: list | None, shape: tuple[int, int], ds: tuple[float, float]) -> np.ndarray:
-    """Filled polygons (no widened outline) on a mask grid of ``shape`` (h, w); for area accounting."""
+    """Excluded mask pixels on a grid of ``shape`` (h, w), for area accounting and fragment rescue.
+
+    The same pixel rule as candidate coverage (:func:`paint_rects`): a pixel counts when its CENTRE lies inside the
+    region, by the nonzero winding rule (a lasso drawn twice around a fold encloses its inner loop too). Scanline per
+    mask row over the polygon's edges: memory is one row, never rows × edges."""
     h, w = shape
-    img = Image.new("L", (w, h), 0)
-    draw = ImageDraw.Draw(img)
+    out = np.zeros((h, w), dtype=bool)
+    dsx, dsy = float(ds[0]), float(ds[1])
     for poly in region_polygons(regions):
-        draw.polygon([(x / ds[0], y / ds[1]) for x, y in poly.tolist()], fill=255)
-    return np.asarray(img) > 0
+        ax, ay = poly[:, 0], poly[:, 1]
+        bx, by = np.roll(ax, -1), np.roll(ay, -1)
+        r0 = max(0, int(math.floor(ay.min() / dsy - 0.5)))
+        r1 = min(h, int(math.ceil(ay.max() / dsy - 0.5)) + 1)
+        c0 = max(0, int(math.floor(ax.min() / dsx - 0.5)))
+        c1 = min(w, int(math.ceil(ax.max() / dsx - 0.5)) + 1)
+        if r0 >= r1 or c0 >= c1:
+            continue
+        xc = (np.arange(c0, c1, dtype=np.float64) + 0.5) * dsx
+        for i in range(r0, r1):
+            yc = (i + 0.5) * dsy
+            up = (ay <= yc) & (by > yc)
+            down = (by <= yc) & (ay > yc)
+            sel = up | down
+            if not sel.any():
+                continue
+            sa_x, sa_y, sb_x, sb_y = ax[sel], ay[sel], bx[sel], by[sel]
+            xint = sa_x + (sb_x - sa_x) * (yc - sa_y) / (sb_y - sa_y)
+            order = np.argsort(xint, kind="stable")
+            dirs = np.where(up[sel], 1, -1)[order]
+            suffix = np.concatenate([np.cumsum(dirs[::-1])[::-1], [0]])  # winding of points left of each crossing
+            k = np.searchsorted(xint[order], xc, side="right")
+            out[i, c0:c1] |= suffix[k] != 0
+    return out
 
 
 def _segments_hit_open_rects(x0, y0, x1, y1, ax, ay, dx, dy) -> np.ndarray:
@@ -527,15 +569,35 @@ def _segments_hit_open_rects(x0, y0, x1, y1, ax, ay, dx, dy) -> np.ndarray:
     return lo < hi
 
 
+#: Upper bound on points × edges per vectorised step of the exact geometry (bounded memory whatever the outline's
+#: vertex count: a freehand lasso may have up to annotations.MAX_POINTS vertices).
+_GEOMETRY_BLOCK = 1 << 18
+
+
 def _points_in_polygon(px: np.ndarray, py: np.ndarray, poly: np.ndarray) -> np.ndarray:
-    """Even-odd rule for many points against one polygon."""
-    ax, ay = poly[:, 0][None, :], poly[:, 1][None, :]
-    bx, by = np.roll(poly[:, 0], -1)[None, :], np.roll(poly[:, 1], -1)[None, :]
-    pxc, pyc = px[:, None], py[:, None]
-    crosses = (ay > pyc) != (by > pyc)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        xint = (bx - ax) * (pyc - ay) / (by - ay) + ax
-    return (np.count_nonzero(crosses & (pxc < xint), axis=1) % 2) == 1
+    """Nonzero winding rule for many points against one polygon (for a simple polygon it equals the even-odd rule;
+    a self-intersecting lasso drawn twice around a region keeps its doubly enclosed interior inside). Processed in
+    blocks of edges, so memory stays bounded by :data:`_GEOMETRY_BLOCK`."""
+    px = np.asarray(px, dtype=np.float64).ravel()
+    py = np.asarray(py, dtype=np.float64).ravel()
+    winding = np.zeros(px.size, dtype=np.int64)
+    if not px.size:
+        return winding.astype(bool)
+    ax_all, ay_all = poly[:, 0], poly[:, 1]
+    bx_all, by_all = np.roll(ax_all, -1), np.roll(ay_all, -1)
+    rows = 4096
+    for r in range(0, px.size, rows):
+        pxc, pyc = px[r:r + rows, None], py[r:r + rows, None]
+        step = max(1, _GEOMETRY_BLOCK // pxc.shape[0])
+        acc = np.zeros(pxc.shape[0], dtype=np.int64)
+        for e in range(0, ax_all.size, step):
+            ax, ay = ax_all[None, e:e + step], ay_all[None, e:e + step]
+            bx, by = bx_all[None, e:e + step], by_all[None, e:e + step]
+            left = (bx - ax) * (pyc - ay) - (pxc - ax) * (by - ay)  # > 0: the point is left of a -> b
+            acc += np.count_nonzero((ay <= pyc) & (by > pyc) & (left > 0), axis=1)
+            acc -= np.count_nonzero((by <= pyc) & (ay > pyc) & (left < 0), axis=1)
+        winding[r:r + rows] = acc
+    return winding != 0
 
 
 def cells_hit_regions(coords: np.ndarray, extent: tuple[int, int], regions: list[dict] | list[np.ndarray] | None,
@@ -564,8 +626,12 @@ def cells_hit_regions(coords: np.ndarray, extent: tuple[int, int], regions: list
         for s in range(0, near.size, chunk):
             idx = near[s:s + chunk]
             x0, y0 = coords[idx, 0][:, None], coords[idx, 1][:, None]
-            seg = _segments_hit_open_rects(x0, y0, x0 + ew, y0 + eh, a[:, 0][None, :], a[:, 1][None, :],
-                                           d[:, 0][None, :], d[:, 1][None, :]).any(axis=1)
+            seg = np.zeros(idx.size, dtype=bool)
+            step = max(1, _GEOMETRY_BLOCK // idx.size)  # blocks of edges: memory never grows with the vertex count
+            for e in range(0, a.shape[0], step):
+                seg |= _segments_hit_open_rects(x0, y0, x0 + ew, y0 + eh, a[None, e:e + step, 0],
+                                                a[None, e:e + step, 1], d[None, e:e + step, 0],
+                                                d[None, e:e + step, 1]).any(axis=1)
             centre = _points_in_polygon(coords[idx, 0] + ew / 2, coords[idx, 1] + eh / 2, poly)
             hit[idx] |= seg | centre
     return hit
@@ -818,13 +884,52 @@ def _rescue_fragments(mask, mask_ds, plan, dims, coords, polys, min_area_um2, st
         x = int(min(max(0, int(round(px - ew / 2))), max(0, W - ew)))
         y = int(min(max(0, int(round(py - eh / 2))), max(0, H - eh)))
         if polys and cells_hit_regions(np.array([[x, y]]), (ew, eh), polys)[0]:
-            stats["blocked_by_exclusion"] += 1
-            continue
+            placed = _shifted_rescue(labels, k, sl, (px, py), (x, y), dims, (ew, eh), mask_ds, polys)
+            if placed is None:
+                stats["blocked_by_exclusion"] += 1
+                continue
+            x, y = placed
+            stats["shifted_away_from_exclusion"] = stats.get("shifted_away_from_exclusion", 0) + 1
         rescue_cover |= paint_rects(mask.shape, mask_ds, np.array([[x, y]]), (ew, eh))
         out.append((x, y))
     stats["rescued"] = len(out)
     stats["unresolved"] = int(need.size - len(out) - stats["covered_by_other_rescue"])
     return (np.asarray(out, dtype=np.int64).reshape(-1, 2)), stats
+
+
+def _shifted_rescue(labels: np.ndarray, k: int, sl, anchor: tuple[float, float], centred: tuple[int, int],
+                    dims: tuple[int, int], extent: tuple[int, int], mask_ds: tuple[float, float],
+                    polys: list) -> tuple[int, int] | None:
+    """A rescue placement that still contains the fragment's anchor pixel but does not touch an excluded region,
+    when the tissue-centred one does: patch edges aligned with the fragment's bounding box or the anchor, the one
+    covering most of the fragment first (then the closest to the centred placement). None when none fits."""
+    W, H = dims
+    ew, eh = extent
+    dsx, dsy = float(mask_ds[0]), float(mask_ds[1])
+    px, py = anchor
+    fx0, fx1 = sl[1].start * dsx, sl[1].stop * dsx
+    fy0, fy1 = sl[0].start * dsy, sl[0].stop * dsy
+
+    def options(lo: float, hi: float, a: float, size: int, limit: int, centre: int) -> list[int]:
+        vals = {centre, int(math.floor(lo)), int(math.ceil(hi)) - size, int(math.floor(a)),
+                int(math.floor(a)) - size + 1}
+        return sorted({int(min(max(0, v), max(0, limit - size))) for v in vals})
+
+    xs = [v for v in options(fx0, fx1, px, ew, W, centred[0]) if v <= px < v + ew]
+    ys = [v for v in options(fy0, fy1, py, eh, H, centred[1]) if v <= py < v + eh]
+    cand = np.array([[x, y] for y in ys for x in xs if (x, y) != tuple(centred)], dtype=np.int64).reshape(-1, 2)
+    if not cand.shape[0]:
+        return None
+    cand = cand[~cells_hit_regions(cand, extent, polys)]
+    if not cand.shape[0]:
+        return None
+    sub = labels[sl] == k
+    scores = []
+    for x, y in cand.tolist():
+        cover = paint_rects(labels.shape, mask_ds, np.array([[x, y]]), extent)[sl][sub].sum()
+        scores.append((-int(cover), abs(x - centred[0]) + abs(y - centred[1]), y, x))
+    best = min(scores)
+    return int(best[3]), int(best[2])
 
 
 # --------------------------------------------------------------------------- legacy coordinates

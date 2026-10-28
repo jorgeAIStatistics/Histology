@@ -45,7 +45,7 @@ from ..datasets import IMPORTED_REFERENCE_NOTICE, seal_test_patients, training_e
 from ..db import session_scope
 from ..errors import conflict, not_found, unprocessable
 from ..jobs import queue
-from ..jobs.registry import PermanentJobError, register
+from ..jobs.registry import PermanentJobError, refuse_label_payload, register
 from ..models import (
     AnnotationVersion,
     DatasetVersion,
@@ -188,6 +188,19 @@ def _unscorable(run: TrainingRun, split: str, unscored: list | None, manifest: d
     return ys, ps, rows, unresolved
 
 
+def _cluster_keys(preds: list, manifest: dict | None):
+    """Coded patient id -> content-stable bootstrap cluster key (the patient code; the id only when no code is
+    recorded). Patient-cluster bootstraps order patients by this key, so CIs never depend on database uuids."""
+    code_of: dict[str, str] = {}
+    for it in (manifest or {}).get("items", []):
+        if it.get("coded_patient_id") and it.get("patient_code"):
+            code_of.setdefault(it["coded_patient_id"], str(it["patient_code"]))
+    for p in preds:
+        if p.patient_code:
+            code_of[p.coded_patient_id] = str(p.patient_code)
+    return lambda pid: code_of.get(pid) or pid
+
+
 def _calibration(run: TrainingRun) -> dict | None:
     cal = run.calibration_json
     if isinstance(cal, dict) and cal.get("schema") == CALIBRATION_SCHEMA:
@@ -288,10 +301,42 @@ def failure_contexts(db: Session | None, run: TrainingRun, preds: list, manifest
     if manifest:
         dev = ("train", "val") if run.evaluation_protocol == "dev_cv" else ("train",)
         rows = [it for it in manifest.get("items", []) if it.get("split") in dev]
-        train_domain = {"scanner_ids": sorted({r["scanner_id"] for r in rows if r.get("scanner_id")}),
-                        "site_ids": sorted({r["site_id"] for r in rows if r.get("site_id")}),
-                        "splits": list(dev)}
+        train_domain = _domain_of(rows, splits=list(dev))
+        if run.evaluation_protocol == "dev_cv":
+            _oof_fold_domains(run, preds, rows, contexts)
     return contexts, train_domain
+
+
+def _domain_of(rows: list[dict], **extra) -> dict:
+    return {"scanner_ids": sorted({r["scanner_id"] for r in rows if r.get("scanner_id")}),
+            "site_ids": sorted({r["site_id"] for r in rows if r.get("site_id")}), **extra}
+
+
+def _oof_fold_domains(run: TrainingRun, preds: list, dev_rows: list[dict], contexts: dict) -> None:
+    """Under dev_cv an out-of-fold bag was scored by a fold model fitted on the OTHER folds: its training domain is
+    the development items of patients in other folds (never the bag's own patient), set per bag in ``contexts``."""
+    cv = (((run.metrics_json or {}).get("protocol") or {}).get("cv") or {})
+    fold_of_code = {str(k): int(v) for k, v in (cv.get("fold_of_patient_code") or {}).items()}
+    fold_of_pid: dict[str, int] = {}
+    for p in preds:
+        f = (p.attributes_json or {}).get("fold")
+        if p.split == "oof" and f is not None:
+            fold_of_pid[p.coded_patient_id] = int(f)
+
+    def fold_of(row: dict) -> int | None:
+        code = row.get("patient_code")
+        if code is not None and str(code) in fold_of_code:
+            return fold_of_code[str(code)]
+        return fold_of_pid.get(row.get("coded_patient_id"))
+
+    folds = [(fold_of(r), r) for r in dev_rows]
+    for p in preds:
+        f = (p.attributes_json or {}).get("fold")
+        if p.split != "oof" or f is None or p.bag_id not in contexts:
+            continue
+        fit_rows = [r for fr, r in folds if fr is not None and fr != int(f)]
+        contexts[p.bag_id]["train_domain"] = _domain_of(fit_rows, fold=int(f),
+                                                        source="development items of the other folds")
 
 
 def qc_context(db: Session, slide_ids: list[str]) -> dict:
@@ -323,7 +368,8 @@ def build_evaluation(run: TrainingRun, split: str, preds: list, unscored: list |
     preds = sorted(preds, key=lambda p: p.bag_id)
     y = np.array([int(p.label) for p in preds], dtype=np.int64)
     s = np.array([float(p.score) for p in preds], dtype=np.float64)
-    patients = [p.coded_patient_id for p in preds]
+    cluster = _cluster_keys(preds, manifest)
+    patients = [cluster(p.coded_patient_id) for p in preds]
     n_boot = int(params.get("n_boot", 1000))
     min_patients = int(params.get("boot_min_patients", 10))
     seed, seed_source = _boot_seed(db, run)
@@ -331,6 +377,7 @@ def build_evaluation(run: TrainingRun, split: str, preds: list, unscored: list |
     warnings: list[str] = []
 
     uy, up, unscored_rows, unresolved = _unscorable(run, split, unscored, manifest)
+    up = [cluster(pid) for pid in up]
     if unresolved:
         warnings.append(f"{unresolved} unscorable bag(s) could not be matched to a reference label; they are listed "
                         "under 'unscored' but not counted in the intention-to-evaluate metrics")
@@ -388,7 +435,8 @@ def build_evaluation(run: TrainingRun, split: str, preds: list, unscored: list |
              for p in preds]
     try:
         subgroups = M.subgroup_analysis(y, s, patients, attrs, threshold=t,
-                                        min_patients=int(params.get("subgroup_min_n", 10)), n_boot=n_boot, seed=seed)
+                                        min_patients=int(params.get("subgroup_min_n", 10)), n_boot=n_boot, seed=seed,
+                                        tuning_set=tuning)
     except ValueError as exc:  # analytics never fail the job that stores the evaluation
         subgroups = {"count_unit": "patients", "min_patients": int(params.get("subgroup_min_n", 10)), "rows": [],
                      "note": f"not available: {exc}"}
@@ -472,27 +520,46 @@ def build_evaluation(run: TrainingRun, split: str, preds: list, unscored: list |
     }
     # Which labels this evaluation measures agreement with (W8 contract D). Imported reference labels are an external
     # dataset's own standard, not expert reads in this workbench: the body says so wherever metrics are shown.
-    standard = ((manifest or {}).get("config") or {}).get("reference_standard", "expert")
-    body["reference_standard"] = standard
-    if standard == "imported_reference":
-        body["reference_standard_notice"] = IMPORTED_REFERENCE_NOTICE
+    body.update(reference_standard_fields(manifest))
+    if body.get("reference_standard_notice"):
         body["warnings"].append(IMPORTED_REFERENCE_NOTICE)
     if release is not None:
-        body.update(test_release_fields(release))
+        body.update(test_release_fields(release, db))
         body["computed_after_threshold_frozen_at"] = run.threshold_frozen_at.isoformat()
         body["feature_set_id"] = run.feature_set_id
         body["scored_from"] = "pinned feature-set artifacts (no re-extraction)"
-        if release.release_number > 1:
+        looks = body.get("prior_releases_on_test_patients") or 0
+        if release.release_number > 1 or looks:
             body["warnings"].append(
-                f"this is test release {release.release_number} on this manifest: {release.release_number - 1} "
-                "earlier release(s) looked at this test split, so these results are not fully independent of "
-                "earlier decisions")
+                f"this is test release {release.release_number} on this manifest, and {looks} earlier release(s) in "
+                "the project looked at these test patients, so these results are not fully independent of earlier "
+                "decisions")
     return body
 
 
-def test_release_fields(rel: TestRelease) -> dict:
+def reference_standard_of_manifest(manifest: dict | None) -> str:
+    return ((manifest or {}).get("config") or {}).get("reference_standard") or "expert"
+
+
+def reference_standard_fields(manifest: dict | None) -> dict:
+    """``{reference_standard, reference_standard_notice?}`` for any body that shows results measured against the
+    manifest's labels (evaluations, failure analysis, paired comparisons, review priorities, benchmark reports).
+    Under ``imported_reference`` the notice says the labels are an external dataset's standard, not expert reads."""
+    standard = reference_standard_of_manifest(manifest)
+    out = {"reference_standard": standard}
+    if standard == "imported_reference":
+        out["reference_standard_notice"] = IMPORTED_REFERENCE_NOTICE
+    return out
+
+
+def test_release_fields(rel: TestRelease, db: Session | None = None) -> dict:
+    prior_looks = None
+    if db is not None:
+        prior_looks = prior_looks_at_test_patients(db, db.get(DatasetVersion, rel.dataset_version_id), before=rel)
     return {"test_release_id": rel.id, "release_number": int(rel.release_number),
             "prior_releases_on_manifest": int(rel.release_number) - 1,
+            "prior_releases_on_test_patients": None if prior_looks is None else len(prior_looks),
+            "prior_test_releases_on_test_patients": prior_looks,
             "test_release_candidate": {"kind": rel.candidate_kind, "bundle_id": rel.bundle_id,
                                        "family_id": rel.family_id},
             "test_release_note": TEST_RELEASE_NOTE}
@@ -533,6 +600,35 @@ def releases_for_run(db: Session, run: TrainingRun) -> list[TestRelease]:
 
 def release_count(db: Session, dataset_version_id: str) -> int:
     return len(db.scalars(select(TestRelease.id).where(TestRelease.dataset_version_id == dataset_version_id)).all())
+
+
+def _test_patients(dv: DatasetVersion | None) -> set[str]:
+    return {s["coded_patient_id"] for s in ((dv.manifest_json if dv is not None else None) or {}).get("splits", [])
+            if s.get("split") == "test"}
+
+
+def prior_looks_at_test_patients(db: Session, dv: DatasetVersion, *, before: TestRelease | None = None) -> list[dict]:
+    """Earlier test releases in the project (on ANY dataset version: this manifest, a child version, another lineage
+    or a fresh root dataset of the same cohort) whose test patients overlap this version's test patients.
+
+    A release counts looks at test PATIENTS, not at manifests: a child version inherits the sealed test patients, so
+    releasing a run of it is a second look at the same test set. ``before``: only releases recorded before it."""
+    mine = _test_patients(dv)
+    if not mine:
+        return []
+    rows = db.scalars(select(TestRelease).where(TestRelease.project_id == dv.project_id)
+                      .order_by(TestRelease.released_at, TestRelease.release_number)).all()
+    out, versions = [], {}
+    for r in rows:
+        if before is not None and (r.id == before.id or r.released_at >= before.released_at):
+            continue
+        if r.dataset_version_id not in versions:
+            versions[r.dataset_version_id] = _test_patients(db.get(DatasetVersion, r.dataset_version_id))
+        overlap = mine & versions[r.dataset_version_id]
+        if overlap:
+            out.append({"test_release_id": r.id, "dataset_version_id": r.dataset_version_id,
+                        "release_number": r.release_number, "overlapping_test_patients": len(overlap)})
+    return out
 
 
 def family_run_ids(db: Session, fam: ComparisonFamily) -> list[str]:
@@ -648,10 +744,13 @@ def create_test_release(db: Session, actor, run: TrainingRun, *, reason: str, ju
         raise conflict("manifest_mismatch", "The comparison family uses another dataset version")
     prior = release_count(db, dv.id)
     number = prior + 1
-    if number > 1 and not justification:
-        raise unprocessable("justification_required", f"{prior} test release(s) already exist on this manifest; a "
-                            "further release needs a justification, and it is counted and shown",
-                            prior_releases_on_manifest=prior)
+    looks = prior_looks_at_test_patients(db, dv)
+    if (number > 1 or looks) and not justification:
+        raise unprocessable("justification_required", f"{prior} test release(s) already exist on this manifest and "
+                            f"{len(looks)} earlier release(s) in the project looked at these test patients (a child "
+                            "version or another dataset of the same cohort); a further look needs a justification, "
+                            "and it is counted and shown", prior_releases_on_manifest=prior,
+                            prior_releases_on_test_patients=len(looks), prior_test_releases=looks[:20])
     seal = seal_test_patients(db, dv, f"test release {number} ({kind}): {reason}", actor)
     rel = TestRelease(project_id=run.project_id, dataset_version_id=dv.id, dataset_manifest_sha256=dv.manifest_sha256,
                       release_number=number, candidate_kind=kind, bundle_id=bundle.id if bundle else None,
@@ -672,7 +771,8 @@ def create_test_release(db: Session, actor, run: TrainingRun, *, reason: str, ju
     if family is not None:
         family.status = "test_released"
     db.flush()
-    after = {"release_number": number, "prior_releases_on_manifest": prior, "candidate_kind": kind,
+    after = {"release_number": number, "prior_releases_on_manifest": prior,
+             "prior_releases_on_test_patients": len(looks), "candidate_kind": kind,
              "bundle_id": rel.bundle_id, "family_id": rel.family_id, "run_ids": rel.run_ids_json,
              "dataset_manifest_sha256": dv.manifest_sha256, "sealed_patients": rel.sealed_patient_count,
              "justification": justification, "job_id": job.id}
@@ -689,9 +789,11 @@ def test_release_dict(db: Session, rel: TestRelease) -> dict:
     job = db.get(Job, rel.job_id) if rel.job_id else None
     stored = {rid: (ev.id if (ev := stored_evaluation(db, rid, "test")) is not None else None)
               for rid in rel.run_ids_json or []}
+    looks = prior_looks_at_test_patients(db, db.get(DatasetVersion, rel.dataset_version_id), before=rel)
     return {"id": rel.id, "project_id": rel.project_id, "dataset_version_id": rel.dataset_version_id,
             "dataset_manifest_sha256": rel.dataset_manifest_sha256, "release_number": rel.release_number,
-            "prior_releases_on_manifest": rel.release_number - 1, "candidate_kind": rel.candidate_kind,
+            "prior_releases_on_manifest": rel.release_number - 1, "prior_releases_on_test_patients": len(looks),
+            "candidate_kind": rel.candidate_kind,
             "bundle_id": rel.bundle_id, "family_id": rel.family_id, "run_ids": rel.run_ids_json,
             "split_family_id": rel.split_family_id, "sealed_patient_count": rel.sealed_patient_count,
             "reason": rel.reason, "justification": rel.justification, "released_by": rel.released_by,
@@ -707,6 +809,8 @@ def test_release_status(db: Session, run: TrainingRun, actor_role: str | None = 
 
     rels = releases_for_run(db, run)
     prior = release_count(db, run.dataset_version_id)
+    dv = db.get(DatasetVersion, run.dataset_version_id) if run.dataset_version_id else None
+    looks = len(prior_looks_at_test_patients(db, dv)) if dv is not None else 0
     families = families_of_run(db, run)
     locked = [f for f in families if f.status == "locked"]
     bundle = bundle_of_run(db, run)
@@ -729,8 +833,8 @@ def test_release_status(db: Session, run: TrainingRun, actor_role: str | None = 
     return {"run_id": run.id, "released": bool(rels), "releases": [test_release_dict(db, r) for r in rels],
             "test_evaluation_stored": stored_evaluation(db, run.id, "test") is not None,
             "candidate": cand, "families": [{"id": f.id, "name": f.name, "status": f.status} for f in families],
-            "prior_releases_on_manifest": prior, "next_release_number": prior + 1,
-            "justification_required": prior > 0, "blockers": blockers,
+            "prior_releases_on_manifest": prior, "prior_releases_on_test_patients": looks,
+            "next_release_number": prior + 1, "justification_required": prior > 0 or looks > 0, "blockers": blockers,
             "can_release": not rels and not blockers and (actor_role is None or role_has(actor_role,
                                                                                          "dataset.test_access")),
             "requires": "research lead (dataset.test_access), a reason, and a declared candidate",
@@ -939,14 +1043,17 @@ def _release_run(release_id: str, run_id: str, ctx) -> dict:
             return {"status": "stored", "evaluation_id": ev.id, "idempotent_replay": True}
         dv = db.get(DatasetVersion, run.dataset_version_id)
         preds = []
-        for bag, score, _cal, pred, abst in scored:
+        for bag, score, cal, pred, abst in scored:
             preds.append(Prediction(
                 run_id=run.id, project_id=run.project_id, split="test", bag_kind=bag.kind, bag_id=bag.bag_id,
                 slide_ids_json=bag.slide_ids, case_id=bag.case_id, coded_patient_id=bag.patient_id,
                 patient_code=bag.patient_code, label_value=bag.label_value, label_version_ids_json=bag.label_version_ids,
                 label=bag.label, score=score, threshold=float(run.threshold_value), predicted=pred, abstained=abst,
+                # Like development rows (training.prediction_records): the frozen calibration applied to this bag.
                 attributes_json={**bag.attributes, "n_patches": meta[bag.bag_id]["n_patches"],
-                                 "qc_context": qc.get(bag.bag_id), "test_release_id": rel.id},
+                                 "qc_context": qc.get(bag.bag_id), "test_release_id": rel.id,
+                                 "calibrated_score": None if cal is None else float(cal),
+                                 "manifest_split": "test"},
                 attention_json=None, feature_artifact_ids_json=meta[bag.bag_id]["artifacts"]))
         body = build_evaluation(run, "test", preds, unscored, manifest=dv.manifest_json, release=rel, db=db)
         cats = {e["bag_id"]: e["categories"] for e in body["failure_analysis"].get("errors", [])}
@@ -983,8 +1090,7 @@ def run_test_release(release_id: str, ctx=None) -> dict:
 
 @register(TEST_RELEASE_JOB, description="Score a recorded test release from pinned feature-set artifacts")
 def evaluate_test_release(ctx, payload: dict) -> dict:
-    if any(k in payload for k in ("label", "labels", "fixture_label")):
-        raise PermanentJobError("job payloads never carry labels")
+    refuse_label_payload(payload)  # design §1 invariant 4
     rid = payload.get("test_release_id")
     if not rid:
         raise PermanentJobError("payload.test_release_id is required")
@@ -1007,7 +1113,8 @@ def failure_reason(p: Prediction) -> str | None:
 def errors_response(db: Session, run: TrainingRun, split: str) -> dict:
     preds = db.scalars(select(Prediction).where(Prediction.run_id == run.id, Prediction.split == split)).all()
     t = float(run.threshold_value) if run.threshold_value is not None else 0.5
-    contexts, train_domain = failure_contexts(db, run, preds, _manifest(db, run))
+    manifest = _manifest(db, run)
+    contexts, train_domain = failure_contexts(db, run, preds, manifest)
     tax = failure_taxonomy([{"bag_id": p.bag_id, "label": p.label, "score": p.score, "threshold": p.threshold,
                              "predicted": p.predicted} for p in preds], contexts, positive_class=run.positive_class,
                            negative_class=run.negative_class, train_domain=train_domain)
@@ -1036,6 +1143,7 @@ def errors_response(db: Session, run: TrainingRun, split: str) -> dict:
             "order": "false negatives first (lowest score first), then false positives (highest score first)",
             "failure_reason_note": "null unless a QC issue or missing calibration offers a possible contributing "
                                    "factor; never a causal explanation",
+            **reference_standard_fields(manifest),
             "synthetic": run.synthetic, "banner": banner(run)}
 
 
@@ -1148,7 +1256,8 @@ def lock_family(db: Session, actor, fam: ComparisonFamily, reason: str) -> Compa
 def _score_set(db: Session, run: TrainingRun, split: str, manifest: dict | None) -> ScoreSet:
     preds = db.scalars(select(Prediction).where(Prediction.run_id == run.id, Prediction.split == split)
                        .order_by(Prediction.bag_id)).all()
-    return ScoreSet(name=run.id, bag_ids=[p.bag_id for p in preds], patients=[p.coded_patient_id for p in preds],
+    return ScoreSet(name=run.id, bag_ids=[p.bag_id for p in preds],
+                    patients=[p.patient_code or p.coded_patient_id for p in preds],  # content-stable clusters
                     labels=[p.label for p in preds], scores=[p.score for p in preds],
                     threshold=float(run.threshold_value), manifest_sha256=run.dataset_manifest_sha256,
                     split_fingerprint=(manifest or {}).get("split_fingerprint"))
@@ -1165,11 +1274,12 @@ def family_comparison(db: Session, fam: ComparisonFamily, runs: list[TrainingRun
     if any(not ss.bag_ids for ss in sets):
         return {"status": "not_available", "split": split,
                 "reason": f"at least one run has no stored '{split}' predictions"}
+    standard = reference_standard_fields(manifest)
     try:
         res = paired_comparison(sets, n_boot=n_boot, seed=int(fam.bootstrap_seed), min_patients=min_patients)
     except ComparisonRefused as exc:
-        return {"status": "refused", "split": split, "code": exc.code, "reason": exc.detail}
-    return {"status": "ok", "split": split, "result": res}
+        return {"status": "refused", "split": split, "code": exc.code, "reason": exc.detail, **standard}
+    return {"status": "ok", "split": split, "result": res, **standard}
 
 
 def family_dict(db: Session, fam: ComparisonFamily, *, actor_role: str | None = None, n_boot: int | None = None,
@@ -1190,6 +1300,8 @@ def family_dict(db: Session, fam: ComparisonFamily, *, actor_role: str | None = 
            "synthetic": any(r.synthetic for r in runs),
            "banner": PIPELINE_TEST_BANNER if any(r.synthetic for r in runs) else None, "note": FAMILY_NOTE,
            "winner": None}
+    dv = db.get(DatasetVersion, fam.dataset_version_id)
+    out.update(reference_standard_fields(dv.manifest_json if dv is not None else None))
     if not with_comparison:
         return out
     nb = int(n_boot if n_boot is not None else (fam.plan_json or {}).get("n_boot", 1000))
@@ -1218,4 +1330,5 @@ __all__ = ["build_evaluation", "store_evaluation", "stored_evaluation", "evaluat
            "require_test_unlocked", "create_test_release", "run_test_release", "stored_test_evaluation",
            "test_release_status", "test_release_dict", "errors_response", "attention_response",
            "prediction_for_slide", "failure_reason", "qc_context", "bags_from_items", "verify_slide_features",
-           "create_family", "add_family_member", "lock_family", "family_dict", "family_run_ids"]
+           "create_family", "add_family_member", "lock_family", "family_dict", "family_run_ids",
+           "reference_standard_fields"]

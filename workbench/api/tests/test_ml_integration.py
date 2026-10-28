@@ -69,10 +69,12 @@ def test_extract_features_job_refuses_a_payload_carrying_a_label(env, ids):
 
 def test_fixture_label_never_reaches_a_real_slide(env, ids):
     """The legacy features path applies fixture.py's rule: a labelled synthetic extraction on
-    a public/real slide is refused before any cache lookup or write."""
+    a public/real slide is refused before any cache lookup or write. Design §1 invariant 2 has no
+    exception for this path either: an UNLABELLED synthetic extraction of a real slide is refused
+    (mode_mismatch) too."""
     from dermpath.db import session_scope
     from dermpath.ml.config import resolve_params
-    from dermpath.ml.features import extract_slide_features
+    from dermpath.ml.features import FeatureError, extract_slide_features
     from dermpath.ml.fixture import SyntheticSignalForbidden
     from dermpath.ml.models import FeatureArtifact
 
@@ -85,9 +87,12 @@ def test_fixture_label_never_reaches_a_real_slide(env, ids):
                                    fixture_label=label)
     with session_scope() as db:
         assert db.scalar(select(func.count(FeatureArtifact.id))) == before
-    # Unlabelled extraction of the same slide, and labelled extraction of a synthetic tile, still work.
-    assert extract_slide_features(ids["slides"]["cmu_cc0"], encoder_id=SYNTH, params=params, seed=0,
-                                  fixture_label=None).n_patches > 0
+    # Unlabelled synthetic extraction of the same real slide is refused as well; labelled extraction of a synthetic
+    # tile still works.
+    with pytest.raises(FeatureError, match="mode_mismatch"):
+        extract_slide_features(ids["slides"]["cmu_cc0"], encoder_id=SYNTH, params=params, seed=0, fixture_label=None)
+    with session_scope() as db:
+        assert db.scalar(select(func.count(FeatureArtifact.id))) == before
     assert extract_slide_features(ids["slides"]["p1_a1_l1"], encoder_id=SYNTH, params=params, seed=0,
                                   fixture_label=1).n_patches > 0
 

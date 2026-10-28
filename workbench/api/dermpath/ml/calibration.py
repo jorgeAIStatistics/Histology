@@ -166,10 +166,21 @@ def fit_calibration(scores, labels, *, method: str, item_splits: Sequence[str], 
         x = _transform(s, score_input, eps)
         targets = np.where(y == 1, (n_pos + 1.0) / (n_pos + 2.0), 1.0 / (n_neg + 2.0))
         a, b, iterations, converged = _platt_newton(x, targets)
-        params = {"slope": -a, "intercept": -b, "score_input": score_input, "eps": float(eps),
+        slope, intercept, constraint = -a, -b, None
+        if slope < 0.0:
+            # Decisions use the raw score against the frozen threshold and the calibrated score is reported beside
+            # them, so the map must be non-decreasing. A negative slope means the development scores run against the
+            # labels: the constrained fit (slope >= 0) is then the intercept-only one, a constant probability equal
+            # to the mean Platt target, and the reason is recorded.
+            mean_target = float(np.mean(targets))
+            slope, intercept = 0.0, float(np.log(mean_target) - np.log1p(-mean_target))
+            constraint = (f"slope clamped at 0 (the unconstrained fit gave {-a:.6g}): development scores are "
+                          "anti-informative, so the calibrated score is a constant")
+        params = {"slope": slope, "intercept": intercept, "score_input": score_input, "eps": float(eps),
                   "formula": "p = 1 / (1 + exp(-(slope * x + intercept))), x = " + (
                       "logit(clip(score, eps, 1 - eps))" if score_input == "logit" else "score"),
                   "targets": "Platt smoothed: (N+ + 1) / (N+ + 2) for positives, 1 / (N- + 2) for negatives",
+                  "constraint": "slope >= 0 (rank-preserving)", "constrained": constraint,
                   "iterations": int(iterations), "converged": bool(converged)}
     else:
         from sklearn.isotonic import IsotonicRegression  # lazy: only fitting needs scikit-learn

@@ -78,7 +78,9 @@ def failure_taxonomy(records: Iterable[Mapping], contexts: Mapping[str, Mapping]
     names or dicts with ``category``), ``lesion_area_um2`` (from expert outlines only),
     ``reader_disagreement`` (bool), ``scanner_id``, ``site_id``, ``negative_category``.
     ``train_domain``: ``{"scanner_ids": [...], "site_ids": [...]}`` seen in training; without
-    it ``domain_shift`` is not assessable."""
+    it ``domain_shift`` is not assessable. A context's own ``train_domain`` (same shape) replaces it
+    for that bag: an out-of-fold bag is judged against its fold model's fitting data, which never
+    contains the bag itself."""
     policy.validate()
     contexts = contexts or {}
     train_scanners = set((train_domain or {}).get("scanner_ids") or ())
@@ -133,13 +135,19 @@ def failure_taxonomy(records: Iterable[Mapping], contexts: Mapping[str, Mapping]
             details["possible_label_error"] = ("confident error with a reader disagreement on record: the reference "
                                                "label may need adjudication (it is not changed here)")
         scanner, site = ctx.get("scanner_id"), ctx.get("site_id")
-        if train_domain is None or (scanner is None and site is None):
+        # A bag-specific training domain (an out-of-fold bag: the data its fold model was fitted on) wins over
+        # the global one.
+        bag_domain = ctx.get("train_domain")
+        domain = bag_domain if bag_domain is not None else train_domain
+        if domain is None or (scanner is None and site is None):
             not_assessable["domain_shift"] += 1
         else:
+            seen_scanners = set(bag_domain.get("scanner_ids") or ()) if bag_domain is not None else train_scanners
+            seen_sites = set(bag_domain.get("site_ids") or ()) if bag_domain is not None else train_sites
             unseen = []
-            if scanner is not None and scanner not in train_scanners:
+            if scanner is not None and scanner not in seen_scanners:
                 unseen.append(f"scanner '{scanner}'")
-            if site is not None and site not in train_sites:
+            if site is not None and site not in seen_sites:
                 unseen.append(f"site '{site}'")
             if unseen:
                 cats.append("domain_shift")

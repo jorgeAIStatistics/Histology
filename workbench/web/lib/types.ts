@@ -734,6 +734,8 @@ export interface TestRelease {
   id: string;
   release_number: number;
   prior_releases_on_manifest: number;
+  /** Earlier releases in the project (any dataset version) whose test patients overlap this one's. */
+  prior_releases_on_test_patients?: number;
   candidate_kind: "bundle" | "family";
   bundle_id: string | null;
   family_id: string | null;
@@ -755,6 +757,9 @@ export interface TestReleaseStatus {
   test_evaluation_stored: boolean;
   candidate: { kind: "bundle" | "family" | null; bundle_id: string | null; family_id: string | null; ready: boolean; reason: string | null };
   prior_releases_on_manifest: number;
+  /** Earlier releases in the project that looked at these test patients (a child version or another dataset of the
+   * same cohort); a further look needs a justification even when the manifest has no release yet. */
+  prior_releases_on_test_patients?: number;
   next_release_number: number;
   justification_required: boolean;
   blockers: string[];

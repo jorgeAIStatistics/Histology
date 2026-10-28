@@ -46,7 +46,7 @@ from ..datasets import IMPORTED_REFERENCE_NOTICE, item_data_mode, qc_snapshot
 from ..db import session_scope
 from ..errors import conflict, not_found
 from ..jobs import queue
-from ..jobs.registry import PermanentJobError, register
+from ..jobs.registry import PermanentJobError, refuse_label_payload, register
 from ..models import Slide
 from ..storage import get_store
 from ..vocab import LABEL_DISPLAY
@@ -243,6 +243,52 @@ def inference_refusal(content: dict, slide: Slide | None = None) -> tuple[str, s
     return None
 
 
+def test_material_reason(db, run: TrainingRun | None, slide: Slide, *, cache: dict | None = None) -> str | None:
+    """Why scoring ``slide`` through this run's bundle would read TEST material, else None.
+
+    Test material is a test item or a slide of a test patient of the run's frozen manifest, a slide of a patient
+    sealed by a test release anywhere in the project, or a slide a test release looked at (moved since). Bundle
+    inference must not be a side door to test predictions: such slides are scored only once a recorded test release
+    covers the run (design §7), and their predictions are then readable only with ``dataset.test_access``.
+    ``cache``: a dict reused across calls for one run (the manifest and project seals are read once)."""
+    from ..datasets import project_sealed_patients, sealed_slides
+    from ..hierarchy import slide_lineage
+    from ..models import DatasetVersion
+
+    ctx = cache if cache is not None else {}
+    if "items" not in ctx:
+        dv = db.get(DatasetVersion, run.dataset_version_id) if run is not None and run.dataset_version_id else None
+        manifest = (dv.manifest_json if dv is not None else None) or {}
+        ctx["items"] = {it["slide_id"]: it for it in manifest.get("items", []) if it.get("slide_id")}
+        ctx["test_patients"] = {s["coded_patient_id"] for s in manifest.get("splits", []) if s.get("split") == "test"}
+        ctx["sealed_patients"] = project_sealed_patients(db, slide.project_id)
+        ctx["sealed_slides"] = sealed_slides(db, slide.project_id)
+    item = ctx["items"].get(slide.id)
+    if item is not None and item.get("split") == "test":
+        return "a test item of the bundle's frozen manifest"
+    patients = {slide_lineage(db, slide).get("coded_patient_id"), (item or {}).get("coded_patient_id")} - {None}
+    if patients & ctx["test_patients"]:
+        return "a slide of a test patient of the bundle's frozen manifest"
+    if patients & ctx["sealed_patients"]:
+        return "a slide of a patient sealed by a test release"
+    if slide.id in ctx["sealed_slides"]:
+        return "a slide a test release looked at"
+    return None
+
+
+def test_material_refusal(db, run: TrainingRun | None, slide: Slide) -> tuple[str, str] | None:
+    """``("test_release_required", message)`` when the slide is test material and no recorded test release covers
+    the bundle's run, else None."""
+    from .evaluation import releases_for_run
+
+    why = test_material_reason(db, run, slide)
+    if why is None or (run is not None and releases_for_run(db, run)):
+        return None
+    return ("test_release_required", f"Slide {slide.id} is {why}. Test predictions exist only through a recorded "
+            "test release (POST /experiments/{id}/test-release: research lead, reason, counted, sealing), not "
+            "through bundle inference")
+
+
 def bundle_dict(db, b: InferenceBundle, *, verify_object: bool = True) -> dict:
     c = b.content_json or {}
     problems = verify_bundle(b, check_object=verify_object)
@@ -274,7 +320,8 @@ def request_inference(db, actor, bundle: InferenceBundle, slide_id: str):
     problems = verify_bundle(bundle)
     if problems:
         raise conflict("bundle_integrity", "The bundle failed verification; it is not used", problems=problems)
-    refusal = inference_refusal(bundle.content_json or {}, slide)
+    refusal = inference_refusal(bundle.content_json or {}, slide) or test_material_refusal(
+        db, db.get(TrainingRun, bundle.run_id), slide)
     if refusal is not None:
         raise conflict(refusal[0], refusal[1], bundle_id=bundle.id, slide_id=slide_id)
     from .encoders import get_encoder
@@ -335,8 +382,13 @@ def _verify_features(sf, content: dict, slide_id: str) -> None:
     enc = content.get("encoder") or {}
     pins = [("weights_sha256", enc.get("weights_sha256")), ("encoder_spec_sha256", enc.get("spec_sha256")),
             ("policy_sha256", (content.get("patch_policy") or {}).get("policy_sha256")),
-            ("stain_policy_sha256", (content.get("stain_policy") or {}).get("policy_sha256"))]
+            ("stain_policy_sha256", (content.get("stain_policy") or {}).get("policy_sha256")),
+            ("extraction_env_sha256", (content.get("extraction_env") or {}).get("sha256"))]
     bad = [f"{k}: {getattr(sf, k, None)} != pinned {want}" for k, want in pins if getattr(sf, k, None) != want]
+    pinned_version = ((enc.get("spec") or {}).get("extraction") or {}).get("extractor_version")
+    used_version = ((getattr(sf, "meta", None) or {}).get("fields") or {}).get("extractor_version")
+    if pinned_version is not None and used_version != pinned_version:
+        bad.append(f"extractor_version: {used_version} != pinned {pinned_version}")
     if getattr(sf, "slide_id", slide_id) != slide_id:
         bad.append(f"slide_id {sf.slide_id} != {slide_id}")
     if bad:
@@ -379,10 +431,11 @@ def score_slide(bundle_id: str, slide_id: str, ctx=None, *, created_by: str | No
         if problems:
             raise PermanentJobError("bundle_integrity: " + "; ".join(problems))
         content = dict(bundle.content_json)
-        refusal = inference_refusal(content, slide)
+        run = db.get(TrainingRun, bundle.run_id)
+        # Defence in depth: the worker re-checks what the request checked (test material needs a test release).
+        refusal = inference_refusal(content, slide) or test_material_refusal(db, run, slide)
         if refusal is not None:
             raise PermanentJobError(f"{refusal[0]}: {refusal[1]}")
-        run = db.get(TrainingRun, bundle.run_id)
         _check_run_matches(run, content)
         enc = content.get("encoder") or {}
         adapter = get_encoder(enc.get("id"))
@@ -400,6 +453,16 @@ def score_slide(bundle_id: str, slide_id: str, ctx=None, *, created_by: str | No
     env = content.get("extraction_env") or {}
     spec_json = enc.get("spec") or {}
     extraction = spec_json.get("extraction") or {}
+    # The bundle pins the extraction code version and environment of its feature set; features produced by other
+    # extraction code or in another environment are never scored as if they were the bundle's (design §5, §8).
+    try:
+        fsm.check_extractor_version(extraction, what="bundle",
+                                    remedy="register a new bundle (a new feature set and run) for this extractor")
+        fsm.check_extraction_env(env.get("env") or {}, env.get("sha256"),
+                                 {**extraction, "device": extraction.get("device") or env.get("device_class") or "cpu"},
+                                 what="bundle", remedy="register a bundle built in this environment")
+    except fsm.FeatureError as exc:
+        raise PermanentJobError(str(exc)) from exc
     sf, reason = None, None
     try:
         # input_snapshot=None: the extraction snapshots the slide's live row and QC state itself.
@@ -485,8 +548,7 @@ def infer_slide(bundle_id: str, slide_id: str, ctx=None) -> dict:
 
 @register(INFER_JOB, description="Label-free research inference of a registered bundle on one slide")
 def infer_slide_job(ctx, payload: dict) -> dict:
-    if any(k in payload for k in ("label", "labels", "fixture_label", "label_value")):
-        raise PermanentJobError("inference payloads never carry labels")
+    refuse_label_payload(payload)  # design §1 invariant 4
     bundle_id, slide_id = payload.get("bundle_id"), payload.get("slide_id")
     if not bundle_id or not slide_id:
         raise PermanentJobError("payload.bundle_id and payload.slide_id are required")
