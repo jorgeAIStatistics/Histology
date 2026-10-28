@@ -31,6 +31,22 @@
         "dev"
       ],
       "port": 3600
+    },
+    {
+      "name": "dermpath-api-shared",
+      "runtimeExecutable": "workbench/api/.venv/bin/python",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "dermpath.main:app",
+        "--app-dir",
+        "workbench/api",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
+      "port": 8000
     }
   ]
 }
