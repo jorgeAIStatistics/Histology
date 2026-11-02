@@ -4,6 +4,7 @@ import { useId, useState, type ReactNode } from "react";
 import { OctagonX } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { ERROR_TITLE, failureMessage, useCommand, type CommandFailure, type UseCommandOptions } from "@/lib/client/command";
+import { AuthRecovery } from "@/components/auth/auth-recovery";
 import { Button, type ButtonSize, type ButtonVariant } from "./button";
 import { ConfirmDialog } from "./dialog";
 
@@ -18,6 +19,8 @@ export function CommandError({ error, className, id }: { error: CommandFailure |
       <OctagonX className="mt-0.5 size-4 shrink-0 text-danger-solid" aria-hidden />
       <span>
         <span className="font-semibold">{ERROR_TITLE[error.code] ?? "Action failed"}:</span> {failureMessage(error)}
+        {/* Secured mode only: "Confirm it's you", "Sign in again" or "Reload" for a session failure (nothing otherwise). */}
+        <AuthRecovery code={error.code} />
       </span>
     </p>
   );

@@ -11,20 +11,41 @@ export function fmtSnapshotTime(iso: string | null | undefined): string {
   return `${weekday} ${day} ${time} ET`;
 }
 
-const PART_WORD_LABEL: Record<string, string> = { hold: "on hold", "gross record": "gross in progress" };
+// "delivered" is the stored stage; on screen, print and CSV it is "sent on tray" (no pathologist receipt is recorded).
+const PART_WORD_LABEL: Record<string, string> = { hold: "on hold", "gross record": "gross in progress", delivered: "sent on tray" };
 /** A part that can move now names the step it is ready for ("A ready for processing"), never a bare "ready". */
 const PART_STAGE_WORD: Partial<Record<Stage, string>> = {
-  processing: "ready for processing", embedding: "ready for embedding", sectioning: "ready for sectioning", staining: "ready for staining", qc: "ready for QC", ready_for_tray: "ready for tray",
+  awaiting_processing: "ready for processing", processing: "ready for processing", embedding: "ready for embedding", sectioning: "ready for sectioning", staining: "ready for staining", qc: "ready for QC", ready_for_tray: "ready for tray",
 };
 
-/** The words shown for one part ("awaiting gross", "on hold", "ready for processing"). */
-export function partWord(p: { word: string; stage: Stage }): string {
+/** Hold steps in the short words the worklist uses ("print, tray"); the hold banner and history say them in full. */
+const HOLD_STEP_SHORT: Record<string, string> = {
+  accession_request: "accession request",
+  routing_confirm: "routing",
+  gross_approval: "gross approval",
+  processing: "processing",
+  sectioning: "sectioning",
+  print: "print",
+  tray_delivery: "tray",
+  all: "all steps",
+};
+
+/** "print, tray" for the steps a set of holds stops. */
+export function holdStepsShort(blocks: readonly string[]): string {
+  const steps = [...new Set(blocks)];
+  if (steps.includes("all")) return HOLD_STEP_SHORT.all;
+  return steps.map((b) => HOLD_STEP_SHORT[b] ?? b.replace(/_/g, " ")).join(", ");
+}
+
+/** The words shown for one part ("awaiting gross", "on hold (print, tray)", "ready for processing"). */
+export function partWord(p: { word: string; stage: Stage; holdSteps?: string | null }): string {
   if (p.word === "ready") return PART_STAGE_WORD[p.stage] ?? "ready";
+  if (p.word === "hold" && p.holdSteps) return `on hold (${p.holdSteps})`;
   return PART_WORD_LABEL[p.word] ?? p.word;
 }
 
-/** Parts grouped so equal states read once: "A, B, C awaiting gross" or "A ready for processing · B on hold". */
-export function groupParts(parts: { word: string; stage: Stage; designation: string }[]): { word: string; hold: boolean; letters: string[] }[] {
+/** Parts grouped so equal states read once: "A, B, C awaiting gross" or "A ready for processing · B on hold (print)". */
+export function groupParts(parts: { word: string; stage: Stage; designation: string; holdSteps?: string | null }[]): { word: string; hold: boolean; letters: string[] }[] {
   const groups: { word: string; hold: boolean; letters: string[] }[] = [];
   for (const p of parts) {
     const word = partWord(p);
@@ -35,8 +56,8 @@ export function groupParts(parts: { word: string; stage: Stage; designation: str
   return groups;
 }
 
-/** One line for titles, print and CSV: "A, B awaiting gross · C on hold". */
-export function partsText(parts: { word: string; stage: Stage; designation: string }[]): string {
+/** One line for titles, print and CSV: "A, B awaiting gross · C on hold (gross approval)". */
+export function partsText(parts: { word: string; stage: Stage; designation: string; holdSteps?: string | null }[]): string {
   return groupParts(parts).map((g) => `${g.letters.join(", ")} ${g.word}`).join(" · ");
 }
 

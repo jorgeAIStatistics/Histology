@@ -11,6 +11,7 @@ import {
   custodyFacts, custodyHistory, ITEM_STATUS_LABEL, LOCATION_CAPTION, locationCard, splitLocation, type CustodyEventView, type CustodyFacts, type LocationCard,
 } from "@/server/domain/retrieval";
 import { SLIDE_DISPOSITION_LABEL } from "@/server/domain/workorder";
+import { holdsBlocking, scopesForSlide } from "@/server/domain/holds";
 
 /**
  * Read models for /materials (print jobs, trays, retrieval). Server components
@@ -379,14 +380,14 @@ export function slidesAwaitingLabel(db: DB, limit = 8): { total: number; rows: {
   const rows = db
     .prepare(
       `SELECT s.id, wo.display_id AS wo_display, wo.authorization_source AS auth FROM slide s LEFT JOIN work_order wo ON wo.id = s.work_order_id
-        WHERE ${where} ORDER BY (wo.authorization_source = 'pathologist_request') DESC, wo.requested_at DESC, s.accession_id, s.block_id, s.slide_seq LIMIT ?`,
+        WHERE ${where} ORDER BY (wo.authorization_source IN ('pathologist_request','staff_entered_request')) DESC, wo.requested_at DESC, s.accession_id, s.block_id, s.slide_seq LIMIT ?`,
     )
     .all(limit) as { id: string; wo_display: string | null; auth: string | null }[];
   return {
     total,
     rows: rows.map((r) => {
       const info = getSlide(db, r.id)!;
-      return { slideId: r.id, label: slideText(info), workOrderDisplayId: r.wo_display, physicalState: info.physical_state, purpose: r.auth === "pathologist_request" ? "additional_work" : "initial" };
+      return { slideId: r.id, label: slideText(info), workOrderDisplayId: r.wo_display, physicalState: info.physical_state, purpose: r.auth === "pathologist_request" || r.auth === "staff_entered_request" ? "additional_work" : "initial" };
     }),
   };
 }
@@ -598,6 +599,8 @@ export interface TrayDetail {
   pathologistColor: string | null;
   /** Latest print job per expected slide (for "label problem? reprint" links to the Print jobs tab). */
   printJobs: Record<string, string>;
+  /** Derived, read only: active holds that stop tray delivery, per expected slide (drawn hatched on the tray). */
+  holds: Record<string, { displayId: string; scopeLabel: string; reason: string }[]>;
 }
 
 export function getTrayDetail(db: DB, idOrDisplay: string): TrayDetail | null {
@@ -615,7 +618,12 @@ export function getTrayDetail(db: DB, idOrDisplay: string): TrayDetail | null {
     .all(t.id) as { target_id: string; display_id: string }[];
   const printJobs: Record<string, string> = {};
   for (const j of jobs) printJobs[j.target_id] = j.display_id; // later rows overwrite: newest wins
-  return { view, bench: benchSlidesFor(db, view), pathologistColor: t.color_token, printJobs };
+  const holds: TrayDetail["holds"] = {};
+  for (const e of view.expected) {
+    const blocking = holdsBlocking(db, "tray_delivery", scopesForSlide(db, e.slideId));
+    if (blocking.length) holds[e.slideId] = blocking.map((h) => ({ displayId: h.display_id, scopeLabel: h.scope_label, reason: h.reason_text }));
+  }
+  return { view, bench: benchSlidesFor(db, view), pathologistColor: t.color_token, printJobs, holds };
 }
 
 /** Pathologists and how many slides are ready for a new tray — the same rules tray.open applies. */

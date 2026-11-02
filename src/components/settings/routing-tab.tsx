@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Lock, TriangleAlert } from "lucide-react";
+import { CircleCheck, Lock, TriangleAlert } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -15,7 +15,13 @@ function SetStatus({ set }: { set: RuleSetView }) {
   if (set.status === "draft") return <StatusPill tone="info">Draft, needs approval</StatusPill>;
   if (set.discarded) return <StatusPill tone="neutral">Discarded draft</StatusPill>;
   if (set.status === "retired") return <StatusPill tone="neutral">Retired</StatusPill>;
-  if (set.inEffect) return <StatusPill tone="success">Approved, in effect</StatusPill>;
+  // Done is a quiet check (never green): the version in effect is settled, nothing to act on.
+  if (set.inEffect)
+    return (
+      <StatusPill tone="neutral" icon={CircleCheck}>
+        Approved, in effect
+      </StatusPill>
+    );
   return <StatusPill tone="info">Approved, starts later</StatusPill>;
 }
 
@@ -68,17 +74,17 @@ export function RoutingTab({
   const officeOptions = data.offices.map((o) => ({ id: o.id, name: o.name, current: base?.rules.find((r) => r.officeId === o.id)?.pathologistName ?? null }));
 
   return (
-    <div className="grid gap-4">
-      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
-        <div className="grid content-start gap-4">
+    <div className="grid grid-cols-1 gap-4">
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
+        <div className="grid grid-cols-1 content-start gap-4">
           <Card
             title={current ? <>Approved rules in effect: <span className="id-mono">v{current.version}</span></> : "No approved routing rules in effect"}
             description={
               current ? (
                 <>
                   Effective {fmtDate(current.effectiveFrom)}
-                  {current.approvedBy ? <> · approved by {current.approvedBy}{current.approvedAt ? ` on ${fmtDate(current.approvedAt)}` : ""}</> : null}. Office → assigned
-                  dermatopathologist. Suggestions at intake show this rule and version.
+                  {current.approvedBy ? <>, approved by {current.approvedBy}{current.approvedAt ? ` on ${fmtDate(current.approvedAt)}` : ""}</> : null}. Each office routes to
+                  one assigned dermatopathologist; suggestions at intake show this rule and version.
                 </>
               ) : (
                 "Every new item goes to the routing exception lane until a version is approved."
@@ -110,19 +116,20 @@ export function RoutingTab({
                   {current.rules.map((r) => {
                     const cov = coverageFor(r.pathologistName);
                     return (
+                      // Two-line cells get vertical padding so each row reads as one record between its hairlines.
                       <TR key={r.ruleId}>
-                        <TD>
+                        <TD className="py-2">
                           {r.officeName} <span className="id-mono text-xs text-ink-muted">{r.officeCode}</span>
                           <span className="block text-xs text-ink-muted">{r.tenantName}</span>
                         </TD>
-                        <TD>
+                        <TD className="py-2">
                           <DoctorChip name={r.pathologistName} color={r.pathologistColor} />
                         </TD>
-                        <TD wrap>
+                        <TD wrap className="py-2">
                           {cov.length ? (
                             cov.map((c) => (
                               <span key={c.id} className="block">
-                                {c.activeNow ? <span className="font-medium text-warning-fg">Now: </span> : null}
+                                {c.activeNow ? <span className="font-semibold text-ink">Now: </span> : null}
                                 {c.coveringName}, <span className="whitespace-nowrap">{coverageDates(c.startsAt, c.endsAt)}</span>
                               </span>
                             ))
@@ -148,7 +155,7 @@ export function RoutingTab({
             footer={
               canApprove ? (
                 <details>
-                  <summary className="cursor-pointer text-sm font-medium text-brand">Add a coverage exception</summary>
+                  <summary className="flex min-h-[max(2rem,var(--hlo-target-min))] cursor-pointer items-center text-sm font-medium text-brand">Add a coverage exception</summary>
                   <div className="mt-3">
                     <CoverageForm pathologists={pathologists} now={now} />
                   </div>
@@ -173,7 +180,7 @@ export function RoutingTab({
                 <TBody>
                   {coverage.map((c) => (
                     <TR key={c.id} canceled={c.status !== "approved"}>
-                      <TD wrap>
+                      <TD wrap className="py-2">
                         <span className="flex flex-wrap items-center gap-x-1.5">
                           <DoctorChip name={c.pathologistName} color={c.pathologistColor} shortName={shortDr(c.pathologistName)} compact />
                           <span aria-hidden className="text-ink-muted">→</span>
@@ -191,7 +198,7 @@ export function RoutingTab({
                         {c.status !== "approved" ? (
                           <StatusPill tone="neutral" size="sm">Retired</StatusPill>
                         ) : c.activeNow ? (
-                          <StatusPill tone="warning" size="sm">In effect now</StatusPill>
+                          <StatusPill tone="info" size="sm">In effect now</StatusPill>
                         ) : c.endsAt <= now ? (
                           <StatusPill tone="neutral" size="sm">Ended</StatusPill>
                         ) : (
@@ -211,7 +218,7 @@ export function RoutingTab({
           </Card>
         </div>
 
-        <div className="grid content-start gap-4">
+        <div className="grid grid-cols-1 content-start gap-4">
           <Card
             title="Unknown offices"
             description="Offices without an approved rule. New items from them go to the routing exception lane; no dermatopathologist is guessed."
@@ -232,7 +239,10 @@ export function RoutingTab({
                       </p>
                     </div>
                     {o.officeId && !draft && canEdit ? (
-                      <Link className="shrink-0 text-sm text-brand underline-offset-2 hover:underline" href={`/settings?tab=routing&draftOffice=${encodeURIComponent(o.officeId)}#draft`}>
+                      <Link
+                        className="inline-flex min-h-[max(2rem,var(--hlo-target-min))] shrink-0 items-center text-sm font-medium text-brand underline-offset-2 hover:underline"
+                        href={`/settings?tab=routing&draftOffice=${encodeURIComponent(o.officeId)}#draft`}
+                      >
                         Draft a rule
                       </Link>
                     ) : null}
@@ -253,8 +263,8 @@ export function RoutingTab({
               title={<>Draft <span className="id-mono">v{draft.version}</span> waiting for approval</>}
               description={draft.notes ?? undefined}
             >
-              <div className="grid gap-4">
-                <Table caption={`Changes in draft v${draft.version} compared with v${draft.diffBaseVersion ?? "none"}`} captionVisible>
+              <div className="grid grid-cols-1 gap-4">
+                <Table caption={`Changes in draft v${draft.version} compared with v${draft.diffBaseVersion ?? "none"}`} captionVisible wrapperClassName="rounded-none border-x-0">
                   <THead>
                     <tr>
                       <TH>Office</TH>
@@ -325,7 +335,7 @@ export function RoutingTab({
                 </TD>
                 <TD>
                   <details>
-                    <summary className="cursor-pointer text-sm text-brand">
+                    <summary className="flex min-h-[max(1.75rem,var(--hlo-target-min))] cursor-pointer items-center text-sm text-brand">
                       {h.rules.length} rule{h.rules.length === 1 ? "" : "s"}
                     </summary>
                     <ul className="mt-1 grid gap-0.5 text-sm">

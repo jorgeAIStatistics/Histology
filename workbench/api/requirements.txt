@@ -1,0 +1,19 @@
+# Pinned; each release at least two weeks old on 2026-10-26 (see docs/license-ledger.md).
+# The venv is ISOLATED (no --system-site-packages), so nothing from the system interpreter
+# (for example a GPL-licensed package) can be imported by accident. Scientific stack pinned below.
+fastapi==0.143.0
+uvicorn==0.54.0
+sqlalchemy==2.1.4
+pydantic==2.14.1
+python-multipart==0.0.32
+pillow==12.3.0
+openslide-python==1.4.6
+openslide-bin==4.0.1.2
+pytest==9.1.1
+httpx==0.28.1
+numpy==2.4.2
+scipy==1.17.0
+scikit-learn==1.9.0
+joblib==1.5.3
+threadpoolctl==3.6.0
+torch==2.14.1

@@ -27,13 +27,13 @@ export function PageHeader({ title, description, actions, simulated, illustrativ
     <div className={cn("flex flex-wrap items-start justify-between gap-x-6 gap-y-2", className)}>
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-lg font-semibold text-ink">{title}</h1>
+          <h1 className="text-xl font-bold tracking-[-0.015em] text-ink">{title}</h1>
           {simulated ? <SimulatedLabel connector={typeof simulated === "string" ? simulated : undefined} /> : null}
           {illustrative ? <IllustrativeTag>{typeof illustrative === "string" ? illustrative : undefined}</IllustrativeTag> : null}
           {readOnly ? <ReadOnlyTag /> : null}
           {meta ? <span className="text-sm text-ink-muted">{meta}</span> : null}
         </div>
-        {description ? <p className="mt-0.5 max-w-[80ch] text-sm text-ink-secondary">{description}</p> : null}
+        {description ? <p className="mt-1 max-w-[72ch] text-sm text-ink-muted">{description}</p> : null}
       </div>
       {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
     </div>
@@ -42,5 +42,5 @@ export function PageHeader({ title, description, actions, simulated, illustrativ
 
 /** Standard page body padding and vertical rhythm (24px between regions). */
 export function PageBody({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("flex flex-col gap-4 px-6 py-4 max-xl:px-4", className)}>{children}</div>;
+  return <div className={cn("flex flex-col gap-5 px-6 py-5 max-xl:px-4", className)}>{children}</div>;
 }

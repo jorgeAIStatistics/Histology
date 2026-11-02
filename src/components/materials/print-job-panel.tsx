@@ -21,6 +21,7 @@ import { useCommand } from "@/lib/client/command";
 import { useCan } from "@/lib/client/shell-context";
 import { useScan } from "@/lib/client/scan";
 import type { PrintJobDetail, LabelView } from "@/server/queries/materials";
+import { LabelPreview } from "@/components/domain/label-preview";
 import { LabelPreviewPanel } from "./label-preview-panel";
 import { OrderAdditionalDialog, ReasonDialog, ReprintDialog } from "./print-dialogs";
 import { printerName, SectionTitle, useReadOnly } from "./shared";
@@ -29,7 +30,7 @@ const RECONCILIATION_TEXT: Record<string, string> = {
   printed_ok: "Checked at the printer: label printed",
   not_printed: "Checked at the printer: not printed",
   printed_damaged: "Checked: printed but damaged",
-  cant_tell: "Could not tell — escalated to a supervisor",
+  cant_tell: "Could not tell, escalated to a supervisor",
 };
 
 const LABEL_TONE: Record<string, "neutral" | "info" | "success"> = { printed: "neutral", applied: "info", verified: "success", retired: "neutral" };
@@ -50,7 +51,10 @@ function OutputCheck({ detail, now }: { detail: PrintJobDetail; now: string }) {
   const [note, setNote] = useState("");
   const [needNote, setNeedNote] = useState<string | null>(null);
   const cmd = useCommand<{ message: string; state: string }, ReconcileInput>("print.reconcile", { errorToast: false });
+  // While one outcome is being recorded the four buttons are aria-disabled, not disabled, so the pressed one keeps
+  // keyboard focus (and stays beside the error if the record fails); a second press records nothing.
   const record = async (outcome: string) => {
+    if (cmd.pending) return;
     if ((outcome === "cant_tell" || outcome === "printed_damaged") && !note.trim()) {
       setNeedNote(outcome === "cant_tell" ? "Describe what you checked so the supervisor can follow up." : "Describe the damage (for example: smudged code).");
       return;
@@ -78,7 +82,7 @@ function OutputCheck({ detail, now }: { detail: PrintJobDetail; now: string }) {
     >
       <p>
         {unknown
-          ? "Check the printer output before retrying. A retry is not possible until the outcome is recorded."
+          ? "Look in the printer's output tray and compare it with the label above, then record what you found. A reprint is not possible until the outcome is recorded."
           : "Check the printer output and record what came out. The label can be applied only after it is recorded as printed."}
       </p>
       {escalated ? (
@@ -91,16 +95,16 @@ function OutputCheck({ detail, now }: { detail: PrintJobDetail; now: string }) {
           <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} disabled={!!disabledReason} placeholder={`For example: output tray empty, no label for ${detail.target.label}`} />
         </Field>
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="secondary" disabled={!!disabledReason || cmd.pending} onClick={() => void record("printed_ok")}>
+          <Button size="md" variant="secondary" disabled={!!disabledReason} aria-disabled={cmd.pending || undefined} onClick={() => void record("printed_ok")}>
             Label printed
           </Button>
-          <Button size="sm" variant="secondary" disabled={!!disabledReason || cmd.pending} onClick={() => void record("not_printed")}>
+          <Button size="md" variant="secondary" disabled={!!disabledReason} aria-disabled={cmd.pending || undefined} onClick={() => void record("not_printed")}>
             Not printed
           </Button>
-          <Button size="sm" variant="secondary" disabled={!!disabledReason || cmd.pending} onClick={() => void record("cant_tell")}>
+          <Button size="md" variant="secondary" disabled={!!disabledReason} aria-disabled={cmd.pending || undefined} onClick={() => void record("cant_tell")}>
             Can&apos;t tell (escalate)
           </Button>
-          <Button size="sm" variant="secondary" disabled={!!disabledReason || cmd.pending} onClick={() => void record("printed_damaged")}>
+          <Button size="md" variant="secondary" disabled={!!disabledReason} aria-disabled={cmd.pending || undefined} onClick={() => void record("printed_damaged")}>
             Printed but damaged
           </Button>
         </div>
@@ -121,7 +125,7 @@ function VerifyForm({ label }: { label: LabelView }) {
     const out = await cmd.run({ labelId: label.id, scannedPayload: payload.trim() });
     if (out.ok) {
       scan.setResult(
-        out.result.verified ? { tone: "success", message: out.result.message } : { tone: "danger", alert: true, message: out.result.message },
+        out.result.verified ? { tone: "success", message: out.result.message } : { tone: "warning", alert: true, sound: "mismatch", message: out.result.message },
         payload,
       );
       toast.show({ tone: out.result.verified ? "success" : "warning", title: out.result.verified ? "Label scan matched its record" : "Label scan not accepted", body: out.result.message });
@@ -158,14 +162,36 @@ function LabelRow({ label, now }: { label: LabelView; now: string }) {
         <StatusPill size="sm" tone={LABEL_TONE[label.state] ?? "neutral"}>
           {LABEL_TEXT[label.state] ?? label.state}
         </StatusPill>
-        {label.printJobDisplayId ? <span className="text-xs text-ink-muted">from {label.printJobDisplayId}</span> : null}
-        {label.replacesLabelId ? <span className="text-xs text-ink-muted">· replaces an earlier label</span> : null}
+        {label.printJobDisplayId ? (
+          <span className="text-xs text-ink-muted">
+            from <span className="id-mono">{label.printJobDisplayId}</span>
+            {label.replacesLabelId ? ", replaces an earlier label" : ""}
+          </span>
+        ) : label.replacesLabelId ? (
+          <span className="text-xs text-ink-muted">Replaces an earlier label</span>
+        ) : null}
       </div>
       <p className="mt-1 text-xs text-ink-secondary">
-        Output confirmed <Timestamp iso={label.createdAt} now={now} />
-        {label.appliedAt ? <> · applied by {label.appliedBy ?? "Unknown"} <Timestamp iso={label.appliedAt} now={now} /></> : " · not applied"}
-        {label.verifiedAt ? <> · scan matched for {label.verifiedBy ?? "Unknown"} <Timestamp iso={label.verifiedAt} now={now} /></> : null}
-        {label.retiredAt ? <> · retired by {label.retiredBy ?? "Unknown"}: {label.retireReason}</> : null}
+        Output confirmed <Timestamp iso={label.createdAt} now={now} />.{" "}
+        {label.appliedAt ? (
+          <>
+            Applied by {label.appliedBy ?? "Unknown"} <Timestamp iso={label.appliedAt} now={now} />.
+          </>
+        ) : (
+          "Not applied yet."
+        )}
+        {label.verifiedAt ? (
+          <>
+            {" "}
+            Scan matched for {label.verifiedBy ?? "Unknown"} <Timestamp iso={label.verifiedAt} now={now} />.
+          </>
+        ) : null}
+        {label.retiredAt ? (
+          <>
+            {" "}
+            Retired by {label.retiredBy ?? "Unknown"}: {label.retireReason}
+          </>
+        ) : null}
       </p>
       {label.state !== "retired" && !readOnly ? (
         <div className="mt-1.5 flex flex-wrap items-start gap-2">
@@ -244,6 +270,9 @@ export function PrintJobPanel({ detail, now, closeHref }: { detail: PrintJobDeta
     >
       {/* relative: keeps visually hidden (absolutely positioned) text inside the panel's scroll area */}
       <div className="relative flex flex-col gap-4">
+        <section aria-label="The label this job prints" className="flex min-w-0 flex-col gap-1.5">
+          <LabelPreview payload={job.payload} text={detail.recordCheck.recordText ?? target.label} size={88} className="max-w-full" />
+        </section>
         {job.state === "unknown_outcome" || job.needsOutputCheck ? <OutputCheck detail={detail} now={now} /> : null}
         {replacedBy ? (
           <AlertBanner tone="info" title={`Replaced by ${replacedBy.displayId}`}>
@@ -255,8 +284,14 @@ export function PrintJobPanel({ detail, now, closeHref }: { detail: PrintJobDeta
         ) : null}
         {(job.state === "queued" || job.state === "planned") && job.failureDetail ? (
           <AlertBanner
-            tone="danger"
-            title={`${printer ? printerName(printer.name) : "Printer"} is unavailable (simulated). ${job.displayId} is kept in the queue.`}
+            tone="warning"
+            // Said from the printer's status now, not from the failure stored on the job: once it is back, the job
+            // is still queued only until someone releases it.
+            title={
+              printer && printer.status !== "offline"
+                ? `${printerName(printer.name)} is available again (simulated). ${job.displayId} is still in the queue.`
+                : `${printer ? printerName(printer.name) : "Printer"} is unavailable (simulated). ${job.displayId} is kept in the queue.`
+            }
             action={
               readOnly ? null : (
                 <CommandButton command="print.release" input={{ printJobId: job.id }} size="sm" pendingLabel="Releasing..." successToast={(r: { message: string }) => r.message} icon={<Send className="size-4" aria-hidden />}>
@@ -272,51 +307,7 @@ export function PrintJobPanel({ detail, now, closeHref }: { detail: PrintJobDeta
           <AlertBanner tone="info" title={job.reconciliation === "not_printed" ? "Recorded as not printed. A reprint with a reason is now allowed." : "This job failed. A reprint with a reason is allowed."} />
         ) : null}
 
-        <FactList
-          items={[
-            {
-              label: target.type === "block" ? "Block" : "Slide",
-              value: target.physicalState
-                ? `${(target.type === "block" ? BLOCK_STATE[target.physicalState as BlockState] : SLIDE_STATE[target.physicalState as SlideState]) ?? target.physicalState.replace(/_/g, " ")}${
-                    target.physicalState === "planned" ? " (not yet cut)" : ""
-                  }${target.status && target.status !== "active" ? ` · ${target.status.replace(/_/g, " ")}` : ""}`
-                : <UnknownValue reason="no slide or block record" />,
-            },
-            ...(target.workOrder ? [{ label: "Work order", value: `${target.workOrder.displayId} · ${target.workOrder.statusLabel}` }] : []),
-            { label: "Purpose", value: job.purposeLabel },
-            { label: "Printer", value: <span className="inline-flex flex-wrap items-center gap-1.5">{printerName(printer?.name ?? job.printerName)} <SimulatedLabel connector="printer" size="xs" /></span> },
-            { label: "Requested", value: <>{job.requestedBy}, <Timestamp iso={job.createdAt} now={now} /></> },
-            { label: "Submitted", value: job.submittedAt ? <Timestamp iso={job.submittedAt} now={now} /> : "Not submitted" },
-            {
-              label: "Printer reply (simulated)",
-              value: job.completedAt ? (
-                <>Printer reported completion <Timestamp iso={job.completedAt} now={now} /></>
-              ) : job.acknowledgedAt ? (
-                <>Acknowledged <Timestamp iso={job.acknowledgedAt} now={now} /> (this printer does not report completion)</>
-              ) : job.submittedAt ? (
-                <UnknownValue reason="no reply within 30 s" />
-              ) : (
-                "None (not submitted)"
-              ),
-            },
-            ...(job.reprintOfDisplayId ? [{ label: "Reprint of", value: <><span className="id-mono">{job.reprintOfDisplayId}</span>: {job.reprintReason}</> }] : []),
-            ...(job.reconciliation
-              ? [
-                  {
-                    label: "Output checked by a person",
-                    value: (
-                      <>
-                        {RECONCILIATION_TEXT[job.reconciliation] ?? job.reconciliation} · {job.reconciledBy ?? "Unknown"}
-                        {job.reconciledAt ? <>, <Timestamp iso={job.reconciledAt} now={now} /></> : null}
-                        {job.reconciliationNote ? `: ${job.reconciliationNote}` : ""}
-                      </>
-                    ),
-                  },
-                ]
-              : []),
-          ]}
-        />
-
+        {/* The next step and its gate stay right under the reconcile step, so a blocked reprint is seen with its reason. */}
         {!readOnly ? (
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap gap-2">
@@ -347,13 +338,70 @@ export function PrintJobPanel({ detail, now, closeHref }: { detail: PrintJobDeta
           <p className="text-sm text-ink-secondary">{readOnly}</p>
         )}
 
+        <FactList
+          items={[
+            {
+              label: target.type === "block" ? "Block" : "Slide",
+              value: target.physicalState
+                ? `${(target.type === "block" ? BLOCK_STATE[target.physicalState as BlockState] : SLIDE_STATE[target.physicalState as SlideState]) ?? target.physicalState.replace(/_/g, " ")}${
+                    target.physicalState === "planned" ? " (not yet cut)" : ""
+                  }${target.status && target.status !== "active" ? `, ${target.status.replace(/_/g, " ")}` : ""}`
+                : <UnknownValue reason="no slide or block record" />,
+            },
+            ...(target.workOrder
+              ? [
+                  {
+                    label: "Work order",
+                    value: (
+                      <>
+                        <span className="id-mono">{target.workOrder.displayId}</span> ({target.workOrder.statusLabel.toLowerCase()})
+                      </>
+                    ),
+                  },
+                ]
+              : []),
+            { label: "Purpose", value: job.purposeLabel },
+            { label: "Printer", value: <span className="inline-flex flex-wrap items-center gap-1.5">{printerName(printer?.name ?? job.printerName)} <SimulatedLabel connector="printer" size="xs" /></span> },
+            { label: "Requested", value: <>{job.requestedBy}, <Timestamp iso={job.createdAt} now={now} /></> },
+            { label: "Submitted", value: job.submittedAt ? <Timestamp iso={job.submittedAt} now={now} /> : "Not submitted" },
+            {
+              label: "Printer reply (simulated)",
+              value: job.completedAt ? (
+                <>Printer reported completion <Timestamp iso={job.completedAt} now={now} /></>
+              ) : job.acknowledgedAt ? (
+                <>Acknowledged <Timestamp iso={job.acknowledgedAt} now={now} /> (this printer does not report completion)</>
+              ) : job.submittedAt ? (
+                <UnknownValue reason="no reply within 30 s" />
+              ) : (
+                "None (not submitted)"
+              ),
+            },
+            ...(job.reprintOfDisplayId ? [{ label: "Reprint of", value: <><span className="id-mono">{job.reprintOfDisplayId}</span>: {job.reprintReason}</> }] : []),
+            ...(job.reconciliation
+              ? [
+                  {
+                    label: "Output checked by a person",
+                    value: (
+                      <>
+                        {RECONCILIATION_TEXT[job.reconciliation] ?? job.reconciliation}, by {job.reconciledBy ?? "Unknown"}
+                        {job.reconciledAt ? <> at <Timestamp iso={job.reconciledAt} now={now} /></> : null}
+                        {job.reconciliationNote ? `. ${job.reconciliationNote}` : ""}
+                      </>
+                    ),
+                  },
+                ]
+              : []),
+          ]}
+        />
+
         {detail.openTasks.length ? (
           <section className="flex flex-col gap-1.5">
             <SectionTitle>Who owns the next step</SectionTitle>
             <ul className="flex flex-col gap-1 text-sm">
               {detail.openTasks.map((t) => (
                 <li key={t.id}>
-                  {t.title} · <span className="text-ink-secondary">Owner: {t.owner ?? (t.ownerRole ? `Unassigned (${ROLE_LABEL[t.ownerRole as Role] ?? t.ownerRole.replace(/_/g, " ")} on duty)` : "Unassigned")}</span>
+                  {t.title}
+                  <span className="block text-ink-secondary">Owner: {t.owner ?? (t.ownerRole ? `Unassigned (${ROLE_LABEL[t.ownerRole as Role] ?? t.ownerRole.replace(/_/g, " ")} on duty)` : "Unassigned")}</span>
                 </li>
               ))}
             </ul>
@@ -376,7 +424,7 @@ export function PrintJobPanel({ detail, now, closeHref }: { detail: PrintJobDeta
           )}
         </section>
 
-        <LabelPreviewPanel payload={job.payload} text={detail.recordCheck.recordText ?? target.label} check={detail.recordCheck} />
+        <LabelPreviewPanel payload={job.payload} text={detail.recordCheck.recordText ?? target.label} check={detail.recordCheck} showPreview={false} />
 
         {detail.chain.length > 1 ? (
           <section className="flex flex-col gap-1.5">
@@ -387,7 +435,7 @@ export function PrintJobPanel({ detail, now, closeHref }: { detail: PrintJobDeta
                   <span className={c.isThis ? "id-mono font-semibold" : "id-mono"}>{c.displayId}</span>
                   <StatePill domain="print" state={c.state} size="sm" />
                   <span className="text-ink-secondary">{c.purposeLabel}</span>
-                  {c.reprintReason ? <span className="text-ink-muted">· {c.reprintReason}</span> : null}
+                  {c.reprintReason ? <span className="text-ink-muted">{c.reprintReason}</span> : null}
                 </li>
               ))}
             </ol>

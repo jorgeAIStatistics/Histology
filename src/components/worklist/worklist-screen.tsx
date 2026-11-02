@@ -1,31 +1,33 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { flushSync } from "react-dom";
 import { useReactTable, getCoreRowModel, getSortedRowModel, type ColumnDef, type SortingState } from "@tanstack/react-table";
-import { Bookmark, ChevronDown, ChevronLeft, ChevronRight, Download, Printer, Search, X } from "lucide-react";
-import { cn } from "@/lib/cn";
 import { STAGE } from "@/lib/domain";
-import { fmtSmart } from "@/lib/time";
-import {
-  AlertBanner, Button, Checkbox, CommandButton, CommandError, ConfirmDialog, EmptyState, Input, PageBody, PageHeader, Select, SidePanelLayout,
-  Table, TableCount, Tabs, TBody, TD, TH, THead, TR,
-} from "@/components/ui";
-import { AccessionChip, DoctorChip, DoctorSwatch, DOCTOR_STRIPE, DOCTOR_TINT, isPathologistColor, ProvisionalChip, ReadOnlyTag, StaleBanner, Timestamp } from "@/components/domain";
+import { decodeLabel } from "@/lib/identifiers";
 import { useCommand, newIdempotencyKey, ERROR_TITLE, type CommandFailure } from "@/lib/client/command";
-import { isDialogOpen, useSingleKey } from "@/lib/client/keyboard";
+import { handleCommandAuthFailure, withActorHeader } from "@/lib/client/session";
+import { useSingleKey } from "@/lib/client/keyboard";
 import { isReadOnlyRole } from "@/lib/client/shell-context";
+import { AlertBanner } from "@/components/ui/alert-banner";
+import { Button } from "@/components/ui/button";
+import { CommandError } from "@/components/ui/command-button";
+import { ConfirmDialog } from "@/components/ui/dialog";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Kbd } from "@/components/ui/kbd";
+import { SidePanelLayout } from "@/components/ui/side-panel";
 import { useToast } from "@/components/ui/toast";
+import { ReadOnlyTag } from "@/components/domain/honesty";
+import { StaleBanner } from "@/components/domain/stale-banner";
 import type { Role } from "@/lib/roles";
 import type { SavedFilter, WorklistData, WorklistRow } from "@/server/queries/worklist";
-import {
-  COLUMN_LABEL, COLUMN_PRIORITY, FILTER_STAGES, VIEW_LABEL, VIEW_SCOPE_TEXT, WORKLIST_VIEWS, describeFilters, filtersToSearchParams, stripUndefined,
-  type ColumnKey, type WorklistFilters, type WorklistView,
-} from "./views";
-import { BlocksCell, ChangeTags, HoldList, PartsCell, StainList, UpdateOrigin } from "./cells";
+import { COLUMN_LABEL, VIEW_LABEL, VIEW_SCOPE_TEXT, describeFilters, filtersToSearchParams, stripUndefined, type ColumnKey, type WorklistFilters, type WorklistView } from "./views";
 import { plural } from "./format";
+import { WorklistGrid } from "./grid";
+import { ChangeLine, OverflowHint, WorklistHeader, WorklistToolbar } from "./toolbar";
+import { SavedFiltersMenu } from "./saved-filters-menu";
 import { WorklistPanel } from "./worklist-panel";
 import { PrintSnapshot, type PrintMeta } from "./print-snapshot";
 import { FreshnessWatcher } from "./freshness-watcher";
@@ -37,37 +39,10 @@ interface Props {
   actor: { id: string; name: string; role: Role };
 }
 
-const STAGE_RANK = new Map<string, number>(["intake", ...Object.keys(STAGE)].map((s, i) => [s, i]));
+/** The failed print or download says why beside the buttons; focus stays on the button, which points to it. */
+const SNAPSHOT_ERROR_ID = "worklist-snapshot-error";
 
-/** Text columns that may wrap so the P1 columns fit a 1366 px workstation and a 1024 px bench tablet. Identifiers never wrap. */
-const WRAP_COLUMNS = new Set<ColumnKey>(["parts", "stage", "stains", "holds", "readiness", "sourceEntry", "blocks", "owner", "lastUpdate", "office", "clinician"]);
-/**
- * Minimum column widths. The table scrolls sideways once the columns no longer fit, so these minimums
- * decide what stays on screen: all P1 columns at 1024 px, plus the task owner at 1366 px.
- */
-const COLUMN_WIDTH: Partial<Record<ColumnKey, string>> = {
-  parts: "min-w-36",
-  stage: "min-w-28",
-  stains: "min-w-44",
-  holds: "w-26 min-w-26",
-  readiness: "min-w-48",
-  sourceEntry: "min-w-32",
-  blocks: "min-w-28",
-  owner: "min-w-32",
-  lastUpdate: "min-w-36",
-  office: "min-w-36",
-  clinician: "min-w-32",
-};
-/** Side panel open (about 680 px of list at 1366): P2 and P3 move to the panel and P1 tightens to fit. */
-const COLUMN_WIDTH_PANEL: Partial<Record<ColumnKey, string>> = {
-  parts: "min-w-28",
-  stage: "min-w-24",
-  stains: "min-w-24",
-  holds: "w-20 min-w-20",
-  readiness: "min-w-36",
-};
-/** Screen header labels (the caption, print and CSV keep the full names). */
-const HEADER_LABEL: Record<ColumnKey, string> = { ...COLUMN_LABEL, stains: "Stains", owner: "Task owner", blocks: "Blocks prepared" };
+const STAGE_RANK = new Map<string, number>(["intake", ...Object.keys(STAGE)].map((s, i) => [s, i]));
 
 function hrefFor(view: WorklistView, filters: WorklistFilters, selected?: string | null): string {
   const p = filtersToSearchParams(view, filters);
@@ -75,9 +50,18 @@ function hrefFor(view: WorklistView, filters: WorklistFilters, selected?: string
   return `/worklist?${p.toString()}`;
 }
 
-function sameFilters(a: WorklistFilters, b: WorklistFilters): boolean {
-  const norm = (f: WorklistFilters) => JSON.stringify(Object.entries(stripUndefined({ ...f })).sort(([x], [y]) => x.localeCompare(y)));
-  return norm(a) === norm(b);
+/**
+ * What to find for a typed or scanned value: a demo label payload (HL1:...) or a human block/slide label
+ * ("D26-04817 A1-2 H&E") finds its case; anything else is searched as typed.
+ */
+function findTerm(raw: string): string {
+  const value = raw.trim();
+  if (/^HL1:/i.test(value)) {
+    const decoded = decodeLabel(value);
+    return decoded.ok ? decoded.identity.accession : value;
+  }
+  const accession = /^(D\d{2}-\d{5})\s+[A-Z]\d*/i.exec(value);
+  return accession ? accession[1].toUpperCase() : value;
 }
 
 export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
@@ -87,6 +71,14 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
   const view = data.view;
   const filters = data.filters;
   const readOnly = isReadOnlyRole(actor.role);
+  const navigate = useCallback(
+    (href: string, mode: "push" | "replace") =>
+      startTransition(() => {
+        if (mode === "replace") router.replace(href, { scroll: false });
+        else router.push(href, { scroll: false });
+      }),
+    [router],
+  );
 
   // ------------------------------------------------------------ table model (tanstack for sorting)
   const allRows = useMemo(() => data.groups.flatMap((g) => g.rows), [data.groups]);
@@ -99,14 +91,15 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
   const columns = useMemo<ColumnDef<WorklistRow>[]>(
     () => [
       { id: "accession", accessorFn: (r) => r.accessionNumber ?? r.provisionalId ?? "" },
-      { id: "parts", accessorFn: (r) => r.partsSummary },
+      // Stage folds into the Parts column on screen, so sorting Parts sorts by the case's stage.
+      { id: "parts", accessorFn: (r) => STAGE_RANK.get(r.stage) ?? 99 },
       { id: "stage", accessorFn: (r) => STAGE_RANK.get(r.stage) ?? 99 },
       { id: "stains", accessorFn: (r) => (r.hasPas ? 0 : r.stains.length ? 1 : 2) },
       { id: "holds", accessorFn: (r) => -r.holds.length },
       { id: "readiness", accessorFn: (r) => r.readinessText },
       { id: "blocks", accessorFn: (r) => r.blocks.prepared },
       { id: "sourceEntry", accessorFn: (r) => -r.sourceEntry.pendingParts.length },
-      { id: "owner", accessorFn: (r) => r.owner?.ownerName ?? "~" },
+      { id: "owner", accessorFn: (r) => r.owner?.ownerName ?? (r.unownedOwner ? "~unassigned" : "~") },
       { id: "lastUpdate", accessorFn: (r) => (r.lastUpdate.at ? Date.parse(r.lastUpdate.at) : 0) },
       { id: "office", accessorFn: (r) => r.office },
       { id: "clinician", accessorFn: (r) => r.clinician ?? "~" },
@@ -123,15 +116,26 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
     getRowId: (r) => r.id,
   });
   const sortedRows = table.getRowModel().rows.map((r) => r.original);
+  const sortedKey = sortedRows.map((r) => r.id).join("|");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const grouped = useMemo(
     () => data.groups.map((g) => ({ group: g, rows: sortedRows.filter((r) => groupOf.get(r.id) === g.key) })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data.groups, sortedRows.map((r) => r.id).join("|"), groupOf],
+    [data.groups, sortedKey, groupOf],
   );
   const visibleIds = useMemo(() => grouped.flatMap(({ group, rows }) => (collapsed.has(group.key) ? [] : rows.map((r) => r.id))), [grouped, collapsed]);
-  const selectedRow = selectedId ? allRows.find((r) => r.id === selectedId || r.accessionNumber === selectedId) ?? null : null;
+  const selectedRow = selectedId ? allRows.find((r) => r.id === selectedId || r.accessionNumber === selectedId || r.provisionalId === selectedId) ?? null : null;
   const selectedGroup = selectedRow ? data.groups.find((g) => g.key === groupOf.get(selectedRow.id)) ?? null : null;
+  const toggleGroup = useCallback(
+    (key: string) =>
+      setCollapsed((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      }),
+    [],
+  );
 
   // ------------------------------------------------------------ keyboard: J/K, arrows, Enter, A, P
   const [activeId, setActiveId] = useState<string | null>(selectedRow?.id ?? null);
@@ -142,67 +146,63 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
   const focusRow = useCallback((id: string) => {
     setActiveId(id);
     requestAnimationFrame(() => {
-      const el = tableRef.current?.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(id)}"]`);
-      el?.focus();
+      const row = tableRef.current?.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(id)}"]`);
+      if (!row) return;
+      row.focus({ preventScroll: true });
+      revealRow(row);
     });
   }, []);
   // A panel opened from a link (?selected=...) brings its row into view, so the list shows which record is open.
+  // (Closing the panel returns focus to the row it showed last: the shared SidePanel does that, J/K included.)
   const selectedRowId = selectedRow?.id ?? null;
   useEffect(() => {
     if (!selectedRowId) return;
     const row = tableRef.current?.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(selectedRowId)}"]`);
-    const box = row?.closest<HTMLElement>(".overflow-auto");
-    if (!row || !box) return;
-    const r = row.getBoundingClientRect();
-    const b = box.getBoundingClientRect();
-    const headerH = box.querySelector("thead")?.getBoundingClientRect().height ?? 0;
-    const visible = r.top >= b.top + headerH && r.bottom <= Math.min(b.bottom, window.innerHeight);
-    // Scroll only the table, never the page: the tabs, change strip and filters stay in view.
-    if (!visible) box.scrollTop += r.top - b.top - headerH - Math.max(0, (b.height - headerH - r.height) / 2);
+    if (row) revealRow(row, { center: true });
     // Re-checked once the table has its final height (tableMax), which is measured after the first paint.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRowId, tableMax]);
-  // Closing the panel (Esc, the close button or Back) returns focus to the row it showed, so J/K continue from there.
-  const prevSelectedRef = useRef<string | null>(selectedRowId);
-  useEffect(() => {
-    const prev = prevSelectedRef.current;
-    prevSelectedRef.current = selectedRowId;
-    if (!prev || selectedRowId) return;
-    requestAnimationFrame(() => {
-      const a = document.activeElement;
-      if (!a || a === document.body) focusRow(prev);
-    });
-  }, [selectedRowId, focusRow]);
-  const openRow = useCallback(
-    (id: string, mode: "push" | "replace" = "push") => {
-      const href = hrefFor(view, filters, id);
-      if (mode === "replace") router.replace(href, { scroll: false });
-      else router.push(href, { scroll: false });
-    },
-    [router, view, filters],
-  );
+  // J/K with the panel open moves the panel along and keeps focus on the row, where its ring shows; Enter or a
+  // click opens it with focus on the panel's heading, so a screen reader announces the case.
+  const [panelFollows, setPanelFollows] = useState(false);
+  const openRow = useCallback((id: string, mode: "push" | "replace" = "push") => navigate(hrefFor(view, filters, id), mode), [navigate, view, filters]);
   const move = useCallback(
     (delta: number) => {
       if (!visibleIds.length) return;
       const cur = activeId ? visibleIds.indexOf(activeId) : -1;
       const next = visibleIds[Math.min(visibleIds.length - 1, Math.max(0, cur === -1 ? 0 : cur + delta))];
       focusRow(next);
-      if (selectedRow) openRow(next, "replace"); // the panel follows along
+      if (selectedRow) {
+        setPanelFollows(true);
+        openRow(next, "replace"); // the panel follows along
+      }
     },
     [visibleIds, activeId, focusRow, selectedRow, openRow],
   );
-  const onRowKey = (e: ReactKeyboardEvent<HTMLTableRowElement>, id: string) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
+  const onRowKey = useCallback(
+    (e: ReactKeyboardEvent<HTMLTableRowElement>, id: string) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        setPanelFollows(false);
+        openRow(id);
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        move(1);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        move(-1);
+      }
+    },
+    [openRow, move],
+  );
+  const onRowClick = useCallback(
+    (id: string) => {
+      setActiveId(id);
+      setPanelFollows(false);
       openRow(id);
-    } else if (e.key === "ArrowDown") {
-      e.preventDefault();
-      move(1);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      move(-1);
-    }
-  };
+    },
+    [openRow],
+  );
 
   // ------------------------------------------------------------ acknowledge
   // The version is captured when the dialog OPENS: a background refresh while it is open must not
@@ -235,7 +235,7 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
     flushSync(() => setPrintMeta(meta));
     window.print();
     toast.show({ tone: "success", title: `Snapshot ${meta.displayId} recorded (v${meta.seq}).`, body: "The paper copy is not updated after printing." });
-    router.refresh();
+    startTransition(() => router.refresh());
   }, [snapshot, view, filters, data.seq, toast, router]);
 
   // ------------------------------------------------------------ CSV download
@@ -248,13 +248,14 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
     try {
       const res = await fetch("/api/worklist/export", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        // Secured mode: the staff member this page was opened for (X-HLOS-Actor), as for every command.
+        headers: withActorHeader({ "Content-Type": "application/json" }),
         body: JSON.stringify({ view, filters, expectedSeq: data.seq, idempotencyKey: newIdempotencyKey("csv") }),
         cache: "no-store",
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: CommandFailure } | null;
-        setCsvError(body?.error ?? { code: "VALIDATION", message: `Download failed (HTTP ${res.status}).` });
+        setCsvError(body?.error ? await handleCommandAuthFailure(body.error) : { code: "VALIDATION", message: `Download failed (HTTP ${res.status}).` });
         return;
       }
       const blob = await res.blob();
@@ -269,7 +270,7 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
       a.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
       toast.show({ tone: "success", title: `Downloaded ${name}`, body: "Snapshot recorded with its version and time. The file is not updated after download." });
-      router.refresh();
+      startTransition(() => router.refresh());
     } catch {
       setCsvError({ code: "NETWORK", message: "Could not reach the local demo server. Try again." });
     } finally {
@@ -287,21 +288,26 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
   });
 
   // ------------------------------------------------------------ filters → URL
-  const setFilters = (next: WorklistFilters) => router.replace(hrefFor(view, stripUndefined(next), null), { scroll: false });
+  const setFilters = (next: WorklistFilters) => navigate(hrefFor(view, stripUndefined(next), null), "replace");
   const toggle = (key: "pasOnly" | "onHold" | "mine" | "changedOnly") => setFilters({ ...filters, [key]: filters[key] ? undefined : true });
   const pasReviewTotal = data.groups.reduce((n, g) => n + g.counts.pasReview, 0);
   const [q, setQ] = useState(filters.q ?? "");
   useEffect(() => setQ(filters.q ?? ""), [filters.q]);
+  // A find (typed or scanned into the field) pings the rows it located once they arrive.
+  const [ping, setPing] = useState<{ q: string; n: number } | null>(null);
+  const find = () => {
+    const term = findTerm(q);
+    setQ(term);
+    setPing(term ? { q: term, n: Date.now() } : null);
+    setFilters({ ...filters, q: term || undefined });
+  };
+  const pingKey = ping && filters.q && ping.q.toLowerCase() === filters.q.toLowerCase() ? `${ping.q}-${ping.n}` : null;
   const activeFilterCount = Object.keys(stripUndefined({ ...filters, scope: undefined, queue: undefined })).length;
 
   const closeHref = hrefFor(view, filters, null);
-  const columnsShown: ColumnKey[] = data.columns;
   const doctorName = (id: string) => data.doctors.find((d) => d.id === id)?.name;
   const staleSources = data.freshness.sources.filter((s) => s.stale);
   const panelOpen = !!selectedRow;
-  const widthOf = (key: ColumnKey) => (panelOpen ? COLUMN_WIDTH_PANEL[key] ?? COLUMN_WIDTH[key] : COLUMN_WIDTH[key]);
-
-  const viewTabs = WORKLIST_VIEWS.map((v) => ({ key: v, label: VIEW_LABEL[v], href: `/worklist?view=${v}` }));
 
   // A queue or stage filter opened from an Operations number also counts the PARTS it matched, so the
   // number on the tile or chart can be found in what opens (the list itself shows cases).
@@ -318,8 +324,10 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
   }, [allRows, filters.queue, filters.stage]);
 
   // ------------------------------------------------------------ one scroll region
-  // The table fills the rest of the window and scrolls inside, so the page itself does not scroll
-  // and the tabs, change strip and filters stay in view (with or without the side panel).
+  // Bench screens: the grid fills the rest of the window and scrolls inside, so the page itself does not scroll
+  // and the header, toolbar and change line stay in view (with or without the side panel). A window too short
+  // for that (200% zoom, a small tablet) stacks instead: the page scrolls, and the grid's box is one window tall
+  // under the top bar, so its sticky column header and doctor band are never hidden under the bar.
   const hasRows = allRows.length > 0;
   useLayoutEffect(() => {
     if (!hasRows) return;
@@ -328,8 +336,10 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
       if (!el) return;
       const top = el.getBoundingClientRect().top + window.scrollY;
       const footer = footerRef.current?.offsetHeight ?? 0;
-      const px = Math.max(320, Math.floor(window.innerHeight - top - footer - 12 /* gap */ - 16 /* page padding */));
-      setTableMax(`${px}px`);
+      const fit = Math.floor(window.innerHeight - top - footer - 10 /* gap */ - 12 /* page padding */);
+      const chrome = document.querySelector<HTMLElement>("header[data-shell-chrome]")?.offsetHeight ?? 0;
+      const stacked = Math.max(200, Math.floor(window.innerHeight - chrome - 16));
+      setTableMax(`${fit >= 320 ? fit : stacked}px`);
     };
     update();
     const ro = new ResizeObserver(update);
@@ -342,288 +352,29 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
     };
   }, [hasRows]);
   const overflow = useHorizontalOverflow(tableRef, `${view}|${panelOpen}|${allRows.length}`);
-  const scrollTableBy = (dir: 1 | -1) => {
+  const scrollTableBy = useCallback((dir: 1 | -1) => {
     const box = tableRef.current?.querySelector<HTMLElement>(".overflow-auto");
     if (!box) return;
     const sticky = box.querySelector<HTMLElement>("thead th")?.offsetWidth ?? 0;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     box.scrollBy({ left: dir * Math.max(160, box.clientWidth - sticky - 48), behavior: reduce ? "auto" : "smooth" });
+  }, []);
+
+  const sortOf = (key: ColumnKey) => {
+    const s = table.getColumn(key)?.getIsSorted();
+    return s === "asc" ? "asc" : s === "desc" ? "desc" : "none";
+  };
+  const onSort = (key: ColumnKey) => {
+    const col = table.getColumn(key);
+    col?.toggleSorting(col.getIsSorted() === "asc");
   };
 
-  const nothingToAck = !data.changes.total && !data.ack.never;
-  const strip = (
-    <section aria-label="Changes since your last acknowledgment" className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-md border border-line bg-surface px-3 py-1.5 text-sm">
-      <p id="ack-status" className="min-w-0 flex-1 text-ink" aria-live="polite">
-        {data.ack.never ? (
-          <>You have not acknowledged the {VIEW_LABEL[view]} view yet. Every row counts as new.</>
-        ) : data.changes.total ? (
-          <>
-            <span className="font-semibold">Since your last acknowledgment</span>{" "}
-            <span className="text-ink-muted">
-              ({data.ack.ackedAt ? `${fmtSmart(data.ack.ackedAt, now)} ET, ` : ""}v{data.ack.ackedSeq})
-            </span>
-            : <span className="num-tabular font-semibold">{data.changes.new}</span> new, <span className="num-tabular font-semibold">{data.changes.changed}</span> changed,{" "}
-            <span className="num-tabular font-semibold">{data.changes.canceled}</span> canceled.
-          </>
-        ) : (
-          <>
-            Nothing to acknowledge: no new, changed or canceled rows since{" "}
-            <span className="text-ink-muted">{data.ack.ackedAt ? `${fmtSmart(data.ack.ackedAt, now)} ET ` : ""}(v{data.ack.ackedSeq})</span>.
-          </>
-        )}
-        {data.freshness.stale ? (
-          // Short and inline: the stale banner above already explains the outage.
-          <span className="text-warning-fg"> Source changes paused; local changes still tracked.</span>
-        ) : null}
-      </p>
-      <Checkbox label="Only changed rows" checked={!!filters.changedOnly} onChange={() => toggle("changedOnly")} />
-      <Button variant={data.changes.total ? "primary" : "secondary"} size="sm" onClick={openAck} disabled={nothingToAck} reasonId={nothingToAck ? "ack-status" : undefined}>
-        Acknowledge (records v{data.seq})
-      </Button>
-      {ack.error ? <CommandError error={ack.error} /> : null}
-    </section>
-  );
-
-  const filterRow = (
-    <section aria-label="Filters" className="flex flex-wrap items-end gap-x-3 gap-y-2">
-      <label className="flex flex-col gap-0.5 text-xs text-ink-muted">
-        Assigned dermatopathologist
-        <Select size="sm" value={filters.doctor ?? ""} onChange={(e) => setFilters({ ...filters, doctor: e.target.value || undefined })} className="w-48">
-          <option value="">All</option>
-          {data.doctors.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.name} ({d.colorToken ?? "no color"})
-            </option>
-          ))}
-          <option value="unassigned">No active doctor (routing exceptions, unassigned)</option>
-        </Select>
-      </label>
-      <label className="flex flex-col gap-0.5 text-xs text-ink-muted">
-        Stage
-        <Select size="sm" value={filters.stage ?? ""} onChange={(e) => setFilters({ ...filters, stage: e.target.value || undefined })} className="w-40">
-          <option value="">All stages</option>
-          {FILTER_STAGES.map((s) => (
-            <option key={s} value={s}>
-              {STAGE[s]}
-            </option>
-          ))}
-        </Select>
-      </label>
-      {view === "grossing" ? (
-        <label className="flex flex-col gap-0.5 text-xs text-ink-muted">
-          Queue
-          <Select
-            size="sm"
-            value={filters.queue ?? ""}
-            onChange={(e) => setFilters({ ...filters, queue: (e.target.value || undefined) as WorklistFilters["queue"] })}
-            className="w-56"
-          >
-            <option value="">All grossing work</option>
-            <option value="gross_pending">No approved gross record yet</option>
-            <option value="source_entry">Source entry pending</option>
-            <option value="source_attested">Entered, awaiting source ack</option>
-          </Select>
-        </label>
-      ) : null}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pb-1.5">
-        <Checkbox
-          label="PAS only"
-          checked={!!filters.pasOnly}
-          onChange={() => toggle("pasOnly")}
-          hint={filters.pasOnly && pasReviewTotal ? "Includes canceled PAS awaiting review (struck through)" : undefined}
-        />
-        <Checkbox label="On hold" checked={!!filters.onHold} onChange={() => toggle("onHold")} />
-        <Checkbox label="My work" checked={!!filters.mine} onChange={() => toggle("mine")} />
-      </div>
-    </section>
-  );
-
-  const findForm = (
-    <form
-      role="search"
-      aria-label="Find in this list"
-      className="relative flex items-center"
-      onSubmit={(e) => {
-        e.preventDefault();
-        setFilters({ ...filters, q: q.trim() || undefined });
-      }}
-    >
-      <label className="sr-only" htmlFor="worklist-find">
-        Find in list (accession, work order, office or clinician)
-      </label>
-      <Search className="pointer-events-none absolute left-2 size-4 text-ink-muted" aria-hidden />
-      <Input
-        id="worklist-find"
-        type="search"
-        size="sm"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        placeholder="Find D26-04817, WO-2213"
-        aria-describedby="worklist-find-hint"
-        className="w-52 pl-7"
-      />
-      <span id="worklist-find-hint" className="sr-only">
-        Press Enter to find.
-      </span>
-    </form>
-  );
-
-  const tableEl = (
-    <div ref={tableRef} className="relative">
-      <Table
-        caption={`Worklist, ${VIEW_LABEL[view]} view, grouped by assigned dermatopathologist. Sorted: ${sorting.length ? `${COLUMN_LABEL[sorting[0].id as ColumnKey]} ${sorting[0].desc ? "descending" : "ascending"}` : "holds first, then accession number"}.${panelOpen ? " Side panel open: more columns are shown in the panel." : ""}`}
-        scroll="container"
-        maxHeight={tableMax}
-        // Side panel open: P2 and P3 details are in the panel, so the list keeps every P1 column visible.
-        hideP2={panelOpen}
-        // Bench tablet (< 1280 px): P3 columns move to the side panel (spec 5.2).
-        wrapperClassName={cn(
-          "max-xl:[&_[data-priority='3']]:hidden",
-          // Scrolled sideways: a rule on the sticky Case column shows where the scrolled columns slide under it.
-          overflow.left && "[&_tr>td:first-child]:border-r [&_tr>td:first-child]:border-r-line-strong [&_thead_th:first-child]:border-r [&_thead_th:first-child]:border-r-line-strong",
-        )}
-      >
-        <THead>
-          <tr>
-            {columnsShown.map((key) => {
-              const col = table.getColumn(key);
-              const s = col?.getIsSorted();
-              return (
-                <TH
-                  key={key}
-                  data-label={COLUMN_LABEL[key]}
-                  stickyFirst={key === "accession"}
-                  priority={COLUMN_PRIORITY[key]}
-                  sort={s === "asc" ? "asc" : s === "desc" ? "desc" : "none"}
-                  onSort={() => col?.toggleSorting(s === "asc")}
-                  className={cn("whitespace-normal py-1 align-bottom leading-tight", panelOpen && "px-2", widthOf(key))}
-                >
-                  {HEADER_LABEL[key]}
-                </TH>
-              );
-            })}
-          </tr>
-        </THead>
-        {grouped.map(({ group, rows }) => {
-          const isCollapsed = collapsed.has(group.key);
-          const color = isPathologistColor(group.colorToken) ? group.colorToken : null;
-          return (
-            <TBody key={group.key}>
-              <tr>
-                <th
-                  scope="colgroup"
-                  colSpan={columnsShown.length}
-                  className={cn(
-                    "h-10 border-b border-line px-0 text-left font-normal",
-                    color ? cn(DOCTOR_TINT[color], "border-l-4", DOCTOR_STRIPE[color]) : "border-y border-dashed border-line-strong bg-surface",
-                  )}
-                >
-                  <button
-                    type="button"
-                    aria-expanded={!isCollapsed}
-                    onClick={() =>
-                      setCollapsed((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(group.key)) next.delete(group.key);
-                        else next.add(group.key);
-                        return next;
-                      })
-                    }
-                    className="sticky left-0 flex h-10 w-max max-w-[100vw] items-center gap-2 px-3 text-left text-sm"
-                  >
-                    {isCollapsed ? <ChevronRight className="size-4 shrink-0 text-ink-muted" aria-hidden /> : <ChevronDown className="size-4 shrink-0 text-ink-muted" aria-hidden />}
-                    {group.kind === "routing_exception" ? (
-                      <DoctorChip name={null} className="font-semibold" />
-                    ) : group.kind === "no_doctor" ? (
-                      <span className="inline-flex items-center gap-1.5 whitespace-nowrap font-semibold text-ink-secondary">
-                        <DoctorSwatch color={null} />
-                        {group.name}
-                      </span>
-                    ) : (
-                      <DoctorChip name={group.name} color={group.colorToken} showColorName className="font-semibold" />
-                    )}
-                    <span className="text-ink-secondary">
-                      <span className="num-tabular">{plural(group.counts.rows, group.kind === "routing_exception" ? "item" : "case")}</span>, <span className="num-tabular">{group.counts.pas}</span> PAS,{" "}
-                      <span className="num-tabular">{group.counts.onHold}</span> on hold
-                      {group.counts.pasReview ? (
-                        <>
-                          , <span className="num-tabular">{group.counts.pasReview}</span> canceled or amended PAS to review
-                        </>
-                      ) : null}
-                    </span>
-                    <span className="sr-only">{isCollapsed ? "Collapsed. Activate to expand." : "Expanded. Activate to collapse."}</span>
-                  </button>
-                </th>
-              </tr>
-              {isCollapsed
-                ? null
-                : rows.map((r) => (
-                    <TR
-                      key={r.id}
-                      data-row-id={r.id}
-                      tabIndex={(activeId ?? visibleIds[0]) === r.id ? 0 : -1}
-                      interactive
-                      selected={selectedRow?.id === r.id}
-                      hold={r.holds.length > 0}
-                      pas={r.hasPas}
-                      canceled={r.change === "canceled" && r.stains.every((s) => s.canceled) && !r.stains.some((s) => s.needsReview)}
-                      onClick={(e) => {
-                        if ((e.target as HTMLElement).closest("a,button")) return;
-                        setActiveId(r.id);
-                        openRow(r.id);
-                      }}
-                      onFocus={() => setActiveId(r.id)}
-                      onKeyDown={(e) => onRowKey(e, r.id)}
-                      aria-label={`${r.accessionNumber ?? `Provisional ${r.provisionalId}`}, ${r.partsSummary}${r.changeTags.length ? `, ${r.changeTags.join(" and ")}` : ""}${r.pasNeedsReview ? ", canceled or amended PAS needs review" : ""}`}
-                      className={cn("focus-visible:outline-2 focus-visible:-outline-offset-2", !r.hasPas && selectedRow?.id !== r.id && "bg-surface")}
-                    >
-                      {columnsShown.map((key) => (
-                        <TD
-                          key={key}
-                          priority={COLUMN_PRIORITY[key]}
-                          stickyFirst={key === "accession"}
-                          wrap={WRAP_COLUMNS.has(key)}
-                          className={cn("py-1", panelOpen && "px-2", widthOf(key))}
-                        >
-                          {renderCell(key, r, now, panelOpen)}
-                        </TD>
-                      ))}
-                    </TR>
-                  ))}
-            </TBody>
-          );
-        })}
-      </Table>
-      {overflow.right ? <div aria-hidden className="pointer-events-none absolute bottom-px right-px top-px w-12 rounded-r-md bg-linear-to-l from-surface to-transparent" /> : null}
-    </div>
-  );
-
   const shownCount = allRows.length;
-  const body =
-    data.totals.allCases === 0 ? (
-      <EmptyState title="No cases for today yet">Cases appear after accessioning. Routing exceptions appear here as soon as an item from an unknown office is received.</EmptyState>
-    ) : shownCount === 0 ? (
-      <EmptyState
-        title="No cases match these filters"
-        action={
-          <Link href={hrefFor(view, {}, null)} className="text-sm font-medium text-brand underline-offset-2 hover:underline">
-            Clear filters
-          </Link>
-        }
-      >
-        {plural(data.totals.inScope, "case")} {data.totals.inScope === 1 ? "is" : "are"} in the {VIEW_LABEL[view]} view scope ({VIEW_SCOPE_TEXT[view]}). {data.totals.allCases}{" "}
-        {data.totals.allCases === 1 ? "is" : "are"} on today&apos;s worklist in total.
-      </EmptyState>
-    ) : (
-      tableEl
-    );
+  const caption = `Worklist, ${VIEW_LABEL[view]} view, grouped by assigned dermatopathologist. Sorted: ${
+    sorting.length ? `${sorting[0].id === "parts" ? "Parts and stage" : COLUMN_LABEL[sorting[0].id as ColumnKey]} ${sorting[0].desc ? "descending" : "ascending"}` : "holds first, then accession number"
+  }.${panelOpen ? " Side panel open: more columns are shown in the panel." : ""}`;
 
-  const keysHint = (
-    <p className="text-xs text-ink-muted">
-      Keys: <span className="font-medium">J/K</span> move, <span className="font-medium">Enter</span> opens, <span className="font-medium">Space</span> on a group header
-      collapses it, <span className="font-medium">A</span> acknowledges, <span className="font-medium">P</span> prints. Filters: {describeFilters(filters, doctorName)}.
-    </p>
-  );
+  const snapError = snapshotError ?? csvError;
 
   return (
     <>
@@ -632,46 +383,39 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
         <SidePanelLayout
           panel={
             selectedRow ? (
-              <WorklistPanel row={selectedRow} group={selectedGroup} now={now} actor={actor} closeHref={closeHref} readOnly={readOnly} />
+              <WorklistPanel row={selectedRow} group={selectedGroup} now={now} actor={actor} closeHref={closeHref} readOnly={readOnly} preserveFocus={panelFollows} />
             ) : null
           }
         >
-          <PageBody className="gap-3">
-            <div ref={headerAreaRef} className="flex flex-col gap-3">
-              <PageHeader
-                className="flex-nowrap"
-                title="Worklist"
+          <div className="@container/wl flex flex-col gap-2.5 px-6 pb-3 pt-3 max-xl:px-4">
+            <div ref={headerAreaRef} className="flex flex-col gap-2.5">
+              <WorklistHeader
+                view={view}
                 readOnly={readOnly}
-                meta={
-                  <>
-                    Version <span className="num-tabular font-medium text-ink-secondary">v{data.seq}</span>, read at <Timestamp iso={data.generatedAt} now={now} />
-                  </>
-                }
-                description={<>Shared daily list by assigned dermatopathologist, in place of the paper &quot;bible&quot;.</>}
-                actions={
-                  <>
-                    <Button variant="secondary" size="sm" icon={<Printer />} onClick={() => void printSnapshot()} loading={snapshot.pending} loadingLabel="Recording...">
-                      Print snapshot
-                    </Button>
-                    <Button variant="secondary" size="sm" icon={<Download />} onClick={() => void downloadCsv()} loading={csvPending} loadingLabel="Preparing...">
-                      Download CSV
-                    </Button>
-                  </>
-                }
+                allCases={filters.scope === "all"}
+                onToggleAllCases={() => setFilters({ ...filters, scope: filters.scope === "all" ? undefined : "all" })}
+                savedMenu={<SavedFiltersMenu view={view} filters={filters} saved={saved} />}
+                printing={snapshot.pending}
+                downloading={csvPending}
+                onPrint={() => void printSnapshot()}
+                onDownload={() => void downloadCsv()}
+                errorId={snapError ? SNAPSHOT_ERROR_ID : undefined}
               />
-              {snapshotError || csvError ? (
+              {snapError ? (
                 <AlertBanner
-                  tone={(snapshotError ?? csvError)!.code === "CONFLICT" ? "warning" : "danger"}
-                  title={`${ERROR_TITLE[(snapshotError ?? csvError)!.code] ?? "Could not create the snapshot"}`}
+                  id={SNAPSHOT_ERROR_ID}
+                  announce="alert"
+                  tone="warning"
+                  title={ERROR_TITLE[snapError.code] ?? "Could not create the snapshot"}
                   action={
-                    (snapshotError ?? csvError)!.code === "CONFLICT" ? (
+                    snapError.code === "CONFLICT" ? (
                       <Button
                         size="sm"
                         variant="primary"
                         onClick={() => {
                           setSnapshotError(null);
                           setCsvError(null);
-                          router.refresh();
+                          startTransition(() => router.refresh());
                         }}
                       >
                         Refresh the list
@@ -679,7 +423,7 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
                     ) : null
                   }
                 >
-                  {(snapshotError ?? csvError)!.message} Nothing was printed or downloaded.
+                  {snapError.message} Nothing was printed or downloaded.
                 </AlertBanner>
               ) : null}
               {staleSources.map((s) =>
@@ -697,71 +441,85 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
                   </AlertBanner>
                 ),
               )}
-              <div className="flex flex-col gap-1">
-                <div className="flex flex-wrap items-end justify-between gap-x-4 border-b border-line">
-                  <Tabs items={viewTabs} active={view} label="Worklist views" className="border-b-0" />
-                  <Checkbox
-                    className="pb-2"
-                    label="All cases (ignore view scope)"
-                    checked={filters.scope === "all"}
-                    onChange={() => setFilters({ ...filters, scope: filters.scope === "all" ? undefined : "all" })}
-                  />
-                </div>
-                <p className="truncate text-xs text-ink-muted" title="Views change columns and scope; every case stays on the shared list.">
-                  {VIEW_LABEL[view]} view: {filters.scope === "all" ? "all cases on today's worklist (view scope ignored)" : VIEW_SCOPE_TEXT[view]}.
-                </p>
-              </div>
-              {strip}
-              {filterRow}
-              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <TableCount shown={shownCount} total={data.totals.inScope} noun={filters.scope === "all" ? "items on today's worklist" : "items in this view"} />
-                  {partsNote ? <span className="text-sm font-medium text-ink">· {partsNote}</span> : null}
-                  {activeFilterCount ? (
-                    <Button size="sm" variant="quiet" icon={<X />} onClick={() => setFilters({ scope: filters.scope, queue: filters.queue })}>
-                      Clear filters
-                    </Button>
-                  ) : null}
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {findForm}
-                  <SavedFiltersMenu view={view} filters={filters} saved={saved} />
-                  {overflow.right || overflow.left ? (
-                    // Sits right above the table's right edge: says how many columns are off screen and scrolls to them.
-                    <Button
-                      size="sm"
-                      variant="quiet"
-                      onClick={() => scrollTableBy(overflow.right ? 1 : -1)}
-                      title={overflow.right ? `More columns: ${overflow.hidden.join(", ")}` : "Back to the first columns"}
-                      aria-label={overflow.right ? `Scroll the table right to show ${plural(overflow.hidden.length, "more column")}: ${overflow.hidden.join(", ")}` : "Scroll the table back to the first columns"}
-                      className="border border-line"
-                    >
-                      {overflow.right ? (
-                        <>
-                          {plural(overflow.hidden.length, "more column")}
-                          <ChevronRight className="size-4" aria-hidden />
-                        </>
-                      ) : (
-                        <>
-                          <ChevronLeft className="size-4" aria-hidden />
-                          First columns
-                        </>
-                      )}
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
             </div>
-            {body}
-            <div ref={footerRef} className="flex flex-col gap-1">
-              {shownCount ? keysHint : null}
+            <section aria-label="Worklist" className="rounded-lg border border-line bg-surface shadow-1">
+              <WorklistToolbar
+                view={view}
+                filters={filters}
+                doctors={data.doctors}
+                query={q}
+                onQuery={setQ}
+                onFind={find}
+                onFilters={setFilters}
+                onToggle={toggle}
+                pasReviewTotal={pasReviewTotal}
+              />
+              <ChangeLine
+                data={data}
+                view={view}
+                shown={shownCount}
+                partsNote={partsNote}
+                onClearFilters={activeFilterCount ? () => setFilters({ scope: filters.scope, queue: filters.queue }) : null}
+                onAcknowledge={openAck}
+                ackError={ack.error ? <CommandError error={ack.error} /> : null}
+                overflowHint={overflow.right || overflow.left ? <OverflowHint right={overflow.right} hidden={overflow.hidden} onScroll={scrollTableBy} /> : null}
+              />
+              {data.totals.allCases === 0 ? (
+                <EmptyState title="No cases for today yet" className="rounded-none rounded-b-lg border-x-0 border-b-0 border-t border-solid">
+                  Cases appear after accessioning. Routing exceptions appear here as soon as an item from an unknown office is received.
+                </EmptyState>
+              ) : shownCount === 0 ? (
+                <EmptyState
+                  title="No cases match these filters"
+                  className="rounded-none rounded-b-lg border-x-0 border-b-0 border-t border-solid"
+                  action={
+                    <Link href={hrefFor(view, {}, null)} className="inline-flex min-h-[max(2rem,var(--hlo-target-min))] items-center rounded-md border border-line-strong px-3 text-sm font-semibold text-ink hover:bg-surface-subtle">
+                      Clear filters
+                    </Link>
+                  }
+                >
+                  Filters: {describeFilters(filters, doctorName)}. {plural(data.totals.inScope, "case")} {data.totals.inScope === 1 ? "is" : "are"} in the {VIEW_LABEL[view]} view scope (
+                  {VIEW_SCOPE_TEXT[view]}); {data.totals.allCases} {data.totals.allCases === 1 ? "is" : "are"} on today&apos;s worklist in total.
+                </EmptyState>
+              ) : (
+                <WorklistGrid
+                  tableRef={tableRef}
+                  caption={caption}
+                  columns={data.columns}
+                  groups={grouped}
+                  collapsed={collapsed}
+                  onToggleGroup={toggleGroup}
+                  sortOf={sortOf}
+                  onSort={onSort}
+                  selectedId={selectedRow?.id ?? null}
+                  tabStopId={activeId ?? visibleIds[0] ?? null}
+                  panelOpen={panelOpen}
+                  maxHeight={tableMax}
+                  scrolledSideways={overflow.left}
+                  actorId={actor.id}
+                  now={now}
+                  pingKey={pingKey}
+                  onRowClick={onRowClick}
+                  onRowFocus={setActiveId}
+                  onRowKey={onRowKey}
+                />
+              )}
+            </section>
+            <div ref={footerRef} className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-muted">
+              {shownCount ? (
+                // Keyboard help is for the bench workstation; the tablet list keeps the room for rows.
+                <span className="flex flex-wrap items-center gap-x-4 gap-y-1 @max-5xl/wl:hidden">
+                  <KeysHint />
+                  <span>Filters: {describeFilters(filters, doctorName)}.</span>
+                </span>
+              ) : null}
               {readOnly ? (
-                <p className="flex items-center gap-2 text-xs text-ink-muted">
-                  <ReadOnlyTag /> {actor.name} can view, acknowledge and print, but cannot claim tasks. The role switch is a demo selector, not a sign-in; the server checks every action.
-                </p>
+                <span className="inline-flex items-center gap-2">
+                  <ReadOnlyTag /> {actor.name} can view, acknowledge and print, not claim tasks. The role switch is a demo selector, not a sign-in.
+                </span>
               ) : null}
             </div>
-          </PageBody>
+          </div>
         </SidePanelLayout>
       </div>
       <PrintSnapshot
@@ -779,6 +537,7 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
         onCancel={() => setAckTarget(null)}
         pending={ack.pending}
         pendingLabel="Recording..."
+        error={ack.error ? <CommandError error={ack.error} /> : null}
       >
         <p className="text-sm text-ink">
           This clears the New, Changed and Canceled tags for you in the {VIEW_LABEL[view]} view ({ackTarget?.counts.new ?? 0} new, {ackTarget?.counts.changed ?? 0} changed,{" "}
@@ -796,7 +555,42 @@ export function WorklistScreen({ data, saved, selectedId, actor }: Props) {
 }
 
 /**
- * Whether the table scrolls sideways, and which column headers are (partly) cut off at the right edge,
+ * Brings a row into view below the grid's sticky column header and doctor band (WCAG 2.4.11). When the grid's
+ * box is not fully in the window (the stacked layout at 200% zoom), the page first scrolls the box up under the
+ * top bar; on the bench screens the page never scrolls and only the grid moves.
+ */
+function revealRow(row: HTMLElement, { center = false }: { center?: boolean } = {}) {
+  const box = row.closest<HTMLElement>(".overflow-auto");
+  if (!box) return;
+  const chrome = document.querySelector<HTMLElement>("header[data-shell-chrome]")?.getBoundingClientRect().bottom ?? 0;
+  let b = box.getBoundingClientRect();
+  if (b.top < chrome || b.bottom > window.innerHeight + 1) {
+    window.scrollBy({ top: b.top - chrome - 8 });
+    b = box.getBoundingClientRect();
+  }
+  const header = box.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+  const band = box.querySelector("tbody > tr > th")?.getBoundingClientRect().height ?? 0;
+  const r = row.getBoundingClientRect();
+  const top = b.top + header + band;
+  const bottom = Math.min(b.top + box.clientHeight, window.innerHeight);
+  if (r.top >= top && r.bottom <= bottom) return;
+  // A row opened from a link sits mid-list with context around it; J/K moves just far enough.
+  if (center) box.scrollTop += r.top - top - Math.max(0, (bottom - top - r.height) / 2);
+  else if (r.top < top) box.scrollTop -= top - r.top;
+  else box.scrollTop += r.bottom - bottom;
+}
+
+function KeysHint() {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
+      <Kbd>J</Kbd>
+      <Kbd>K</Kbd> move, <Kbd>Enter</Kbd> opens, <Kbd>Esc</Kbd> closes the panel, <Kbd>Space</Kbd> on a doctor band collapses it, <Kbd>A</Kbd> acknowledges, <Kbd>P</Kbd> prints.
+    </span>
+  );
+}
+
+/**
+ * Whether the grid scrolls sideways, and which column headers are (partly) cut off at the right edge,
  * so the screen can say "2 more columns" instead of leaving a sliver of a column with no hint.
  */
 function useHorizontalOverflow(ref: RefObject<HTMLDivElement | null>, key: string): { right: boolean; left: boolean; hidden: string[] } {
@@ -825,191 +619,4 @@ function useHorizontalOverflow(ref: RefObject<HTMLDivElement | null>, key: strin
     };
   }, [ref, key]);
   return state;
-}
-
-function renderCell(key: ColumnKey, r: WorklistRow, now: string, narrow = false): ReactNode {
-  switch (key) {
-    case "accession":
-      // Change and rush tags sit above the chip, so they never widen the sticky identity column.
-      return (
-        <span className="flex flex-col items-start gap-0.5">
-          {r.changeTags.length || r.priority === "rush" ? (
-            <span className="inline-flex items-center gap-1">
-              <ChangeTags tags={r.changeTags} />
-              {r.priority === "rush" ? <span className="rounded-sm border border-warning-border bg-warning-bg px-1 text-xs font-semibold text-warning-fg">Rush</span> : null}
-            </span>
-          ) : null}
-          {r.accessionNumber ? (
-            <AccessionChip accession={r.accessionNumber} compact />
-          ) : (
-            <ProvisionalChip id={r.provisionalId!} compact className="h-auto min-h-6 max-w-34 flex-wrap gap-x-1 py-0.5" />
-          )}
-        </span>
-      );
-    case "parts":
-      return <PartsCell row={r} />;
-    case "stage":
-      return <span>{r.stageLabel}</span>;
-    case "stains":
-      return <StainList stains={r.stains} compact narrow={narrow} />;
-    case "holds":
-      return <HoldList holds={r.holds} stacked />;
-    case "readiness":
-      return (
-        <span className="line-clamp-3" title={[...r.eligibleShort.map((e) => `Eligible: ${e}`), ...r.blockedShort.map((b) => `Not ready: ${b}`)].join("\n")}>
-          {r.readinessText}
-        </span>
-      );
-    case "blocks":
-      return <BlocksCell blocks={r.blocks} />;
-    case "sourceEntry":
-      return (
-        <span className={r.sourceEntry.pendingParts.length ? "text-ink" : "text-ink-secondary"} title={r.sourceEntry.text}>
-          {r.sourceEntry.pendingParts.length
-            ? `Entry pending: ${r.sourceEntry.pendingParts.join(", ")}`
-            : r.sourceEntry.attestedParts.length
-              ? `Entered (attested): ${r.sourceEntry.attestedParts.join(", ")}`
-              : "None pending"}
-        </span>
-      );
-    case "owner":
-      return r.owner ? (
-        <span title={r.ownerText}>
-          {r.owner.ownerName ?? <span className="text-ink-muted">Unassigned ({(r.owner.ownerRole ?? "role unknown").replace(/_/g, " ")})</span>}
-          {r.tasks.length > 1 ? <span className="text-ink-muted"> +{r.tasks.length - 1}</span> : null}
-        </span>
-      ) : (
-        <span className="text-ink-muted">None</span>
-      );
-    case "lastUpdate":
-      return (
-        <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-0.5" title={r.lastUpdate.summary ?? undefined}>
-          <Timestamp iso={r.lastUpdate.at} now={now} />
-          <UpdateOrigin origin={r.lastUpdate.origin} />
-        </span>
-      );
-    case "office":
-      return <span>{r.office}</span>;
-    case "clinician":
-      return r.clinician ? <span>{r.clinician}</span> : <span className="text-ink-muted">Unknown</span>;
-  }
-}
-
-/**
- * Saved filters as a small menu (one button on the count row): the list of this view's saved filters,
- * each with delete, and a form to save the current filters. Esc or a click outside closes it.
- */
-function SavedFiltersMenu({ view, filters, saved }: { view: WorklistView; filters: WorklistFilters; saved: SavedFilter[] }) {
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const panelId = "saved-filters-panel";
-  const active = saved.find((f) => sameFilters(f.filters, filters)) ?? null;
-  const save = useCommand<{ filterId: string; replaced: boolean }, { view: WorklistView; name: string; filters: WorklistFilters }>("worklist.saveFilter", {
-    successToast: (r, i) => (r.replaced ? `Saved filter "${i.name}" updated.` : `Saved filter "${i.name}".`),
-    onSuccess: () => setName(""),
-  });
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: PointerEvent) => {
-      const t = e.target as Element | null;
-      if (isDialogOpen() || t?.closest("dialog")) return; // a delete confirmation belongs to this menu
-      if (!wrapRef.current?.contains(t)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || isDialogOpen()) return;
-      e.preventDefault(); // the side panel ignores an Escape that closed this menu
-      setOpen(false);
-      buttonRef.current?.focus();
-    };
-    document.addEventListener("pointerdown", onDown);
-    document.addEventListener("keydown", onKey, true);
-    return () => {
-      document.removeEventListener("pointerdown", onDown);
-      document.removeEventListener("keydown", onKey, true);
-    };
-  }, [open]);
-  return (
-    <div ref={wrapRef} className="relative">
-      <Button
-        ref={buttonRef}
-        type="button"
-        size="sm"
-        variant={active ? "secondary" : "ghost"}
-        icon={<Bookmark />}
-        aria-expanded={open}
-        aria-controls={panelId}
-        onClick={() => setOpen((o) => !o)}
-        className={cn(active && "border-brand bg-brand-50")}
-      >
-        {active ? (
-          <>
-            Saved: <span className="max-w-32 truncate">{active.name}</span>
-          </>
-        ) : (
-          <>
-            Saved filters <span className="num-tabular text-ink-muted">({saved.length})</span>
-          </>
-        )}
-        <ChevronDown className="size-3.5 text-ink-muted" aria-hidden />
-      </Button>
-      {open ? (
-        <section id={panelId} aria-label="Saved filters" className="absolute right-0 top-full z-30 mt-1 flex w-80 flex-col gap-2 rounded-md border border-line bg-surface p-3 text-sm shadow-2">
-          <h3 className="text-xs font-semibold text-ink-secondary">Saved filters for the {VIEW_LABEL[view]} view</h3>
-          {saved.length === 0 ? <p className="text-xs text-ink-muted">None yet. Saved filters are yours only; nobody else&apos;s list changes.</p> : null}
-          {saved.length ? (
-            <ul className="flex flex-col gap-1">
-              {saved.map((f) => {
-                const isActive = sameFilters(f.filters, filters);
-                return (
-                  <li key={f.id} className={cn("flex items-center gap-1 rounded-sm border pl-2 pr-0.5", isActive ? "border-brand bg-brand-50" : "border-line")}>
-                    <Link
-                      href={hrefFor(view, f.filters, null)}
-                      aria-current={isActive ? "true" : undefined}
-                      onClick={() => setOpen(false)}
-                      className="min-w-0 flex-1 truncate py-1 text-sm font-medium text-ink hover:underline"
-                    >
-                      {f.name}
-                    </Link>
-                    <CommandButton
-                      command="worklist.deleteFilter"
-                      input={{ filterId: f.id }}
-                      variant="quiet"
-                      size="sm"
-                      aria-label={`Delete saved filter ${f.name}`}
-                      pendingLabel="..."
-                      showError="toast"
-                      confirm={{ title: `Delete saved filter "${f.name}"?`, body: "Only your saved shortcut is removed. No cases or tasks change.", confirmLabel: "Delete saved filter", cancelLabel: "Keep it", destructive: true }}
-                      successToast={`Deleted saved filter "${f.name}".`}
-                      className="h-6 min-h-6 px-1"
-                    >
-                      <X className="size-3.5" aria-hidden />
-                    </CommandButton>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : null}
-          <form
-            className="flex items-center gap-1 border-t border-line pt-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!name.trim()) return;
-              void save.run({ view, name: name.trim(), filters: stripUndefined({ ...filters }) });
-            }}
-          >
-            <label className="sr-only" htmlFor="save-filter-name">
-              Name for the current filters
-            </label>
-            <Input id="save-filter-name" size="sm" value={name} maxLength={40} onChange={(e) => setName(e.target.value)} placeholder="Name the current filters" className="min-w-0 flex-1" />
-            <Button type="submit" size="sm" variant="secondary" loading={save.pending} loadingLabel="Saving..." disabled={!name.trim()}>
-              Save
-            </Button>
-          </form>
-          <CommandError error={save.error} />
-        </section>
-      ) : null}
-    </div>
-  );
 }

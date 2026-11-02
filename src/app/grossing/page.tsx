@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getDb } from "@/server/db/db";
 import { readClock } from "@/server/core/clock";
-import { getActor } from "@/server/session";
+import { requireView } from "@/server/auth/guard";
 import { grossingQueue, partWorkspace, resolvePartRef, sourceEntryQueue } from "@/server/queries/grossing";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { PageBody, PageHeader } from "@/components/ui/page-header";
@@ -20,8 +20,9 @@ type Search = { part?: string; case?: string; view?: string };
  *   ?view=source        Sam Ortiz's source-entry queue
  */
 export default async function GrossingPage({ searchParams }: { searchParams: Promise<Search> }) {
+  // The one guard: signed in (or the demo role), with this screen's view permission, before any data is read.
+  const actor = await requireView("view.grossing");
   const sp = await searchParams;
-  const actor = await getActor();
   const isReadOnly = actor.role === "director" || actor.role === "medical_director";
   let lookupError: string | null = null;
   let loadError: string | null = null;
@@ -57,27 +58,23 @@ export default async function GrossingPage({ searchParams }: { searchParams: Pro
     loadError = "Could not load the grossing queue. Nothing was changed. Reload the page to try again.";
   }
   const view = sp.view === "source" ? "source" : "bench";
+  const notice = lookupError ? (
+    <AlertBanner tone="danger" title="Part not opened" blocking>
+      {lookupError}
+      {/[.!?]$/.test(lookupError.trim()) ? "" : "."} Check the number, or scan the cassette label again (for example D26-04817 A).
+    </AlertBanner>
+  ) : null;
 
-  return (
-    <PageBody>
-      <PageHeader
-        title="Grossing"
-        readOnly={isReadOnly}
-        description="One reviewed gross record per part. Approved parts move on; unfinished parts stay visible."
-      />
-      {lookupError ? (
-        <AlertBanner tone="danger" title="Part not opened" blocking>
-          {lookupError}
-          {/[.!?]$/.test(lookupError.trim()) ? "" : "."} Check the number, or scan the cassette label again (for example D26-04817 A).
-        </AlertBanner>
-      ) : null}
-      {loadError ? (
+  if (loadError) {
+    return (
+      <PageBody>
+        <PageHeader title="Grossing" readOnly={isReadOnly} description="One reviewed gross record per part. Approved parts move on; unfinished parts stay visible." />
+        {notice}
         <AlertBanner tone="danger" title="Grossing queue unavailable" blocking>
           {loadError}
         </AlertBanner>
-      ) : (
-        <GrossingQueue rows={rows} sourceRows={sourceRows} view={view} now={now} />
-      )}
-    </PageBody>
-  );
+      </PageBody>
+    );
+  }
+  return <GrossingQueue rows={rows} sourceRows={sourceRows} view={view} now={now} readOnly={isReadOnly} notice={notice} />;
 }

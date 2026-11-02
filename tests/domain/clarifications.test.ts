@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { DB } from "@/server/db/db";
-import { testDb, run, must, clockAt, one, all, STAFF } from "../helpers";
+import { testDb, run, must, clockAt, one, all, STAFF, simulate } from "../helpers";
 import { executeCommand } from "@/server/commands";
 import { assertNotHeld, scopesForPart } from "@/server/domain/holds";
 import { patientIdentifiersIn, type ClarificationRow } from "@/server/domain/clarification";
@@ -151,7 +151,7 @@ describe("clarifications: acceptance check 12 (server-side roles and stale edits
     toReviewed(db, c);
     const accResolve = run(db, STAFF.maya, "clarification.resolve", { clarificationId: c.clarificationId, expectedVersion: v(db, "clarification", c.clarificationId), resolutionCode: "confirmed_observed", note: "done" });
     expect(accResolve.ok ? null : accResolve.error.code).toBe("FORBIDDEN");
-    const accReview = run(db, STAFF.luis, "clarification.cancel", { clarificationId: c.clarificationId, reason: "not needed" });
+    const accReview = run(db, STAFF.luis, "clarification.cancel", { clarificationId: c.clarificationId, reason: "not needed", expectedVersion: v(db, "clarification", c.clarificationId) });
     expect(accReview.ok ? null : accReview.error.code).toBe("FORBIDDEN");
     expect(clr(db, c.clarificationId).state).toBe("reviewed");
     expect(one<{ n: number }>(db, "SELECT COUNT(*) n FROM audit_event WHERE action = 'command.denied' AND actor_id IN (?, ?, ?)", STAFF.director, STAFF.maya, STAFF.luis).n).toBe(4);
@@ -390,7 +390,7 @@ describe("clarifications: loop-closing rules", () => {
     sendHero(db, c);
     clockAt(db, "11:12");
     const first = must<{ duplicate: boolean; answerText: string; amendedOrder: { messageId: string; queued: boolean; availableAt: string } }>(db, STAFF.maya, "clarification.simulateOfficeAnswer", { clarificationId: c.clarificationId });
-    const second = must<{ duplicate: boolean; amendedOrder: { queued: boolean } }>(db, "system", "clarification.simulateOfficeAnswer", { clarificationId: c.clarificationId });
+    const second = simulate<{ duplicate: boolean; amendedOrder: { queued: boolean } }>(db, "clarification.simulateOfficeAnswer", { clarificationId: c.clarificationId });
     expect(first.duplicate).toBe(false);
     expect(first.answerText).toMatch(/^Simulated office reply: .*LEFT dorsal forearm/);
     expect(first.amendedOrder).toMatchObject({ messageId: "ORD-77121#v2", queued: true, availableAt: labLocalToIso("2026-10-14", "11:13") });
@@ -427,9 +427,9 @@ describe("clarifications: loop-closing rules", () => {
   it("canceling needs a reason and leaves linked holds active with a release-decision task", () => {
     const db = testDb();
     const c = heroCreate(db);
-    const noReason = run(db, STAFF.kim, "clarification.cancel", { clarificationId: c.clarificationId, reason: "" });
+    const noReason = run(db, STAFF.kim, "clarification.cancel", { clarificationId: c.clarificationId, reason: "", expectedVersion: v(db, "clarification", c.clarificationId) });
     expect(noReason.ok ? null : noReason.error.code).toBe("VALIDATION");
-    must(db, STAFF.kim, "clarification.cancel", { clarificationId: c.clarificationId, reason: "Raised on the wrong part" });
+    must(db, STAFF.kim, "clarification.cancel", { clarificationId: c.clarificationId, reason: "Raised on the wrong part", expectedVersion: v(db, "clarification", c.clarificationId) });
     expect(clr(db, c.clarificationId).state).toBe("canceled");
     expect(one<{ status: string }>(db, "SELECT status FROM hold WHERE id = ?", c.holdId).status).toBe("active");
     expect(one<{ n: number }>(db, "SELECT COUNT(*) n FROM task WHERE kind = 'hold_release_decision' AND entity_id = ? AND status = 'open'", c.holdId).n).toBe(1);
@@ -556,7 +556,7 @@ describe("clarifications: manual holds (hold.place) and releases (hold.release)"
     // Once the clarification is closed, passing the flag is not an override and is not recorded as one.
     const db2 = testDb();
     const c2 = heroCreate(db2);
-    must(db2, STAFF.kim, "clarification.cancel", { clarificationId: c2.clarificationId, reason: "Raised on the wrong part" });
+    must(db2, STAFF.kim, "clarification.cancel", { clarificationId: c2.clarificationId, reason: "Raised on the wrong part", expectedVersion: v(db2, "clarification", c2.clarificationId) });
     must(db2, STAFF.kim, "hold.release", { holdId: c2.holdId, expectedVersion: v(db2, "hold", c2.holdId!), reason: "Clarification canceled", overrideOpenClarification: true });
     expect(one<{ n: number }>(db2, "SELECT COUNT(*) n FROM audit_event WHERE action = 'hold.release_override'").n).toBe(0);
   });
@@ -811,7 +811,7 @@ describe("clarifications: ownership, hold scope wording and the amended order ha
     must(db, STAFF.kim, "clarification.review", { clarificationId: c.clarificationId, expectedVersion: v(db, "clarification", c.clarificationId), note: "Bottle side confirmed" });
     must(db, STAFF.kim, "clarification.resolve", { clarificationId: c.clarificationId, expectedVersion: v(db, "clarification", c.clarificationId), resolutionCode: "confirmed_observed", note: "Keep hold until v2 arrives." });
     clockAt(db, "11:14");
-    must(db, "system", "integration.syncNow", {}); // the source-integration slice imports ORD-77121#v2
+    simulate(db, "integration.syncNow", {}); // the source-integration slice imports ORD-77121#v2
 
     const d = await detailOf(db, c.clarificationId);
     expect(d.amendment?.label).toMatch(/ORD-77121/);
@@ -825,5 +825,131 @@ describe("clarifications: ownership, hold scope wording and the amended order ha
     must(db, STAFF.kim, "hold.release", { holdId: c.holdId, expectedVersion: v(db, "hold", c.holdId!), reason: "Amended order v2 matches the bottle." });
     expect(holdTaskCount(db, c.holdId!)).toBe(0);
     expect(all<{ completed_by: string }>(db, "SELECT completed_by FROM task WHERE entity_type = 'hold' AND entity_id = ?", c.holdId).every((t) => t.completed_by === STAFF.kim)).toBe(true);
+  });
+});
+
+describe("clarifications: read model for the redesigned desk (derived, read only)", () => {
+  it("names the affected material for its label: official accession, provisional INT id with its order, or the order alone", async () => {
+    const { listClarifications } = await import("@/server/queries/clarifications");
+    const db = testDb();
+    const c = heroCreate(db); // raised on the order part only (no intake item in this test)
+    const now = one<{ value: string }>(db, "SELECT value FROM app_setting WHERE key = 'clock_anchor_demo'").value;
+    const rows = listClarifications(db, { filter: "all", actorId: STAFF.kim, now }).rows;
+    const byId = (id: string) => rows.find((r) => r.displayId === id)!;
+
+    // Official: the accession number leads, with its numbering namespace for the DataMatrix; the part is named.
+    expect(byId("CLR-0454").material).toEqual({ kind: "accession", labelId: "D26-04812", part: "A", scope: "part", orderRef: null, namespace: "EMA-SIM DERM" });
+    // Provisional identity question: the INT id, every container (never one part), the order kept beside it.
+    expect(byId("CLR-0453").material).toMatchObject({ kind: "provisional", labelId: "INT-1014-022", part: null, scope: "all_containers", orderRef: "ORD-75469", namespace: null });
+    // A provisional id is never presented as an accession number.
+    expect(rows.filter((r) => r.material.kind === "accession").every((r) => /^D\d{2}-\d{5}$/.test(r.material.labelId))).toBe(true);
+    expect(rows.filter((r) => r.material.kind === "provisional").every((r) => r.material.labelId.startsWith("INT-"))).toBe(true);
+    // Raised on an order part with no intake item: the order id is the label.
+    expect(byId(c.displayId).material).toMatchObject({ kind: "order", labelId: "ORD-77121", part: "B", scope: "part" });
+    // The structured material agrees with the text label used elsewhere.
+    for (const r of rows) expect(r.affectedLabel).toContain(r.material.labelId);
+  });
+
+  it("says who reviews and resolves, and states each hold's scope in words on the queue row", async () => {
+    const { listClarifications } = await import("@/server/queries/clarifications");
+    const db = testDb();
+    const c = heroCreate(db);
+    const now = one<{ value: string }>(db, "SELECT value FROM app_setting WHERE key = 'clock_anchor_demo'").value;
+    const rows = listClarifications(db, { filter: "all", actorId: STAFF.maya, now }).rows;
+    const kim = one<{ display_name: string }>(db, "SELECT display_name FROM staff WHERE id = ?", STAFF.kim).display_name;
+    // The review task goes to the escalation owner; the queue names that person ("Kim Nguyen to review").
+    const answered = rows.find((r) => r.displayId === "CLR-0453")!;
+    expect(answered.state).toBe("answered");
+    expect(answered.escalationOwnerName).toBe(kim);
+    expect(one<{ owner_id: string }>(db, "SELECT owner_id FROM task WHERE entity_id = (SELECT id FROM clarification WHERE display_id = 'CLR-0453') AND status = 'open'").owner_id).toBe(STAFF.kim);
+    // Hold scope in words: Part B only, never the whole case.
+    const hero = rows.find((r) => r.displayId === c.displayId)!;
+    expect(hero.activeHolds).toHaveLength(1);
+    expect(hero.activeHolds[0]).toMatchObject({ displayId: c.holdDisplayId, scopeShort: "Part B" });
+    // Questions without a hold carry none (a hold is never implied).
+    expect(rows.find((r) => r.displayId === "CLR-0454")!.activeHolds).toEqual([]);
+  });
+
+  it("leads the landing pane with overdue and undelivered questions, then answers a lead must review, and never with a closed or drafted one", async () => {
+    const { listClarifications, deskAttention } = await import("@/server/queries/clarifications");
+    const db = testDb();
+    const c = heroCreate(db); // drafted, with a hold on Part B
+    const now = one<{ value: string }>(db, "SELECT value FROM app_setting WHERE key = 'clock_anchor_demo'").value;
+    const allRows = listClarifications(db, { filter: "all", actorId: STAFF.kim, now }).rows;
+    const desk = deskAttention(allRows);
+    const ids = (rows: { displayId: string }[]) => rows.map((r) => r.displayId);
+
+    // Every overdue or undelivered open question is listed, in the list's urgency order, and nothing else.
+    const expected = allRows.filter((r) => r.isOpen && (r.overdueMinutes !== null || r.state === "delivery_failed" || r.state === "delivery_unknown"));
+    expect(ids(desk.problems)).toEqual(ids(expected));
+    expect(ids(desk.problems)).toEqual(expect.arrayContaining(["CLR-0454", "CLR-0451"]));
+    // The answered identity question waits for the lead; it is not presented as a delivery problem.
+    expect(ids(desk.toReview)).toContain("CLR-0453");
+    expect(desk.toReview.every((r) => r.state === "answered" || r.state === "reviewed")).toBe(true);
+    // No row twice; the problem and review groups hold open questions only; a draft (nothing has left the lab) is never on the triage.
+    expect(new Set([...ids(desk.problems), ...ids(desk.toReview), ...ids(desk.toRelease)]).size).toBe(desk.problems.length + desk.toReview.length + desk.toRelease.length);
+    expect([...desk.problems, ...desk.toReview].every((r) => r.isOpen)).toBe(true);
+    // A closed question appears only when a hold it placed is still active (a lead releases it).
+    expect(desk.toRelease.every((r) => !r.isOpen && r.holdToRelease)).toBe(true);
+    expect(ids(desk.toRelease)).toEqual(ids(allRows.filter((r) => !r.isOpen && r.holdToRelease)));
+    expect([...ids(desk.problems), ...ids(desk.toReview)]).not.toContain(c.displayId);
+    // Read only: deriving the triage changes nothing in the list.
+    expect(ids(listClarifications(db, { filter: "all", actorId: STAFF.kim, now }).rows)).toEqual(ids(allRows));
+  });
+
+  it("keeps a resolved or canceled question whose hold is still active on Needs review and the lead's My open until the hold is released", async () => {
+    const { listClarifications } = await import("@/server/queries/clarifications");
+    const db = testDb();
+    const now = () => one<{ value: string }>(db, "SELECT value FROM app_setting WHERE key = 'clock_anchor_demo'").value;
+    const list = (filter: "my_open" | "needs_review" | "resolved" | "all", actor: string = STAFF.kim) => listClarifications(db, { filter, actorId: actor, now: now() });
+    const ids = (filter: "my_open" | "needs_review" | "resolved" | "all", actor?: string) => list(filter, actor).rows.map((r) => r.displayId);
+
+    // Resolved, keeping the hold on Part B (for example until the amended order arrives).
+    const c = heroCreate(db);
+    toReviewed(db, c);
+    must(db, STAFF.kim, "clarification.resolve", { clarificationId: c.clarificationId, expectedVersion: v(db, "clarification", c.clarificationId), resolutionCode: "confirmed_observed", note: "Keep the hold until v2 arrives." });
+    const stateBefore = clr(db, c.clarificationId);
+    const row = list("all").rows.find((r) => r.displayId === c.displayId)!;
+    expect(row).toMatchObject({ state: "resolved", isOpen: false, holdToRelease: true, escalationOwnerId: STAFF.kim });
+    expect(row.activeHolds.map((h) => h.displayId)).toEqual([c.holdDisplayId]);
+    // On Needs review and on Kim's My open (she releases it), still on Resolved, never on Maya's My open.
+    expect(ids("needs_review")).toContain(c.displayId);
+    expect(ids("my_open")).toContain(c.displayId);
+    expect(ids("resolved")).toContain(c.displayId);
+    expect(ids("my_open", STAFF.maya)).not.toContain(c.displayId);
+    const q = list("needs_review");
+    expect(q.counts.needs_review).toBe(q.rows.length);
+    // Ranked after the answers waiting for review, ahead of every closed question without a hold.
+    const all_ = list("all").rows;
+    const at = all_.findIndex((r) => r.displayId === c.displayId);
+    expect(all_.slice(0, at).filter((r) => !r.isOpen)).toEqual([]);
+    expect(all_.slice(at + 1).filter((r) => r.state === "answered" || r.state === "reviewed")).toEqual([]);
+    const review = q.rows.findIndex((r) => r.state === "answered");
+    expect(review).toBeGreaterThanOrEqual(0);
+    expect(review).toBeLessThan(q.rows.findIndex((r) => r.displayId === c.displayId));
+    // Every other closed row (no hold) stays off Needs review and My open.
+    for (const r of all_.filter((x) => !x.isOpen && x.displayId !== c.displayId)) {
+      expect(r.holdToRelease).toBe(false);
+      expect(ids("needs_review")).not.toContain(r.displayId);
+    }
+    // Read only: listing changes nothing on the question or the hold.
+    expect(clr(db, c.clarificationId)).toEqual(stateBefore);
+    expect(one<{ status: string }>(db, "SELECT status FROM hold WHERE id = ?", c.holdId).status).toBe("active");
+
+    // Once the lead releases the hold, it leaves Needs review and My open; it stays on Resolved.
+    must(db, STAFF.kim, "hold.release", { holdId: c.holdId, expectedVersion: v(db, "hold", c.holdId!), reason: "Amended order v2 matches the bottle." });
+    expect(list("all").rows.find((r) => r.displayId === c.displayId)!.holdToRelease).toBe(false);
+    expect(ids("needs_review")).not.toContain(c.displayId);
+    expect(ids("my_open")).not.toContain(c.displayId);
+    expect(ids("resolved")).toContain(c.displayId);
+
+    // A canceled question with a hold left active is treated the same way.
+    const db2 = testDb();
+    const c2 = heroCreate(db2);
+    must(db2, STAFF.kim, "clarification.cancel", { clarificationId: c2.clarificationId, reason: "Raised on the wrong part", expectedVersion: v(db2, "clarification", c2.clarificationId) });
+    const now2 = one<{ value: string }>(db2, "SELECT value FROM app_setting WHERE key = 'clock_anchor_demo'").value;
+    const nr = listClarifications(db2, { filter: "needs_review", actorId: STAFF.kim, now: now2 }).rows.find((r) => r.displayId === c2.displayId);
+    expect(nr).toMatchObject({ state: "canceled", holdToRelease: true });
+    expect(listClarifications(db2, { filter: "my_open", actorId: STAFF.kim, now: now2 }).rows.map((r) => r.displayId)).toContain(c2.displayId);
   });
 });

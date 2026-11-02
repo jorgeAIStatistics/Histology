@@ -2,17 +2,28 @@
 
 import type { ReactNode } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, LabelList, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { AGE_BUCKET_LABELS, AGE_LABEL_INSIDE, AGE_RAMP, CHART, DOCTOR_COLORS } from "@/lib/tokens";
-import type { PathologistColor } from "@/lib/domain";
+import { AGE_BUCKET_LABELS, AGE_LABEL_INSIDE } from "@/lib/tokens";
 
 /**
  * Insight charts (design-spec §6.8, dataviz method): one axis, no animation,
  * thin bars (max 24px) with 4px rounded data ends, recessive grid, hover and
- * focus tooltips, colors from the token mirror only. Every chart sits in a
+ * focus tooltips. Colors are the H&E tokens read from the CSS variables in
+ * globals.css (brand bars, the indigo age ramp the Operations owner bars use),
+ * so a chart can never drift from the rest of the app. Every chart sits in a
  * ChartCard that also offers a table view.
  */
+const CHART = {
+  grid: "var(--hlo-chart-grid)",
+  axis: "var(--hlo-chart-axis)",
+  tick: "var(--hlo-text-muted)",
+  text: "var(--hlo-text)",
+  bar: "var(--hlo-brand)",
+  surface: "var(--hlo-surface)",
+} as const;
+const AGE_RAMP = ["var(--hlo-age-1)", "var(--hlo-age-2)", "var(--hlo-age-3)", "var(--hlo-age-4)"] as const;
+const DOCTOR_FILL: Record<string, string> = { teal: "var(--hlo-dr-teal)", violet: "var(--hlo-dr-violet)", amber: "var(--hlo-dr-amber)" };
 
-const AXIS_TICK = { fill: CHART.tick, fontSize: 12 } as const;
+const AXIS_TICK = { fill: CHART.tick, fontSize: 13 } as const;
 const AXIS_LINE = { stroke: CHART.axis } as const;
 const INITIAL = { width: 640, height: 220 } as const;
 
@@ -69,7 +80,7 @@ export function ArrivalsChart({ bins, days }: { bins: { label: string; priorMean
               return <TooltipBox title={`${row.label} ET hour`} lines={[`${row.priorMean} per day on average`, `${row.priorTotal} over ${days} days`]} />;
             }}
           />
-          <Bar dataKey="priorMean" name="Mean per day" fill={CHART.brand} maxBarSize={24} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+          <Bar dataKey="priorMean" name="Mean per day" fill={CHART.bar} maxBarSize={24} radius={[4, 4, 0, 0]} isAnimationActive={false} />
         </BarChart>
       </ResponsiveContainer>
     </Frame>
@@ -109,8 +120,8 @@ export function ColumnChart({
             }}
           />
           {/* minPointSize: recharts drops zero-height bars and their labels, so an empty bucket would read as missing data. */}
-          <Bar dataKey="count" name={valueLabel} fill={CHART.brand} maxBarSize={24} radius={[4, 4, 0, 0]} minPointSize={labelTips ? 1 : 0} isAnimationActive={false}>
-            {labelTips ? <LabelList dataKey="count" position="top" fill={CHART.text} fontSize={12} /> : null}
+          <Bar dataKey="count" name={valueLabel} fill={CHART.bar} maxBarSize={24} radius={[4, 4, 0, 0]} minPointSize={labelTips ? 1 : 0} isAnimationActive={false}>
+            {labelTips ? <LabelList dataKey="count" position="top" fill={CHART.text} fontSize={13} /> : null}
           </Bar>
         </BarChart>
       </ResponsiveContainer>
@@ -188,7 +199,7 @@ export function WorkAgeChart({ rows }: { rows: WorkAgeChartRow[] }) {
           y={y + h / 2}
           dy="0.35em"
           textAnchor="middle"
-          fontSize={12}
+          fontSize={13}
           fontWeight={600}
           fill={inside ?? CHART.text}
           stroke={inside ? undefined : CHART.surface}
@@ -260,10 +271,10 @@ export function DoctorChart({ rows, days }: { rows: { name: string; color: strin
           />
           <Bar dataKey="priorMean" name="Mean cases per day" maxBarSize={22} radius={[0, 4, 4, 0]} isAnimationActive={false}>
             {rows.map((r) => {
-              const c = r.color && r.color in DOCTOR_COLORS ? DOCTOR_COLORS[r.color as PathologistColor].swatch : null;
+              const c = r.color ? (DOCTOR_FILL[r.color] ?? null) : null;
               return <Cell key={r.name} fill={c ?? CHART.surface} stroke={c ? undefined : CHART.axis} strokeDasharray={c ? undefined : "4 2"} />;
             })}
-            <LabelList dataKey="priorMean" position="right" fill={CHART.text} fontSize={12} />
+            <LabelList dataKey="priorMean" position="right" fill={CHART.text} fontSize={13} />
           </Bar>
         </BarChart>
       </ResponsiveContainer>

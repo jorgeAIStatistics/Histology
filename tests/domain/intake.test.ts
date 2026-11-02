@@ -3,7 +3,8 @@ import type { DB } from "@/server/db/db";
 import { testDb, run, must, clockAt, one, all, STAFF } from "../helpers";
 import { executeCommand } from "@/server/commands";
 import { placeHold } from "@/server/domain/holds";
-import { loadActor, makeCtx } from "@/server/core/context";
+import { loadActor, makeCtx, SYSTEM_ACTOR } from "@/server/core/context";
+import { importSourceMessage } from "@/server/domain/sourceImport";
 import { suggestRouting } from "@/server/domain/routing";
 import { separateEncounterOrders } from "@/server/domain/related";
 import { computeReadiness } from "@/server/domain/readiness";
@@ -66,6 +67,10 @@ function clarificationFixture(db: DB, refs: { intakeItemId: string; orderPartId?
      VALUES (?, ?, ?, ?, NULL, ?, ?, 'fixture', 'fixture question', '[]', 'off_hpd', 'Biopsy coordinator', 'stf_maya', 'high', 'sent', ?, 'stf_maya', ?)`,
   ).run(idv, `CLR-9${String(n).padStart(3, "0")}`, refs.category, refs.intakeItemId, refs.orderPartId ?? null, refs.containerId ?? null, labLocalToIso("2026-10-14", "11:05"), `${refs.category}:${idv}`);
   return idv;
+}
+/** The current routing decision id of an intake item: what the routing dialog sends as expectedDecisionId. */
+function decisionIdOf(db: DB, intakeItemId: string): string {
+  return one<{ id: string }>(db, "SELECT id FROM routing_decision WHERE intake_item_id = ? AND status <> 'superseded' ORDER BY created_at DESC LIMIT 1", intakeItemId).id;
 }
 function heroReady(db: DB) {
   arrive(db);
@@ -164,10 +169,10 @@ describe("S1 intake: routing (acceptance check 1)", () => {
     const db = testDb();
     arrive(db);
     const r = receive(db, "phys_castillo");
-    const maya = run(db, STAFF.maya, "routing.override", { intakeItemId: r.intakeItemId, pathologistId: STAFF.okafor, reason: "workload" });
+    const maya = run(db, STAFF.maya, "routing.override", { intakeItemId: r.intakeItemId, pathologistId: STAFF.okafor, reason: "workload", expectedDecisionId: decisionIdOf(db, r.intakeItemId) });
     expect(maya.ok).toBe(false);
     if (!maya.ok) expect(maya.error.code).toBe("FORBIDDEN");
-    must(db, STAFF.kim, "routing.override", { intakeItemId: r.intakeItemId, pathologistId: STAFF.okafor, reason: "Dr. Marsh at capacity today (synthetic)" });
+    must(db, STAFF.kim, "routing.override", { intakeItemId: r.intakeItemId, pathologistId: STAFF.okafor, reason: "Dr. Marsh at capacity today (synthetic)", expectedDecisionId: decisionIdOf(db, r.intakeItemId) });
     const cur = one<{ status: string; suggested_pathologist_id: string; final_pathologist_id: string; override_reason: string }>(
       db, "SELECT * FROM routing_decision WHERE intake_item_id = ? AND status <> 'superseded'", r.intakeItemId,
     );
@@ -500,10 +505,10 @@ describe("S1 post-accession correction (acceptance check 5)", () => {
     expect(dupXr).toMatchObject({ duplicate: true, correctionId: xr.correctionId });
 
     // Only a lead/supervisor records the outcome; referring creates a task for the authorized source process.
-    const denied = run(db, STAFF.maya, "correction.close", { correctionId: xr.correctionId, outcome: "closed_no_change", note: "x" });
+    const denied = run(db, STAFF.maya, "correction.close", { correctionId: xr.correctionId, outcome: "closed_no_change", note: "x", expectedVersion: one<{ version: number }>(db, "SELECT version FROM correction_review WHERE id = ?", xr.correctionId).version });
     expect(denied.ok).toBe(false);
     if (!denied.ok) expect(denied.error.code).toBe("FORBIDDEN");
-    must(db, STAFF.kim, "correction.close", { correctionId: xr.correctionId, outcome: "referred_to_source_process", note: "Asked office to amend ORD-77121 in EMA" });
+    must(db, STAFF.kim, "correction.close", { correctionId: xr.correctionId, outcome: "referred_to_source_process", note: "Asked office to amend ORD-77121 in EMA", expectedVersion: one<{ version: number }>(db, "SELECT version FROM correction_review WHERE id = ?", xr.correctionId).version });
     expect(one<{ status: string }>(db, "SELECT status FROM correction_review WHERE id = ?", xr.correctionId).status).toBe("referred_to_source_process");
     expect(one<{ title: string }>(db, "SELECT title FROM task WHERE kind = 'correction_review' AND entity_id = ? AND status = 'open'", xr.correctionId).title).toMatch(/authorized source-system process/);
 
@@ -569,7 +574,7 @@ describe("S1 concurrency and role checks (acceptance check 12)", () => {
     expect(!grosser.ok && grosser.error.code).toBe("FORBIDDEN");
     const histotech = run(db, STAFF.priya, "accession.request", { intakeItemIds: [r.intakeItemId] });
     expect(!histotech.ok && histotech.error.code).toBe("FORBIDDEN");
-    const md = run(db, STAFF.md, "routing.override", { intakeItemId: r.intakeItemId, pathologistId: STAFF.okafor, reason: "x" });
+    const md = run(db, STAFF.md, "routing.override", { intakeItemId: r.intakeItemId, pathologistId: STAFF.okafor, reason: "x", expectedDecisionId: decisionIdOf(db, r.intakeItemId) });
     expect(!md.ok && md.error.code).toBe("FORBIDDEN");
   });
 });
@@ -700,8 +705,8 @@ function codesFor(db: DB, ids: string[]) {
 function nowIso(db: DB) {
   return readClock(db).now;
 }
-function markResolved(db: DB, clarificationId: string, at = nowIso(db)) {
-  db.prepare("UPDATE clarification SET state = 'resolved', resolved_at = ?, resolved_by = ?, resolution_code = 'confirmed_observed' WHERE id = ?").run(at, STAFF.kim, clarificationId);
+function markResolved(db: DB, clarificationId: string, at = nowIso(db), code = "confirmed_observed") {
+  db.prepare("UPDATE clarification SET state = 'resolved', resolved_at = ?, resolved_by = ?, resolution_code = ? WHERE id = ?").run(at, STAFF.kim, code, clarificationId);
 }
 /** Queue a newer version of a seeded EMA-SIM order in the simulated source outbox and import it through S6's sync. */
 function amendOrder(db: DB, sourceOrderId: string, mutate: (payload: { specimens: { designation: string; site: string; laterality: string | null }[]; [k: string]: unknown }) => void) {
@@ -771,8 +776,9 @@ describe("S1 recorded discrepancies: identity, edits, coverage, amendments (revi
     expect(!lead.ok && lead.error.code).toBe("INVARIANT");
     expect(count(db, "accession")).toBe(accBefore);
 
-    // Once a lead resolved the identity clarification (review and resolution happen in the clarifications slice), the request proceeds.
-    markResolved(db, clr);
+    // Once a lead resolved the identity clarification as "office confirmed the order is correct" (review and resolution happen
+    // in the clarifications slice), the request proceeds. Any other resolution code does not cover identity (integrity.test.ts).
+    markResolved(db, clr, nowIso(db), "confirmed_order");
     expect(codesFor(db, [r.intakeItemId])).toEqual([]);
     const acc = must<AccRes>(db, STAFF.maya, "accession.request", { intakeItemIds: [r.intakeItemId] });
     expect(acc.outcome).toBe("issued");
@@ -1016,7 +1022,7 @@ describe("S1 grouping, related-order review and scan (review fixes)", () => {
     const cand = one<{ id: string; version: number }>(db, "SELECT id, version FROM related_order_candidate");
     must(db, STAFF.kim, "related.review", { candidateId: cand.id, expectedVersion: cand.version, decision: "single_accession_approved", reason: "Same encounter" });
     expect(codesFor(db, [a.intakeItemId, b.intakeItemId])).toEqual([]);
-    must(db, STAFF.kim, "routing.override", { intakeItemId: b.intakeItemId, pathologistId: STAFF.okafor, reason: "Workload (synthetic)" });
+    must(db, STAFF.kim, "routing.override", { intakeItemId: b.intakeItemId, pathologistId: STAFF.okafor, reason: "Workload (synthetic)", expectedDecisionId: decisionIdOf(db, b.intakeItemId) });
     expect(codesFor(db, [a.intakeItemId, b.intakeItemId])).toEqual(["routing_differs"]);
   });
 
@@ -1134,8 +1140,332 @@ describe("S1 hero path with the clarifications slice (cross-slice, skipped if cl
     });
     // The identity question is open and has no hold: accession is still blocked on identity; the procedure question covers its finding.
     expect(codesFor(db, [r.intakeItemId])).toEqual(["identity_unresolved"]);
-    must(db, STAFF.kim, "clarification.cancel", { clarificationId: method.clarificationId, reason: "Raised by mistake (test)" });
+    must(db, STAFF.kim, "clarification.cancel", { clarificationId: method.clarificationId, reason: "Raised by mistake (test)", expectedVersion: one<{ version: number }>(db, "SELECT version FROM clarification WHERE id = ?", method.clarificationId).version });
     expect(codesFor(db, [r.intakeItemId]).sort()).toEqual(["discrepancy_uncovered", "identity_unresolved"]);
     expect(run(db, STAFF.maya, "accession.request", { intakeItemIds: [r.intakeItemId] }).ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------- intake workstation plan (derived read model)
+
+describe("S1 intake workstation: severity ladder, lanes and the per-actor plan", () => {
+  it("ranks queue reasons by the severity ladder: patient identity, then a differing field or count, then holds, then waiting on a named owner", async () => {
+    const { queueFlags } = await import("@/components/intake/plan");
+    const flags = queueFlags(["Related orders: needs review", "Hold H-0090", "Discrepancy: laterality", "Identity conflict"], { displayId: "REL-0112", ownerName: "Kim Nguyen" });
+    expect(flags.map((f) => [f.severity, f.text])).toEqual([
+      ["danger", "Patient identity differs"],
+      ["warning", "Laterality differs"],
+      ["hold", "Hold"],
+      ["waiting", "Waits for Kim Nguyen"],
+    ]);
+    expect(flags[2].id).toBe("H-0090");
+    expect(flags[3].id).toBe("REL-0112");
+    // Several fields: plural verb; unknown reasons stay visible as neutral.
+    expect(queueFlags(["Discrepancy: site, laterality"])[0].text).toBe("Site, laterality differ");
+    expect(queueFlags(["Something new"])[0]).toMatchObject({ severity: "neutral", text: "Something new" });
+    // A routing exception is not a disagreement between sources: it waits for a named person (neutral rung), never amber.
+    const routing = queueFlags(["Routing exception", "Missing container"], null, "Kim Nguyen");
+    expect(routing.map((f) => [f.severity, f.text])).toEqual([
+      ["warning", "Missing container"],
+      ["waiting", "Needs routing · Kim Nguyen"],
+    ]);
+    expect(queueFlags(["Routing exception"])[0]).toMatchObject({ kind: "routing", severity: "waiting", text: "Needs routing" });
+  });
+
+  it("keeps the members of one related-order review together in a lane, exceptions first, and counts checked containers per delivery", async () => {
+    const { intakeBench } = await import("@/server/queries/intake");
+    const { laneGroups, openOrder } = await import("@/components/intake/plan");
+    const db = testDb();
+    arrive(db);
+    must(db, STAFF.maya, "intake.receiveAll", { deliveryId: DELIVERY });
+    const a = one<{ id: string }>(db, "SELECT received_intake_item_id id FROM sim_physical_item WHERE id = 'phys_quinlanA'").id;
+    verifyAll(db, a);
+    const bench = intakeBench(db, loadActor(db, STAFF.maya));
+    const g = laneGroups(bench.queue);
+    const rel = g.exceptions.filter((q) => q.related?.displayId);
+    expect(rel.length).toBe(2);
+    const at = g.exceptions.findIndex((q) => q.id === rel[0].id);
+    expect(g.exceptions[at + 1].id).toBe(rel[1].id);
+    expect(rel[0].related).toMatchObject({ status: "pending_review", ownerName: "Kim Nguyen" });
+    expect(openOrder(bench.queue).map((q) => q.lane)).toEqual([...g.exceptions.map(() => "exceptions"), ...g.to_review.map(() => "to_review")]);
+    expect(bench.firstOpen?.displayId).toBe(g.exceptions[0].displayId);
+    const d = bench.deliveries.find((x) => x.id === DELIVERY)!;
+    expect(d.totals.checked).toBe(1);
+    expect(d.totals.received).toBeGreaterThan(1);
+  });
+
+  it("an unchecked bottle is the next step and is never a Ctrl+Enter target; the finding says it is not checked", async () => {
+    const { intakeBench } = await import("@/server/queries/intake");
+    const { segText } = await import("@/components/intake/plan");
+    const db = testDb();
+    arrive(db);
+    const r = receive(db, "phys_barnes");
+    const plan = intakeBench(db, loadActor(db, STAFF.maya), { item: r.displayId }).plan!;
+    expect(plan.next?.action?.kind).toBe("verify");
+    expect(plan.next?.ctrlEnter).toBe(false);
+    expect(plan.also.map((w) => w.action?.kind)).toContain("accept_routing");
+    expect(plan.also.every((w) => w.action?.kind !== "verify")).toBe(true);
+    expect(segText(plan.finding.lead)).toMatch(/has not been checked against the physical bottle/);
+    expect(plan.steps.map((s) => s.key)).toEqual(["check", "differences", "related", "routing", "accession"]);
+    expect(plan.steps[0]).toMatchObject({ state: "mine", stale: false });
+    expect(plan.accession.state).toBe("blocked");
+    expect(segText(plan.accession.reason)).toMatch(/^Cannot request yet: waits for a check of the bottle against the order and routing to be accepted\.$/);
+  });
+
+  it("hero part B after the laterality question: each person's next step, who is waited on, the hold scope for both parts and the accession reason", async () => {
+    const { listCommands } = await import("@/server/commands");
+    expect(listCommands().some((c) => c.name === "clarification.create")).toBe(true);
+    const { intakeBench } = await import("@/server/queries/intake");
+    const { segText } = await import("@/components/intake/plan");
+    const db = testDb();
+    const { a, b } = heroReady(db);
+    verifyAll(db, a.intakeItemId);
+    verifyAll(db, b.intakeItemId);
+    must(db, STAFF.maya, "routing.confirm", { intakeItemId: a.intakeItemId });
+    must(db, STAFF.maya, "routing.confirm", { intakeItemId: b.intakeItemId });
+    // Before anyone asks: the next step is to raise the question about the side (not to send anything).
+    const before = intakeBench(db, loadActor(db, STAFF.maya), { item: b.displayId }).plan!;
+    expect(before.next?.action).toMatchObject({ kind: "raise", field: "laterality" });
+    expect(before.finding.tone).toBe("warning");
+    expect(segText(before.finding.lead)).toBe("Laterality differs: the bottle says left; the order and the requisition say right.");
+    const cB = containersOf(db, b.intakeItemId)[0];
+    const clr = must<{ displayId: string }>(db, STAFF.maya, "clarification.create", {
+      category: "laterality",
+      refs: { intakeItemId: b.intakeItemId, orderPartId: cB.order_part_id, containerId: cB.id },
+      subjectLabel: "Part B · ORD-77121",
+      question: "Bottle says L dorsal forearm; order ORD-77121 says Right dorsal forearm. Which is correct?",
+      evidence: [],
+      priority: "high",
+      hold: { scope: { type: "order_part", id: cB.order_part_id }, scopeLabel: "Part B (ORD-77121 · B)", blocks: ["gross_approval", "processing", "print", "tray_delivery"] },
+    });
+    const hold = one<{ display_id: string }>(db, "SELECT display_id FROM hold WHERE status = 'active' AND scope_id = ?", cB.order_part_id).display_id;
+    const rel = one<{ display_id: string }>(db, "SELECT display_id FROM related_order_candidate").display_id;
+
+    // Maya (accessioner, owner of the drafted question): send it. Drafted is said as "not sent".
+    const maya = intakeBench(db, loadActor(db, STAFF.maya), { item: b.displayId }).plan!;
+    expect(maya.next?.action).toMatchObject({ kind: "send", displayId: clr.displayId });
+    expect(maya.next?.ctrlEnter).toBe(true);
+    expect(maya.next?.action && "notice" in maya.next.action ? maya.next.action.notice : "").toMatch(new RegExp(`specimen question \\(${clr.displayId}\\)\\. Please open the secure case view`));
+    expect(maya.next?.action && "notice" in maya.next.action ? maya.next.action.notice : "").not.toMatch(/Quinlan|1961|dorsal|Right/);
+    expect(maya.steps[1]).toMatchObject({ key: "differences", state: "mine", tone: "warning" });
+    expect(segText(maya.steps[1].status)).toBe(`${clr.displayId} drafted, not sent`);
+    // The rail shows the same in a few words; the full status stays the accessible name. One step is current.
+    expect(segText(maya.steps[1].short)).toBe(`${clr.displayId} · not sent`);
+    expect(maya.current).toBe("differences");
+    expect(maya.steps.map((st) => segText(st.short))).toEqual([
+      expect.stringMatching(/^Maya Torres · \d{1,2}:\d{2} [AP]M$/),
+      `${clr.displayId} · not sent`,
+      `${rel} · Kim Nguyen`,
+      "Dr. Marsh · rule v3",
+      `Waits for ${rel}`,
+    ]);
+    expect(maya.waitingOn.map((w) => w.who)).toEqual(["Kim Nguyen"]);
+    expect(segText(maya.finding.then)).toBe(`Accession waits for Kim Nguyen's review of ${rel}.`);
+    // The hold scope names both parts: B held for the listed steps, A free, accession not held.
+    expect(segText(maya.holdLine.text)).toBe(`Hold ${hold} applies to Part B only: gross approval, processing, label printing, tray delivery. Accession is not held. Part A can continue.`);
+    // On screen each hold leads as a hatched chip naming its scope, then what it stops; the free parts follow.
+    expect(maya.holdLine.holds.map((h) => ({ ...h, effect: segText(h.effect) }))).toEqual([
+      { id: hold, scope: "Part B", effect: "Stops gross approval, processing, label printing and tray delivery. Accession is not held." },
+    ]);
+    expect(segText(maya.holdLine.tail)).toBe("Part A can continue.");
+    expect(maya.accession.state).toBe("blocked");
+    expect(segText(maya.accession.reason)).toBe(`Cannot request yet: waits for Kim Nguyen's review of ${rel}.`);
+    expect(segText(maya.accession.holdNote!)).toBe(`Hold ${hold} does not block it.`);
+
+    // Part A's screen states the same hold scope (from its related item) and that it waits only for the lead.
+    const mayaA = intakeBench(db, loadActor(db, STAFF.maya), { item: a.displayId });
+    expect(mayaA.siblings.map((s) => s.displayId)).toEqual([b.displayId]);
+    expect(segText(mayaA.plan!.holdLine.text)).toContain(`Hold ${hold} applies to Part B only`);
+    expect(segText(mayaA.plan!.holdLine.text)).toContain("Part A can continue.");
+    expect(mayaA.plan!.next).toBeNull();
+    expect(segText(mayaA.plan!.idle!.title)).toBe("Nothing for you on this item right now");
+    expect(mayaA.plan!.waitingOn.map((w) => w.who)).toEqual(["Kim Nguyen"]);
+
+    // Kim (accessioning lead, owner of the related review): decide it; Maya's unsent question is someone else's.
+    const kim = intakeBench(db, loadActor(db, STAFF.kim), { item: b.displayId }).plan!;
+    expect(kim.next?.action).toMatchObject({ kind: "review_related" });
+    expect(segText(kim.finding.then)).toBe(`Accession waits for your review of ${rel}.`);
+    expect(kim.waitingOn.map((w) => w.who)).toEqual(["Maya Torres"]);
+    expect(kim.steps[2]).toMatchObject({ key: "related", state: "mine" });
+    expect(kim.current).toBe("related");
+    expect(segText(kim.steps[2].short)).toBe(`${rel} · yours`);
+    expect(segText(kim.steps[1].status)).toBe(`${clr.displayId} drafted; Maya Torres to send`);
+    expect(segText(kim.steps[1].short)).toBe(`${clr.displayId} · Maya Torres`);
+
+    // Read-only director: nothing to act on, every owner named, the request explains who can.
+    const director = intakeBench(db, loadActor(db, STAFF.director), { item: b.displayId });
+    expect(director.readOnly).toBe(true);
+    expect(director.plan!.next).toBeNull();
+    expect(segText(director.plan!.idle!.title)).toBe("Read only");
+    expect(director.plan!.waitingOn.map((w) => w.who).sort()).toEqual(["Kim Nguyen", "Maya Torres"]);
+    expect(director.plan!.accession.state).toBe("not_allowed");
+    expect(director.plan!.current).toBeNull();
+  });
+
+  it("a patient identity difference is danger in the finding and the steps; a check against an older order version is flagged stale", async () => {
+    const { intakeBench } = await import("@/server/queries/intake");
+    const { segText, identityFacts } = await import("@/components/intake/plan");
+    const db = testDb();
+    // Seeded identity conflict: date of birth differs on both containers, no requisition on file.
+    const seeded = intakeBench(db, loadActor(db, STAFF.maya), { item: "INT-1014-022" });
+    const p = seeded.plan!;
+    expect(p.finding.tone).toBe("danger");
+    expect(segText(p.finding.lead)).toMatch(/^Date of birth differs on both containers:/);
+    expect(p.steps[1]).toMatchObject({ key: "differences", tone: "danger" });
+    expect(segText(p.accession.reason)).toContain("a lead to resolve the patient identity question");
+    expect(segText(p.holdLine.text)).toMatch(/^Hold H-0088 applies to all containers of INT-1014-022: accession request\.$/);
+    expect(p.holdLine.holds.map((h) => [h.id, h.scope, segText(h.effect)])).toEqual([["H-0088", "all containers", "Stops the accession request."]]);
+    expect(segText(p.steps[1].short)).toMatch(/^CLR-\d+ · /);
+    const facts = identityFacts(seeded.selected!);
+    expect(facts.dob).toMatchObject({ differs: true, from: "bottle" });
+    expect(facts.dob.value).not.toBe(facts.dob.orderValue);
+
+    // Stale check: verified against v1, then the order is amended to v2.
+    arrive(db);
+    const r = receive(db, "phys_barnes");
+    verifyAll(db, r.intakeItemId);
+    must(db, STAFF.maya, "routing.confirm", { intakeItemId: r.intakeItemId });
+    expect(intakeBench(db, loadActor(db, STAFF.maya), { item: r.displayId }).plan!.accession.state).toBe("ready");
+    amendOrder(db, "ORD-77118", (pl) => void (pl.amendment_note = "Clinician note corrected (synthetic)"));
+    const stale = intakeBench(db, loadActor(db, STAFF.maya), { item: r.displayId }).plan!;
+    expect(stale.steps[0]).toMatchObject({ key: "check", stale: true, tone: "warning" });
+    expect(segText(stale.steps[0].status)).toBe("Order changed (v1 → v2): check again");
+    expect(segText(stale.steps[0].short)).toBe("Order changed · check again");
+    expect(stale.current).toBe("check");
+    expect(stale.next?.action).toMatchObject({ kind: "verify", stale: true });
+    expect(stale.next?.ctrlEnter).toBe(false);
+    expect(segText(stale.finding.lead)).toMatch(/changed after container 1 was checked \(v1 → v2\); the check must be repeated/);
+    expect(segText(stale.accession.reason)).toContain("a new check of the bottle");
+  });
+
+  it("with the accession source offline the request is unavailable with its reason, and the source is named as the one waited on", async () => {
+    const { intakeBench } = await import("@/server/queries/intake");
+    const { segText } = await import("@/components/intake/plan");
+    const db = testDb();
+    arrive(db);
+    const r = receive(db, "phys_barnes");
+    verifyAll(db, r.intakeItemId);
+    must(db, STAFF.maya, "routing.confirm", { intakeItemId: r.intakeItemId });
+    must(db, STAFF.tanya, "integration.setSourceStatus", { sourceId: "src_ema", status: "offline" });
+    const bench = intakeBench(db, loadActor(db, STAFF.maya), { item: r.displayId });
+    expect(bench.source.available).toBe(false);
+    expect(bench.plan!.accession.state).toBe("offline");
+    expect(segText(bench.plan!.accession.reason)).toMatch(/^Source system unreachable \(simulated outage\)/);
+    expect(bench.plan!.next).toBeNull();
+    expect(bench.plan!.waitingOn.map((w) => w.who)).toEqual(["EMA-SIM (simulated source)"]);
+    expect(bench.plan!.steps[4]).toMatchObject({ key: "accession", state: "blocked" });
+  });
+});
+
+describe("S1 intake workstation: a source conflict on the plan (lead reviews; others wait with the reason)", () => {
+  /** Theo Barnes (ORD-77118): checked and routed, so only the source conflict can hold the accession back. */
+  function barnesReady(db: DB) {
+    arrive(db);
+    const r = receive(db, "phys_barnes");
+    verifyAll(db, r.intakeItemId);
+    must(db, STAFF.maya, "routing.confirm", { intakeItemId: r.intakeItemId });
+    return r;
+  }
+  function v1Payload(db: DB) {
+    return JSON.parse(
+      one<{ payload: string }>(db, "SELECT v.payload FROM source_order_version v JOIN source_order o ON o.id = v.source_order_id WHERE o.source_order_id = 'ORD-77118' AND v.source_version = 1").payload,
+    ) as Record<string, any>;
+  }
+
+  it("a new order with other details for the patient on file: the lead's next step is 'Review source conflict'; it reads as a source conflict, never as an order link", async () => {
+    const { intakeBench } = await import("@/server/queries/intake");
+    const { segText, waitNoun } = await import("@/components/intake/plan");
+    const db = testDb();
+    const r = barnesReady(db);
+    expect(intakeBench(db, loadActor(db, STAFF.maya), { item: r.displayId }).plan!.accession.state).toBe("ready");
+    const v1 = v1Payload(db);
+    importSourceMessage(makeCtx(db, SYSTEM_ACTOR, "import", "plan-test"), "src_ema", {
+      messageId: "ORD-77990#v1", messageType: "order.upsert", payload: { ...v1, order_id: "ORD-77990", patient: { ...v1.patient, birth_date: "1901-01-01" } },
+    });
+    const task = one<{ id: string; version: number; title: string }>(db, "SELECT id, version, title FROM task WHERE kind = 'source_conflict' AND entity_type = 'patient_ref' AND status = 'open'");
+    expect(accessionBlockers(db, [r.intakeItemId]).map((b) => b.code)).toEqual(["source_conflict_open"]);
+
+    // Read model: the open review on the item, with the task version the command needs; the item goes to the exceptions lane.
+    const kimBench = intakeBench(db, loadActor(db, STAFF.kim), { item: r.displayId });
+    const item = kimBench.selected!;
+    expect(item.sourceConflicts).toEqual([
+      expect.objectContaining({ id: task.id, version: task.version, about: "patient", title: task.title, ownerName: "Kim Nguyen", orderRefs: ["ORD-77118"] }),
+    ]);
+    expect(item.lane).toBe("exceptions");
+    expect(kimBench.queue.find((q) => q.id === item.id)!.flags.map((f) => [f.kind, f.severity, f.text])).toContainEqual(["source", "warning", "Source conflict"]);
+    expect(kimBench.permissions.reviewSourceConflict).toBe(true);
+
+    // Kim (accessioning lead, the task owner): her next step, with the conflict in words and the task's id and version.
+    const kim = kimBench.plan!;
+    expect(segText(kim.next!.title)).toBe("Review source conflict");
+    expect(kim.next!.action).toEqual({
+      kind: "review_source_conflict",
+      taskId: task.id,
+      version: task.version,
+      about: "patient",
+      conflict: "New order ORD-77990 gives different details for MRN 447902 (date of birth 1972-06-14 → 1901-01-01).",
+      detail: expect.stringMatching(/details on file were kept/),
+      orderRefs: ["ORD-77118"],
+    });
+    expect(kim.next!.ctrlEnter).toBe(true);
+    expect(segText(kim.next!.detail)).toMatch(/Accession waits for this review; nothing is merged or changed\.$/);
+    expect(kim.current).toBe("differences");
+    expect(kim.steps[1]).toMatchObject({ key: "differences", state: "mine", tone: "warning" });
+    expect(segText(kim.steps[1].short)).toBe("Source conflict · yours");
+    // The blocker code reads as what it is, not as "order link".
+    expect(segText(kim.steps[4].status)).toBe("Waits for source conflict");
+    expect(segText(kim.steps[4].short)).toBe("Waits for source conflict");
+    expect(waitNoun({ code: "source_conflict_open", message: "" })).toBe("source conflict");
+    expect(waitNoun({ code: "order_not_linked", message: "" })).toBe("order link");
+    expect(segText(kim.accession.reason)).toBe("Cannot request yet: waits for your review of the source conflict.");
+    expect(kim.finding.tone).toBe("warning");
+    expect(segText(kim.finding.lead)).toBe(
+      "New order ORD-77990 gives different details for MRN 447902 (date of birth 1972-06-14 → 1901-01-01). The patient details on file were kept; nothing was merged.",
+    );
+    expect(segText(kim.finding.then)).toBe("Accession waits for your review of the source conflict.");
+
+    // Maya (accessioner, no clarification.resolve): never her step; she waits on Kim, with the reason.
+    const maya = intakeBench(db, loadActor(db, STAFF.maya), { item: r.displayId });
+    expect(maya.permissions.reviewSourceConflict).toBe(false);
+    expect(maya.plan!.next).toBeNull();
+    expect(maya.plan!.also.some((w) => w.action?.kind === "review_source_conflict")).toBe(false);
+    expect(maya.plan!.waitingOn.map((w) => [w.who, segText(w.what)])).toEqual([
+      ["Kim Nguyen", "review the source conflict: new order ORD-77990 gives different details for MRN 447902 (date of birth 1972-06-14 → 1901-01-01)."],
+    ]);
+    expect(maya.plan!.steps[1]).toMatchObject({ key: "differences", state: "waiting", owner: "Kim Nguyen" });
+    expect(segText(maya.plan!.steps[1].short)).toBe("Source conflict · Kim Nguyen");
+    expect(segText(maya.plan!.accession.reason)).toBe("Cannot request yet: waits for Kim Nguyen's review of the source conflict.");
+
+    // Tanya (supervisor) may review it but it is Kim's task: she sees who it waits on. The read-only director only reads.
+    const tanya = intakeBench(db, loadActor(db, STAFF.tanya), { item: r.displayId });
+    expect(tanya.permissions.reviewSourceConflict).toBe(true);
+    expect(tanya.plan!.waitingOn.map((w) => w.who)).toEqual(["Kim Nguyen"]);
+    const director = intakeBench(db, loadActor(db, STAFF.director), { item: r.displayId }).plan!;
+    expect(director.next).toBeNull();
+    expect(director.waitingOn.map((w) => w.who)).toEqual(["Kim Nguyen"]);
+
+    // The review (the command the dialog calls) closes it: no step, nothing waits, accession ready, patient unchanged.
+    must(db, STAFF.kim, "sourceConflict.review", { taskId: task.id, expectedVersion: task.version, decision: "details_on_file_confirmed", reason: "Office confirmed the birth date on file (synthetic)" });
+    const after = intakeBench(db, loadActor(db, STAFF.kim), { item: r.displayId });
+    expect(after.selected!.sourceConflicts).toEqual([]);
+    expect(after.selected!.lane).toBe("to_review");
+    expect(after.plan!.next?.action?.kind).toBe("request");
+    expect(after.plan!.accession.state).toBe("ready");
+    expect(segText(after.plan!.steps[1].status)).toBe("None found");
+  });
+
+  it("a newer order version that changed order-level details is reviewed the same way (about the order)", async () => {
+    const { intakeBench } = await import("@/server/queries/intake");
+    const { segText } = await import("@/components/intake/plan");
+    const db = testDb();
+    const r = barnesReady(db);
+    amendOrder(db, "ORD-77118", (pl) => void ((pl.patient as { birth_date: string }).birth_date = "1972-06-15"));
+    verifyAll(db, r.intakeItemId); // a fresh check against v2: only the source conflict is left
+    const kim = intakeBench(db, loadActor(db, STAFF.kim), { item: r.displayId });
+    expect(kim.selected!.sourceConflicts.map((c) => [c.about, c.orderRefs])).toEqual([["order", ["ORD-77118"]]]);
+    expect(kim.plan!.next!.action).toMatchObject({ kind: "review_source_conflict", about: "order" });
+    expect((kim.plan!.next!.action as { conflict: string }).conflict).toMatch(/^ORD-77118 v2 changed the patient .*\.$/);
+    expect(segText(kim.plan!.steps[4].status)).toBe("Waits for source conflict");
+    expect(segText(kim.plan!.accession.reason)).toBe("Cannot request yet: waits for your review of the source conflict.");
   });
 });

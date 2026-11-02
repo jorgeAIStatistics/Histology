@@ -17,6 +17,8 @@ export interface CardProps {
   /** Remove body padding (tables that run edge to edge). */
   flush?: boolean;
   as?: ElementType;
+  /** sheet: white working surface with a hairline (default); quiet: tinted, borderless secondary details; raised: floats above content. */
+  variant?: "sheet" | "quiet" | "raised";
   className?: string;
   bodyClassName?: string;
   id?: string;
@@ -32,6 +34,7 @@ export function Card({
   headingLevel = 2,
   flush,
   as: Tag = "section",
+  variant = "sheet",
   className,
   bodyClassName,
   id,
@@ -44,13 +47,17 @@ export function Card({
       id={id}
       aria-labelledby={title && headingId ? headingId : undefined}
       aria-label={rest["aria-label"]}
-      className={cn("rounded-md border border-line bg-surface shadow-1", className)}
+      className={cn(
+        "rounded-lg",
+        variant === "sheet" ? "border border-line bg-surface" : variant === "quiet" ? "bg-surface-subtle" : "border border-line bg-surface shadow-2",
+        className,
+      )}
     >
       {title || actions ? (
         <header className="flex items-start justify-between gap-3 border-b border-line px-4 py-2.5">
           <div className="min-w-0">
             {title ? (
-              <H id={headingId} className="text-md font-semibold text-ink">
+              <H id={headingId} className="text-md font-bold tracking-[-0.01em] text-ink">
                 {title}
               </H>
             ) : null}

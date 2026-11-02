@@ -25,6 +25,7 @@ import {
   type DeliveryOutcome,
 } from "../sim/notifications";
 import { assistantMode, draftClarification, templateQuestion, type DraftOutput } from "../assist/drafter";
+import { isIdentityField, knownIdentifiers, patientRefIdsFor, redactIdentifiers, withheld } from "./privacy";
 
 /**
  * Clarifications that close the loop (spec §6).
@@ -704,6 +705,32 @@ function clrAudit(ctx: Ctx, clr: ClarificationRow, action: string, summary: stri
   });
 }
 
+/**
+ * Free text copied into an audit payload (question, notice, answer) with the identifiers of the linked
+ * patient (and of what the bottles say) replaced (src/server/domain/privacy.ts). Best effort.
+ */
+function auditRedactor(db: DB, clr: Pick<ClarificationRow, "id" | "intake_item_id">): (text: string) => string {
+  const ids = knownIdentifiers(db, patientRefIdsFor(db, { clarificationId: clr.id }), { intakeItemIds: clr.intake_item_id ? [clr.intake_item_id] : [] });
+  return (text: string) => redactIdentifiers(text, ids);
+}
+
+/** Evidence as the audit trail records it: identity values withheld (fingerprint per clarification, field and column), other text redacted. */
+function auditEvidence(clrId: string, evidence: EvidenceItem[], redact: (text: string) => string): EvidenceItem[] {
+  const text = (v: string | null | undefined) => (v === null || v === undefined ? (v ?? null) : redact(v));
+  return evidence.map((e) => {
+    const scope = `clarification:${clrId}:${e.field}`;
+    return isIdentityField(e.field)
+      ? {
+          ...e,
+          order_value: withheld(`${scope}:order`, e.order_value),
+          observed_value: withheld(`${scope}:observed`, e.observed_value),
+          requisition_value: withheld(`${scope}:requisition`, e.requisition_value ?? null),
+          note: text(e.note),
+        }
+      : { ...e, order_value: text(e.order_value), observed_value: text(e.observed_value), requisition_value: text(e.requisition_value), note: text(e.note) };
+  });
+}
+
 function update(ctx: Ctx, clr: ClarificationRow, expectedVersion: number | undefined, fields: Record<string, unknown>): ClarificationRow {
   return updateVersioned(ctx.db, "clarification", clr.id, expectedVersion, fields) as unknown as ClarificationRow;
 }
@@ -816,6 +843,8 @@ function placeClarificationHold(
     blocks: hold.blocks,
     reasonCode: clr.category,
     reasonText,
+    // The audit summary names an identity field without its values (the hold record keeps reasonText).
+    auditReasonText: ev && isIdentityField(ev.field) ? `${ev.field}: order and observed values differ (${clr.display_id})` : null,
     clarificationId: clr.id,
     intakeItemId: sc.intakeItemId ?? refs.intakeItemId,
     accessionId: sc.accessionId ?? refs.accessionId,
@@ -912,7 +941,10 @@ export function createClarification(ctx: Ctx, input: CreateClarificationInput): 
     clr,
     "clarification.created",
     `${display} drafted for ${clr.subject_label} (${categoryLabel(clr.category)}, ${clr.priority}). Office: ${officeName(db, officeId)}; contact ${contactText}. Lab owner ${staffName(db, labOwner)}.${draftSource === "template" ? " Question from the fixed template (rule-based, not AI)." : ""}${sel.coverageNote ? ` Coverage: ${sel.coverageNote}` : ""}`,
-    { after: { evidence, question, dedupeKey, draftSource } },
+    (() => {
+      const redact = auditRedactor(db, clr);
+      return { after: { evidence: auditEvidence(clr.id, evidence, redact), question: redact(question), dedupeKey, draftSource } };
+    })(),
   );
 
   const holdRow = input.hold ? placeClarificationHold(ctx, clr, input.hold, evidence, refs).hold : null;
@@ -1006,7 +1038,10 @@ export function sendClarification(
     clr,
     "clarification.sent",
     `${clr.display_id} sent (simulated) to ${recipient}, ${officeName(db, clr.office_id)}, via ${channelLabel(sel.contact?.channel)}. Generic notice only; the question itself is not in the notice.${sel.coverageNote ? ` Coverage: ${sel.coverageNote}` : ""}`,
-    { after: { question, body, draftSource: input.draftSource ?? clr.draft_source } },
+    (() => {
+      const redact = auditRedactor(db, clr);
+      return { after: { question: redact(question), body: redact(body), draftSource: input.draftSource ?? clr.draft_source } };
+    })(),
   );
   const msg = sendSimulatedNotification(ctx, { clarificationId: clr.id, kind: "initial", contact: sel.contact, body, idempotencyKey: idemKey });
   clr = applyDeliveryOutcome(ctx, clr, msg.outcome, msg.reason, "simulator");
@@ -1090,7 +1125,9 @@ export function recordAnswer(
     next_follow_up_at: null,
   });
   const simulated = ctx.origin === "simulator";
-  const preview = answerText.length > 140 ? `${answerText.slice(0, 139)}…` : answerText;
+  // The audit copy of the answer: the linked patient's identifiers replaced first, then shortened.
+  const redactedAnswer = auditRedactor(ctx.db, clr)(answerText);
+  const preview = redactedAnswer.length > 140 ? `${redactedAnswer.slice(0, 139)}…` : redactedAnswer;
   clrAudit(
     ctx,
     clr,
@@ -1105,6 +1142,15 @@ export function recordAnswer(
 
 // ------------------------------------------------------------------ review / resolve / cancel
 
+/** The office answer a review or resolution is based on (the latest recorded answer message). */
+function latestAnswerMessage(db: DB, clrId: string): { id: string; created_at: string; channel: string } | null {
+  return (
+    (db
+      .prepare("SELECT id, created_at, channel FROM clarification_message WHERE clarification_id = ? AND kind = 'answer' ORDER BY created_at DESC, rowid DESC LIMIT 1")
+      .get(clrId) as { id: string; created_at: string; channel: string } | undefined) ?? null
+  );
+}
+
 export function reviewClarification(
   ctx: Ctx,
   input: { clarificationId: string; expectedVersion: number; note?: string | null; outcome?: "accepted" | "insufficient" },
@@ -1114,17 +1160,28 @@ export function reviewClarification(
   assertState(clr, ["answered"], "review", clr.state === "reviewed" ? "It has already been reviewed; resolve it next." : "There is no office answer to review yet.");
   const outcome = input.outcome ?? "accepted";
   const note = (input.note ?? "").trim();
+  const answer = latestAnswerMessage(ctx.db, clr.id);
+  const answerRef = { answerMessageId: answer?.id ?? null, answeredAt: clr.answered_at, answerChannel: clr.answer_channel };
+  const beforeState = { state: clr.state, version: clr.version };
   if (outcome === "insufficient") {
     if (!note) throw new DomainError("VALIDATION", "Say what is missing from the answer.");
     const follow = computeNextFollowUp(ctx.db, clr.office_id, ctx.now, clr.priority);
     clr = update(ctx, clr, input.expectedVersion, { state: "acknowledged", review_note: note, reviewer_id: ctx.actor.id, next_follow_up_at: follow.at });
-    clrAudit(ctx, clr, "clarification.answer_insufficient", `${ctx.actor.name} marked the office answer for ${clr.display_id} as insufficient. Waiting for a further answer.`, { reason: note });
+    clrAudit(ctx, clr, "clarification.answer_insufficient", `${ctx.actor.name} marked the office answer for ${clr.display_id} as insufficient. Waiting for a further answer.`, {
+      reason: note,
+      before: beforeState,
+      after: { state: "acknowledged", version: clr.version, outcome, ...answerRef, nextFollowUpAt: follow.at },
+    });
     closeClarificationTasks(ctx, clr.id, [TASK_KINDS.review]);
     ownerTask(ctx, clr, TASK_KINDS.followup, `Ask the office again for ${clr.display_id}: answer was insufficient`, clr.lab_owner_id, null, ctx.now);
     return { clarificationId: clr.id, displayId: clr.display_id, state: clr.state, version: clr.version };
   }
   clr = update(ctx, clr, input.expectedVersion, { state: "reviewed", reviewed_at: ctx.now, reviewer_id: ctx.actor.id, review_note: note || null });
-  clrAudit(ctx, clr, "clarification.reviewed", `${ctx.actor.name} reviewed the office answer for ${clr.display_id}. Not resolved yet.`, { reason: note || null });
+  clrAudit(ctx, clr, "clarification.reviewed", `${ctx.actor.name} reviewed the office answer for ${clr.display_id}. Not resolved yet.`, {
+    reason: note || null,
+    before: beforeState,
+    after: { state: "reviewed", version: clr.version, outcome, ...answerRef },
+  });
   closeClarificationTasks(ctx, clr.id, [TASK_KINDS.followup, TASK_KINDS.escalation]);
   ownerTask(ctx, clr, TASK_KINDS.review, `Resolve ${clr.display_id}: answer reviewed by ${ctx.actor.name}`, clr.escalation_owner_id ?? ctx.actor.id, "accessioning_lead", ctx.now);
   return { clarificationId: clr.id, displayId: clr.display_id, state: clr.state, version: clr.version };
@@ -1175,6 +1232,8 @@ export function resolveClarification(
   if (releaseIds.length && !(input.releaseReason ?? "").trim()) {
     throw new DomainError("VALIDATION", "Give a reason for releasing the hold. The release is recorded separately from the resolution.");
   }
+  const answer = latestAnswerMessage(db, clr.id);
+  const beforeState = { state: clr.state, version: clr.version, reviewerId: clr.reviewer_id };
   clr = update(ctx, clr, input.expectedVersion, {
     state: "resolved",
     resolved_at: ctx.now,
@@ -1183,7 +1242,19 @@ export function resolveClarification(
     resolution_note: note,
     next_follow_up_at: null,
   });
-  clrAudit(ctx, clr, "clarification.resolved", `${ctx.actor.name} resolved ${clr.display_id}: ${RESOLUTION_CODES[input.resolutionCode]}.`, { reason: note, after: { resolutionCode: input.resolutionCode } });
+  clrAudit(ctx, clr, "clarification.resolved", `${ctx.actor.name} resolved ${clr.display_id}: ${RESOLUTION_CODES[input.resolutionCode]}.`, {
+    reason: note,
+    before: beforeState,
+    after: {
+      state: "resolved",
+      version: clr.version,
+      resolutionCode: input.resolutionCode,
+      category: clr.category,
+      answerMessageId: answer?.id ?? null,
+      answeredAt: clr.answered_at,
+      holdReleasesRequested: releaseIds,
+    },
+  });
 
   const released: { id: string; displayId: string; scopeLabel: string }[] = [];
   for (const hid of releaseIds) {
@@ -1207,7 +1278,7 @@ export function resolveClarification(
   };
 }
 
-export function cancelClarification(ctx: Ctx, input: { clarificationId: string; reason: string; expectedVersion?: number }) {
+export function cancelClarification(ctx: Ctx, input: { clarificationId: string; reason: string; expectedVersion: number }) {
   let clr = getClarification(ctx.db, input.clarificationId);
   assertVersion(clr, input.expectedVersion);
   assertState(clr, OPEN_CLARIFICATION_STATES, "cancel");

@@ -144,7 +144,11 @@ const ROWS: { keys: ReactNode; action: string; note?: string; singleKey?: boolea
     note: "/ is not active while typing in a text field",
   },
   { keys: <Kbd>Enter</Kbd>, action: "Submit a scan; open the focused row; confirm a proposed value" },
-  { keys: <Kbd>Esc</Kbd>, action: "Close the panel or dialog; clear the scan field (twice: reset the target to Find record)" },
+  {
+    keys: <Kbd>Esc</Kbd>,
+    action: "Close the panel or dialog; clear the scan field (twice: reset the target to Find record)",
+    note: "On Intake, Esc in an empty scan field moves to the selected queue item.",
+  },
   {
     keys: (
       <>
@@ -152,6 +156,16 @@ const ROWS: { keys: ReactNode; action: string; note?: string; singleKey?: boolea
       </>
     ),
     action: "Next / previous row or queue item",
+    note: "On Intake, Up / Down also move the queue from the scan field.",
+    singleKey: true,
+  },
+  {
+    keys: (
+      <>
+        <Kbd>1</Kbd> to <Kbd>5</Kbd>
+      </>
+    ),
+    action: "Intake: jump to a step (container check, differences, related orders, routing, accession)",
     singleKey: true,
   },
   {
@@ -160,7 +174,8 @@ const ROWS: { keys: ReactNode; action: string; note?: string; singleKey?: boolea
         <Kbd>Ctrl</Kbd>/<Kbd>Cmd</Kbd> + <Kbd>Enter</Kbd>
       </>
     ),
-    action: "Primary action of the current step (asks first, like a click)",
+    action: "Run the step that shows the Ctrl badge (asks first, like a click)",
+    note: "Never records a container check: that is always a deliberate click or Enter on its own button.",
   },
   {
     keys: (

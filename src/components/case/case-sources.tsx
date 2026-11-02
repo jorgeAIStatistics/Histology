@@ -1,11 +1,209 @@
-import { Card, StatusPill } from "@/components/ui";
-import { IdChip, SimulatedLabel, Timestamp, UnknownValue } from "@/components/domain";
-import type { CaseDetail } from "@/server/queries/case";
+import type { ReactNode } from "react";
+import { ChevronRight, TriangleAlert } from "lucide-react";
+import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
+import { StatusPill } from "@/components/ui/status-pill";
+import { LabelRef } from "@/components/domain/specimen-label";
+import { IdText } from "@/components/domain/id-text";
+import { SimulatedLabel, UnknownValue } from "@/components/domain/honesty";
+import { Timestamp } from "@/components/domain/timestamp";
+import type { CaseDetail, SourceOrderDoc } from "@/server/queries/case";
 
 /** "needs_reconciliation" → "Needs reconciliation" (sentence case for stored state words). */
 function sentence(v: string): string {
   const t = v.replace(/_/g, " ");
   return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+type LineValue = { site: string | null; laterality: string | null; procedure?: string | null } | null;
+
+/** Site, side and procedure stacked so the columns compare value by value. */
+function LineCell({ v }: { v: LineValue }) {
+  if (!v) return null;
+  return (
+    <span className="flex flex-col">
+      <span>{v.site ?? <UnknownValue reason="site" />}</span>
+      <span className="text-ink-secondary">Laterality {v.laterality ? v.laterality.toLowerCase() : "Unknown"}</span>
+      {v.procedure !== undefined ? <span className="text-ink-secondary">{v.procedure ? v.procedure.charAt(0).toUpperCase() + v.procedure.slice(1) : "Procedure Unknown"}</span> : null}
+    </span>
+  );
+}
+
+function Disclosure({ summary, children }: { summary: string; children: ReactNode }) {
+  return (
+    <details className="group/d mt-1">
+      <summary className="inline-flex min-h-8 cursor-pointer list-none items-center gap-1 rounded-sm text-sm font-medium text-brand-ink hover:underline [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="size-4 transition-transform duration-[var(--hlo-duration-fast)] group-open/d:rotate-90" aria-hidden />
+        {summary}
+      </summary>
+      {children}
+    </details>
+  );
+}
+
+function SourceOrder({ d, now }: { d: SourceOrderDoc; now: string }) {
+  const facts: { label: string; value: ReactNode; wide?: boolean }[] = [
+    { label: "Status at source", value: sentence(d.status) },
+    { label: "Current version", value: <span className="num-tabular">v{d.currentVersion}</span> },
+    { label: "Source updated", value: <Timestamp iso={d.sourceUpdatedAt} now={now} /> },
+    { label: "Imported here", value: <Timestamp iso={d.importedAt} now={now} /> },
+    { label: "Submitting office", value: d.office },
+    { label: "Ordering clinician", value: d.orderingClinician ?? <UnknownValue /> },
+    { label: "Local review state", value: <IdText text={d.reviewText} />, wide: true },
+  ];
+  return (
+    <section id={`order-${d.sourceOrderId}`} aria-labelledby={`order-${d.sourceOrderId}-title`} className="scroll-mt-40 overflow-hidden rounded-lg border border-line bg-surface">
+      <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-5 py-3 max-xl:px-4">
+        <h2 id={`order-${d.sourceOrderId}-title`} className="flex items-center gap-2 text-md font-bold text-ink">
+          Source order <LabelRef id={d.sourceOrderId} />
+        </h2>
+        <p className="text-sm text-ink-secondary">
+          Parts on this case: {d.partDesignations.length ? d.partDesignations.join(", ") : "none (linked at intake)"}
+        </p>
+        <SimulatedLabel connector={d.tenantName} className="ml-auto" />
+      </header>
+      <dl className="grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-x-6 gap-y-2 px-5 py-3 text-sm max-xl:px-4">
+        {facts.map((f) => (
+          <div key={f.label} className={f.wide ? "col-span-2 max-sm:col-span-1" : undefined}>
+            <dt className="text-xs text-ink-muted">{f.label}</dt>
+            <dd className="text-ink">{f.value}</dd>
+          </div>
+        ))}
+      </dl>
+
+      {d.clinicalNote ? (
+        <div className="border-t border-line bg-surface-subtle px-5 py-2.5 max-xl:px-4">
+          <p className="text-xs text-ink-muted">Clinical note as received. Untrusted free text, shown as text only; never used for PAS, routing or any decision.</p>
+          <p className="mt-0.5 max-w-[90ch] text-sm break-words whitespace-pre-wrap text-ink">{d.clinicalNote}</p>
+        </div>
+      ) : null}
+
+      <div className="border-t border-line px-5 pt-3 pb-2 max-xl:px-4">
+        <h3 className="text-sm font-semibold text-ink">Order lines: the first version, the source now and this case</h3>
+        <p className="mt-0.5 max-w-[100ch] text-xs text-ink-secondary">
+          Original is the first version received ({d.originalVersion !== null ? `v${d.originalVersion}` : "Unknown"}), kept unchanged. Current is the source&apos;s latest version (v{d.currentVersion}). On this case is the part as
+          issued; a source change never edits it silently, it opens a correction review.
+        </p>
+      </div>
+      <Table caption={`Order lines for ${d.sourceOrderId}: original, current and on-case values`} wrapperClassName="rounded-none border-x-0" className="min-w-[48rem]">
+        <THead>
+          <tr>
+            <TH>Part</TH>
+            <TH>Original ({d.originalVersion !== null ? `v${d.originalVersion}` : "version Unknown"})</TH>
+            <TH>Current at source (v{d.currentVersion})</TH>
+            <TH>On this case (as issued)</TH>
+            <TH>Collected</TH>
+            <TH align="right">Containers expected</TH>
+            <TH>Requested stains</TH>
+          </tr>
+        </THead>
+        <TBody>
+          {d.orderParts.map((op) => {
+            const origStains = op.original ? (op.original.requestedStains.length ? op.original.requestedStains.join(", ") : "None") : "Unknown";
+            const curStains = op.current.requestedStains.length ? op.current.requestedStains.join(", ") : "None";
+            return (
+              <TR key={op.designation} canceled={op.status !== "active"} className="[&>td]:align-top [&>td]:py-2">
+                <TD className="font-semibold">
+                  {op.designation}
+                  {op.status !== "active" ? <span className="block text-xs font-normal">{sentence(op.status)} at source</span> : null}
+                </TD>
+                <TD wrap>{op.original ? <LineCell v={op.original} /> : <UnknownValue reason="not in the stored first version" />}</TD>
+                <TD wrap className={op.changedSinceOriginal ? "bg-warning-bg" : undefined}>
+                  <LineCell v={op.current} />
+                  {op.changedSinceOriginal ? (
+                    <span className="mt-1 flex items-center gap-1 text-xs font-semibold text-warning-fg">
+                      <TriangleAlert className="size-3.5 shrink-0 text-warning-solid" aria-hidden />
+                      Changed since original
+                    </span>
+                  ) : null}
+                </TD>
+                <TD wrap>{op.onCase ? <LineCell v={op.onCase} /> : <span className="text-ink-muted">Not on this case</span>}</TD>
+                <TD>{op.collectedAt ? <Timestamp iso={op.collectedAt} now={now} /> : <UnknownValue />}</TD>
+                <TD numeric>{op.expectedContainers ?? <UnknownValue />}</TD>
+                <TD wrap>{origStains === curStains ? curStains : `${origStains} at first, now ${curStains}`}</TD>
+              </TR>
+            );
+          })}
+        </TBody>
+      </Table>
+
+      <div className="px-5 py-3 max-xl:px-4">
+        <h3 className="text-sm font-semibold text-ink">All versions received ({d.versions.length})</h3>
+        <ol className="mt-1 divide-y divide-line">
+          {d.versions.map((v) => (
+            <li key={v.version} className="grid grid-cols-[3rem_minmax(0,1fr)] gap-x-3 py-2.5 text-sm">
+              <span className="num-tabular pt-0.5 text-md font-bold text-ink">v{v.version}</span>
+              <div className="min-w-0">
+                <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  {v.version === d.currentVersion ? <StatusPill tone="info" size="sm">Current</StatusPill> : <StatusPill tone="neutral" size="sm">Earlier version, kept unchanged</StatusPill>}
+                  <span className="text-ink-secondary">
+                    Source updated <Timestamp iso={v.sourceUpdatedAt} now={now} className="text-ink" />
+                  </span>
+                  <span className="text-ink-secondary">
+                    Imported <Timestamp iso={v.importedAt} now={now} className="text-ink" />
+                  </span>
+                </p>
+                {v.changeSummary ? (
+                  <p className="mt-1 text-ink">
+                    <IdText text={v.changeSummary} />
+                  </p>
+                ) : null}
+                <ul className="mt-1 text-ink-secondary">
+                  {v.specimens.map((sp) => (
+                    <li key={sp.designation}>
+                      <span className="font-semibold text-ink">Part {sp.designation}</span> {sp.site ?? "site Unknown"}, {sp.laterality ? sp.laterality.toLowerCase() : "laterality Unknown"},{" "}
+                      {sp.procedure ?? "procedure Unknown"}
+                      {sp.requestedStains.length ? `; requested stains ${sp.requestedStains.join(", ")}` : ""}
+                    </li>
+                  ))}
+                </ul>
+                {v.clinicalNote ? <p className="mt-1 break-words whitespace-pre-wrap text-ink-secondary">Note as received: {v.clinicalNote}</p> : null}
+                <Disclosure summary="Raw payload as received (simulated, untrusted)">
+                  <pre className="mt-1 max-h-64 overflow-auto rounded-sm bg-surface-subtle p-2 font-mono text-xs break-words whitespace-pre-wrap text-ink">{v.raw}</pre>
+                </Disclosure>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </div>
+
+      {d.events.length ? (
+        <>
+          <h3 className="border-t border-line px-5 pt-3 pb-1.5 text-sm font-semibold text-ink max-xl:px-4">Integration events for this order (simulated feed)</h3>
+          <Table caption={`Integration events for ${d.sourceOrderId}`} wrapperClassName="rounded-none border-x-0 border-b-0">
+            <THead>
+              <tr>
+                <TH>Message</TH>
+                <TH>Type</TH>
+                <TH>Outcome</TH>
+                <TH>Received</TH>
+                <TH>Detail</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {d.events.map((e) => (
+                <TR key={e.messageId}>
+                  <TD>
+                    <span className="id-mono text-sm">{e.messageId}</span>
+                  </TD>
+                  <TD>{e.type}</TD>
+                  <TD wrap>
+                    {sentence(e.outcome)}
+                    {e.receiptCount > 1 ? <span className="block text-xs text-ink-muted">Received {e.receiptCount} times, applied once</span> : null}
+                  </TD>
+                  <TD>
+                    <Timestamp iso={e.receivedAt} now={now} />
+                  </TD>
+                  <TD wrap className="min-w-48">
+                    {e.detail ? <IdText text={e.detail} /> : <span className="text-ink-muted">None</span>}
+                  </TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        </>
+      ) : null}
+    </section>
+  );
 }
 
 /**
@@ -19,213 +217,83 @@ export function CaseSources({ c }: { c: CaseDetail }) {
   // An offline source already has the page-level stale banner; here only "delayed" needs saying.
   const stale = c.freshness.sources.filter((s) => s.stale && s.state !== "offline");
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
       {stale.length ? (
-        <p className="rounded-md border border-warning-border bg-warning-bg px-3 py-2 text-sm text-ink">
-          {stale.map((s) => s.text).join(" ")} Source documents below are as of their import times; later source changes are not shown.
+        <p className="flex items-start gap-2 rounded-md border border-warning-border bg-warning-bg px-3 py-2 text-sm text-ink">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning-solid" aria-hidden />
+          <span>{stale.map((s) => s.text).join(" ")} Source documents below are as of their import times; later source changes are not shown.</span>
         </p>
       ) : null}
       {c.sourceDocuments.map((d) => (
-        <Card
-          key={d.id}
-          title={
-            <span className="inline-flex flex-wrap items-center gap-2">
-              Source order <IdChip kind="ORD" id={d.sourceOrderId} tenant={d.tenantName} />
-            </span>
-          }
-          description={`Parts on this case from this order: ${d.partDesignations.length ? d.partDesignations.join(", ") : "none (linked at intake)"}.`}
-          actions={<SimulatedLabel connector={d.tenantName} />}
-        >
-          <dl className="grid grid-cols-[repeat(auto-fill,minmax(12rem,1fr))] gap-x-4 gap-y-2 text-sm">
-            <div>
-              <dt className="text-xs text-ink-muted">Status at source</dt>
-              <dd className="text-ink">{sentence(d.status)}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-ink-muted">Current version</dt>
-              <dd className="num-tabular text-ink">v{d.currentVersion}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-ink-muted">Source updated</dt>
-              <dd className="text-ink">
-                <Timestamp iso={d.sourceUpdatedAt} now={now} />
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs text-ink-muted">Imported here</dt>
-              <dd className="text-ink">
-                <Timestamp iso={d.importedAt} now={now} />
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs text-ink-muted">Submitting office</dt>
-              <dd className="text-ink">{d.office}</dd>
-            </div>
-            <div>
-              <dt className="text-xs text-ink-muted">Ordering clinician</dt>
-              <dd className="text-ink">{d.orderingClinician ?? <UnknownValue />}</dd>
-            </div>
-            <div className="col-span-2 max-sm:col-span-1">
-              <dt className="text-xs text-ink-muted">Local review state</dt>
-              <dd className="text-ink">{d.reviewText}</dd>
-            </div>
-          </dl>
-
-          {d.clinicalNote ? (
-            <div className="mt-3 rounded-sm border border-line bg-surface-subtle p-2">
-              <p className="text-xs font-medium text-ink-muted">Clinical note (untrusted free text from the source, shown as text only; never used for PAS, routing or any decision)</p>
-              <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-ink">{d.clinicalNote}</p>
-            </div>
-          ) : null}
-
-          <h3 className="mt-4 text-sm font-semibold text-ink">Order lines: original values, current source values and the value on this case</h3>
-          <p className="mt-0.5 text-xs text-ink-secondary">
-            Original = the first version received ({d.originalVersion !== null ? `v${d.originalVersion}` : "Unknown"}), kept unchanged. Current = the source&apos;s latest version (v{d.currentVersion}).
-            On this case = the part as issued; a source change never edits it silently (it opens a correction review).
-          </p>
-          <div className="mt-1 overflow-x-auto">
-            <table className="w-full min-w-[44rem] border-separate border-spacing-0 text-sm">
-              <caption className="sr-only">Order lines for {d.sourceOrderId}: original, current and on-case values</caption>
-              <thead>
-                <tr className="text-left text-xs text-ink-secondary">
-                  <th scope="col" className="border-b border-line py-1 pr-3 font-medium">Part</th>
-                  <th scope="col" className="border-b border-line py-1 pr-3 font-medium">
-                    Original ({d.originalVersion !== null ? `v${d.originalVersion}` : "version Unknown"})
-                  </th>
-                  <th scope="col" className="border-b border-line py-1 pr-3 font-medium">Current source value (v{d.currentVersion})</th>
-                  <th scope="col" className="border-b border-line py-1 pr-3 font-medium">On this case (as issued)</th>
-                  <th scope="col" className="border-b border-line py-1 pr-3 font-medium">Collected</th>
-                  <th scope="col" className="border-b border-line py-1 pr-3 font-medium">Expected containers</th>
-                  <th scope="col" className="border-b border-line py-1 font-medium">Requested stains (original → current)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {d.orderParts.map((op) => {
-                  const fmt = (v: { site: string | null; laterality: string | null; procedure?: string | null } | null) =>
-                    v ? `${v.site ?? "site Unknown"}; laterality ${v.laterality ?? "Unknown"}${v.procedure !== undefined ? `; ${v.procedure ?? "procedure Unknown"}` : ""}` : null;
-                  const origStains = op.original ? (op.original.requestedStains.length ? op.original.requestedStains.join(", ") : "None") : "Unknown";
-                  const curStains = op.current.requestedStains.length ? op.current.requestedStains.join(", ") : "None";
-                  return (
-                    <tr key={op.designation} className={op.status !== "active" ? "text-ink-muted" : undefined}>
-                      <td className="border-b border-line py-1 pr-3 align-top font-medium">
-                        {op.designation}
-                        {op.status !== "active" ? <span className="block text-xs">{sentence(op.status)} at source</span> : null}
-                      </td>
-                      <td className="border-b border-line py-1 pr-3 align-top">{fmt(op.original) ?? <UnknownValue reason="not in the stored first version" />}</td>
-                      <td className="border-b border-line py-1 pr-3 align-top">
-                        {fmt(op.current)}
-                        {op.changedSinceOriginal ? (
-                          <span className="ml-1 inline-flex rounded-sm border border-warning-border bg-warning-bg px-1 text-xs font-semibold text-warning-fg">Changed since original</span>
-                        ) : null}
-                      </td>
-                      <td className="border-b border-line py-1 pr-3 align-top">{op.onCase ? fmt(op.onCase) : <span className="text-ink-muted">Not on this case</span>}</td>
-                      <td className="border-b border-line py-1 pr-3 align-top">{op.collectedAt ? <Timestamp iso={op.collectedAt} now={now} /> : <UnknownValue />}</td>
-                      <td className="border-b border-line py-1 pr-3 align-top num-tabular">{op.expectedContainers ?? <UnknownValue />}</td>
-                      <td className="border-b border-line py-1 align-top">{origStains === curStains ? curStains : `${origStains} → ${curStains}`}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          <h3 className="mt-4 text-sm font-semibold text-ink">All versions received ({d.versions.length})</h3>
-          <ol className="mt-1 flex flex-col gap-2">
-            {d.versions.map((v) => (
-              <li key={v.version} className="rounded-sm border border-line p-2 text-sm">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="num-tabular font-semibold text-ink">v{v.version}</span>
-                  {v.version === d.currentVersion ? <StatusPill tone="info" size="sm">Current</StatusPill> : <StatusPill tone="neutral" size="sm">Earlier version, kept unchanged</StatusPill>}
-                  <span className="text-xs text-ink-secondary">
-                    Source updated <Timestamp iso={v.sourceUpdatedAt} now={now} /> · imported <Timestamp iso={v.importedAt} now={now} />
-                  </span>
-                </div>
-                {v.changeSummary ? <p className="mt-1 text-xs text-ink-secondary">{v.changeSummary}</p> : null}
-                <ul className="mt-1 text-xs text-ink">
-                  {v.specimens.map((sp) => (
-                    <li key={sp.designation}>
-                      Part {sp.designation}: {sp.site ?? "site Unknown"}, {sp.laterality ?? "laterality Unknown"}, {sp.procedure ?? "procedure Unknown"}
-                      {sp.requestedStains.length ? `, requested stains: ${sp.requestedStains.join(", ")}` : ""}
-                    </li>
-                  ))}
-                </ul>
-                {v.clinicalNote ? <p className="mt-1 whitespace-pre-wrap break-words text-xs text-ink-secondary">Note (as received): {v.clinicalNote}</p> : null}
-                <details className="mt-1">
-                  <summary className="cursor-pointer text-xs font-medium text-brand">Raw payload as received (simulated, untrusted)</summary>
-                  <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-sm bg-surface-subtle p-2 text-xs text-ink">{v.raw}</pre>
-                </details>
-              </li>
-            ))}
-          </ol>
-
-          {d.events.length ? (
-            <>
-              <h3 className="mt-4 text-sm font-semibold text-ink">Integration events for this order (simulated feed)</h3>
-              <ul className="mt-1 flex flex-col gap-0.5 text-xs text-ink-secondary">
-                {d.events.map((e) => (
-                  <li key={e.messageId}>
-                    <span className="id-mono text-ink">{e.messageId}</span> · {e.type} · {sentence(e.outcome).toLowerCase()}
-                    {e.receiptCount > 1 ? ` (received ${e.receiptCount} times, applied once)` : ""} · <Timestamp iso={e.receivedAt} now={now} />
-                    {e.detail ? ` · ${e.detail}` : ""}
-                  </li>
-                ))}
-              </ul>
-            </>
-          ) : null}
-        </Card>
+        <SourceOrder key={d.id} d={d} now={now} />
       ))}
 
-      <section id="related" className="scroll-mt-40">
-        <Card title="Related-order review" description="Candidate grouping is a reviewed decision record. Orders and patients are never merged.">
+      <section aria-labelledby="reviews-title" className="rounded-lg border border-line bg-surface">
+        <header className="border-b border-line px-5 py-3 max-xl:px-4">
+          <h2 id="reviews-title" className="text-md font-bold text-ink">
+            Related orders and corrections
+          </h2>
+          <p className="mt-0.5 text-sm text-ink-muted">Reviewed decision records. Orders and patients are never merged, and a case is never renumbered here.</p>
+        </header>
+        <div id="related" className="scroll-mt-40 px-5 py-3 max-xl:px-4">
+          <h3 className="text-sm font-semibold text-ink">Related-order review</h3>
           {c.related.length === 0 ? (
-            <p className="text-sm text-ink-secondary">No related-order candidate involves this case&apos;s orders.</p>
+            <p className="mt-1 text-sm text-ink-secondary">No related-order candidate involves this case&apos;s orders.</p>
           ) : (
-            <ul className="flex flex-col gap-3">
+            <ul className="mt-1 divide-y divide-line">
               {c.related.map((r) => (
-                <li key={r.id} className="text-sm">
+                <li key={r.id} className="py-2 text-sm">
                   <p className="flex flex-wrap items-center gap-2">
-                    <IdChip kind="OTHER" id={r.displayId} />
-                    <StatusPill tone={r.status === "pending_review" ? "warning" : "info"}>{r.statusLabel}</StatusPill>
+                    <LabelRef id={r.displayId} />
+                    <StatusPill tone={r.status === "pending_review" ? "warning" : "neutral"}>{r.statusLabel}</StatusPill>
                   </p>
-                  <p className="mt-1 font-medium text-ink">{r.statement}</p>
-                  {r.decisionReason ? <p className="text-ink-secondary">Reason recorded: {r.decisionReason}</p> : null}
+                  <p className="mt-1 font-medium text-ink">
+                    <IdText text={r.statement} />
+                  </p>
+                  {r.decisionReason ? (
+                    <p className="text-ink-secondary">
+                      Reason recorded: <IdText text={r.decisionReason} />
+                    </p>
+                  ) : null}
                   {r.reasons.length ? <p className="mt-1 text-xs text-ink-secondary">Why proposed: {r.reasons.map((x) => x.label + (x.detail ? ` (${x.detail})` : "")).join("; ")}</p> : null}
                   {r.conflicts.length ? <p className="text-xs text-ink-secondary">Conflicts shown to the reviewer: {r.conflicts.map((x) => x.label + (x.detail ? ` (${x.detail})` : "")).join("; ")}</p> : null}
                 </li>
               ))}
             </ul>
           )}
-        </Card>
-      </section>
-
-      <section id="corrections" className="scroll-mt-40">
-        <Card title="Correction reviews and cross-references" description="Discrepancies found after accessioning keep the original references. The authorized correction happens in the source system.">
+        </div>
+        <div id="corrections" className="scroll-mt-40 border-t border-line px-5 py-3 max-xl:px-4">
+          <h3 className="text-sm font-semibold text-ink">Correction reviews and cross-references</h3>
+          <p className="mt-0.5 text-xs text-ink-secondary">Discrepancies found after accessioning keep the original references. The authorized correction happens in the source system.</p>
           {c.corrections.length === 0 ? (
-            <p className="text-sm text-ink-secondary">None recorded for this case.</p>
+            <p className="mt-1 text-sm text-ink-secondary">None recorded for this case.</p>
           ) : (
-            <ul className="flex flex-col gap-3 text-sm">
+            <ul className="mt-1 divide-y divide-line text-sm">
               {c.corrections.map((x) => (
-                <li key={x.id}>
+                <li key={x.id} className="py-2">
                   <p className="flex flex-wrap items-center gap-2">
-                    <IdChip kind="OTHER" id={x.displayId} />
+                    <LabelRef id={x.displayId} />
                     <span className="text-ink">{sentence(x.kind)}</span>
                     <StatusPill tone={x.status.startsWith("open") ? "warning" : "neutral"}>{sentence(x.status)}</StatusPill>
-                    {x.relatedAccession ? <span className="text-ink-secondary">Related case: <span className="id-mono">{x.relatedAccession}</span></span> : null}
+                    {x.relatedAccession ? (
+                      <span className="text-ink-secondary">
+                        Related case <span className="id-mono">{x.relatedAccession}</span>
+                      </span>
+                    ) : null}
                   </p>
                   <p className="mt-0.5 text-ink">{x.description}</p>
                   <p className="text-xs text-ink-secondary">
-                    Opened by {x.requestedBy}, <Timestamp iso={x.requestedAt} now={now} />. {x.statement}
+                    Opened by {x.requestedBy}, <Timestamp iso={x.requestedAt} now={now} />. <IdText text={x.statement} />
                   </p>
                   {x.outcomeNote ? <p className="text-xs text-ink-secondary">Outcome: {x.outcomeNote}</p> : null}
-                  <details className="mt-1">
-                    <summary className="cursor-pointer text-xs font-medium text-brand">Original references at the time</summary>
-                    <pre className="mt-1 whitespace-pre-wrap break-words rounded-sm bg-surface-subtle p-2 text-xs">{x.originalRefs}</pre>
-                  </details>
+                  <Disclosure summary="Original references at the time">
+                    <pre className="mt-1 rounded-sm bg-surface-subtle p-2 font-mono text-xs break-words whitespace-pre-wrap">{x.originalRefs}</pre>
+                  </Disclosure>
                 </li>
               ))}
             </ul>
           )}
-        </Card>
+        </div>
       </section>
     </div>
   );

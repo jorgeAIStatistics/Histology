@@ -5,6 +5,7 @@ import { seedScenario } from "./scenario";
 import { resetBuilderCounters, setCounters, currentCounters } from "./builders";
 import { setClock } from "../core/clock";
 import { setSetting } from "../core/settings";
+import { activeAuditKey, demoAuditKey, sealPending } from "../core/audit-seal";
 
 export const SEED_VERSION = "2026-10-14.v1";
 
@@ -71,6 +72,11 @@ export function seedDemo(db: DB, opts: { clockRunning?: boolean } = {}): { slide
     const cases = (db.prepare("SELECT COUNT(*) n FROM accession WHERE is_prior_day = 0").get() as { n: number }).n;
     result = { slides, cases };
     setSetting(db, "seeded_at", new Date().toISOString());
+    // The seed writes its audit rows directly (builders.ts seedAudit): seal them all, in seq order, in this
+    // same transaction. The key is this process's audit key; with none configured (a locked build without
+    // HLOS_AUDIT_KEY, e.g. `npm run db:reset`), the synthetic seed is sealed with the PUBLIC demo key
+    // (key id "demo-not-secret"), which proves nothing and says so on every seal.
+    sealPending(db, activeAuditKey() ?? demoAuditKey());
   })();
   return result;
 }

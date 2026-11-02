@@ -9,6 +9,7 @@ import {
   createClarification,
   draftForClarification,
   escalateClarification,
+  findClarification,
   followUpClarification,
   getClarification,
   placeManualHold,
@@ -23,6 +24,8 @@ import {
   RESOLUTION_CODES,
 } from "../domain/clarification";
 import { assertAssistantAvailable } from "../assist/drafter";
+import { requirePermission } from "../core/context";
+import type { DB } from "../db/db";
 import { simulateOfficeAnswer } from "../sim/office";
 import { CLARIFICATION_CATEGORY } from "@/lib/domain";
 
@@ -172,6 +175,7 @@ export const clarificationSimulateOfficeAnswer = defineCommand({
   description:
     "Demo control: the office simulator replies (labeled 'Simulated office reply'). For the hero ORD-77121 laterality question it also queues amended order ORD-77121 v2 in the simulated source, available 1 minute later. Idempotent.",
   permission: null,
+  audience: "presenter",
   input: z.object({ clarificationId: id }),
   run: (ctx, input) => simulateOfficeAnswer(ctx, input.clarificationId),
 });
@@ -189,11 +193,22 @@ export const clarificationReview = defineCommand({
   run: (ctx, input) => reviewClarification(ctx, input),
 });
 
+/** Patient identity questions: resolving one needs "identity.resolve" and, in secured mode, a recent sign-in. */
+export const IDENTITY_CLARIFICATION_CATEGORIES: readonly string[] = ["identity_conflict"];
+
+function isIdentityClarification(db: DB, clarificationId: string): boolean {
+  const row = findClarification(db, clarificationId);
+  return Boolean(row && IDENTITY_CLARIFICATION_CATEGORIES.includes(row.category));
+}
+
 export const clarificationResolve = defineCommand({
   name: "clarification.resolve",
   description:
-    "Lead/supervisor resolves a reviewed clarification with a resolution code and note. Optional hold releases are recorded as SEPARATE audited releases with their own reason.",
+    "Lead/supervisor resolves a reviewed clarification with a resolution code and note. Optional hold releases are recorded as SEPARATE audited releases with their own reason. An identity question needs the identity.resolve permission.",
   permission: "clarification.resolve",
+  // Secured mode: an identity decision, or a resolution that also releases holds (a hold release is
+  // sensitive on its own), needs a recent sign-in.
+  sensitive: (db, input) => isIdentityClarification(db, input.clarificationId) || (input.releaseHoldIds?.length ?? 0) > 0,
   input: z.object({
     clarificationId: id,
     expectedVersion: version,
@@ -202,7 +217,10 @@ export const clarificationResolve = defineCommand({
     releaseHoldIds: z.array(id).max(10).optional(),
     releaseReason: text(1000).nullish(),
   }),
-  run: (ctx, input) => resolveClarification(ctx, input),
+  run: (ctx, input) => {
+    if (isIdentityClarification(ctx.db, input.clarificationId)) requirePermission(ctx, "identity.resolve");
+    return resolveClarification(ctx, input);
+  },
 });
 
 export const clarificationFollowUp = defineCommand({
@@ -225,7 +243,7 @@ export const clarificationCancel = defineCommand({
   name: "clarification.cancel",
   description: "Lead/supervisor cancels an open clarification with a reason. Linked holds stay active until released separately.",
   permission: "clarification.resolve",
-  input: z.object({ clarificationId: id, reason: required(1000, "A reason is required"), expectedVersion: version.optional() }),
+  input: z.object({ clarificationId: id, reason: required(1000, "A reason is required"), expectedVersion: version }),
   run: (ctx, input) => cancelClarification(ctx, input),
 });
 
@@ -234,6 +252,7 @@ export const holdRelease = defineCommand({
   description:
     "Lead/supervisor releases a hold with a reason. A hold linked to an open clarification needs the clarification resolved first (or a supervisor override with reason).",
   permission: "hold.release",
+  sensitive: true,
   input: z.object({
     holdId: id,
     expectedVersion: version,

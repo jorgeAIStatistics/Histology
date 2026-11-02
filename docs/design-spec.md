@@ -554,8 +554,8 @@ States that every route handles the same way are defined once in 6.0. Each route
 | Primary users | Accessioners Maya Torres and Luis Benitez. Accessioning lead Kim Nguyen for exceptions and overrides. |
 | Regions | **(1) Courier manifest strip** at the top: one compact row per office, using the seeded 11:00 delivery: "Harbor Point Dermatology: expected 4, received 4"; "Coral Lane Dermatology: expected 3, received 2, missing 1" (not the hero office); Mangrove Bay Dermatology: "Expected Unknown (no source manifest)". Counts are "so far" until every requisition is unpacked. Missing and extra counts are links to the items. **(2) Arrival queue** (left, 320px): intake items with provisional IDs and tabs "To review (n)", "Exceptions (n)", "Done (n)". **(3) Workspace** (right): identity bar, comparison panel, related-order card, routing card, and a sticky action bar at the bottom. |
 | Key components | Provisional ID chip; **comparison panel** with three columns (Order, source, with tenant and order ID / Observed container, staff entry with a synthetic bottle-label image / Requisition) and rows for patient name, DOB, MRN and tenant, site, laterality, procedure (shave/punch), part designation, collection date. Rows that disagree show a warning icon and "Differs", with both original values kept. **Related-order candidate card**: "Possible related order. Needs review." It lists reasons (same source-scoped patient reference, same encounter, same office and collection date) and conflicts (two order IDs: ORD-77120, ORD-77121), and states "Linking does not merge records." **Routing card**: "Suggested dermatopathologist: Dr. Elena Marsh. From rule: Harbor Point Dermatology to Dr. Elena Marsh (rule set v3, effective 2026-09-01)." Unknown office: a "Routing exception" warning card with no doctor chip. Simulated labels next to "Request accession". |
-| Primary actions (in order) | 1 **Staff verified against physical container** (records who and when; a scan alone never sets this). 2 **Raise clarification** (from a differing row, pre-filled with that field). 3 Related orders (accessioning lead or supervisor, reason required): **Link as related: one accession, parts kept with their original orders** / **Keep separate (separate cases)** / **Not related** / **Ask the office first** (accession waits). "Escalate to lead" is not a state: the review task is already owned by the accessioning lead. 4 **Accept routing** / **Override routing** (accessioning lead or supervisor, reason required). 5 **Request accession (simulated source)**, which shows the issued accession `D26-04817` labeled "Issued by EMA-SIM (simulated)". |
-| Keyboard | Scan field focused on load. Scanning a container label or order ID opens the matching item. An unmatched label prompts "No matching order found. Create provisional intake item?" (`Enter` creates, `Esc` cancels). `Tab` order: identity bar actions, comparison rows (each differing row has "Raise clarification for this field"), related-order card, routing card, action bar. `J`/`K` move between queue items. `Ctrl/Cmd+Enter` runs the current step's primary action. |
+| Primary actions (in order) | 1 **Record: I checked this bottle against the order** (records who and when; a scan alone never sets this, and Ctrl/Cmd+Enter never records it). 2 **Raise clarification** (from a differing row, pre-filled with that field). 3 Related orders (accessioning lead or supervisor, reason required): **Link as related: one accession, parts kept with their original orders** / **Keep separate (separate cases)** / **Not related** / **Ask the office first** (accession waits). "Escalate to lead" is not a state: the review task is already owned by the accessioning lead. 4 **Accept routing** (in the decision column) / **Override routing** (accessioning lead or supervisor, reason required). 5 **Request accession (simulated source)**, which shows the issued accession `D26-04817` labeled "Issued by EMA-SIM (simulated)". |
+| Keyboard | Scan field focused on load. Scanning a container label or order ID opens the matching item. An unmatched label prompts "No matching order found. Create provisional intake item?" (`Enter` creates, `Esc` cancels). `Tab` order: identity bar actions, comparison rows (each differing row has "Raise clarification for this field"), related-order card, routing card, action bar. `J`/`K` move between queue items. `Ctrl/Cmd+Enter` runs the current step's primary action; it never records the container check. |
 | Route-specific states | **Empty:** "No arrivals recorded for the 11:00 courier yet. Scan the first container." **Conflict:** on save, stale detection triggers the conflict dialog (for example Maya and Luis both editing INT-1014-031). A live presence note ("Luis Benitez also has INT-1014-031 open") was planned but is not built. **Partial success:** "Accession requested for 3 items. 2 issued, 1 failed (source timeout). Retry." **Printer unavailable:** requisition sticker jobs queue. **Source offline:** "Request accession" is disabled with "Source system unreachable (simulated outage). Your verification is saved locally. Request the accession when the source is back." **Exception lane:** items in Exceptions do not block other items. The tab shows the note "Other containers can continue under local policy." |
 
 ### 6.2 `/clarifications`: specimen-specific questions that close the loop
@@ -748,7 +748,7 @@ All components use tokens only. All interactive components have default, hover, 
 | `Enter` | Submit scan; open the focused row; confirm a proposed value | |
 | `Esc` | Close the panel or dialog and return focus to where it came from; clear the scan field | Never discards unsaved data without asking |
 | `J` / `K` (also Up/Down in tables) | Next / previous row or queue item | Single-key shortcuts can be turned off |
-| `Ctrl/Cmd+Enter` | Primary action of the current step | Shows the same confirmation as a click |
+| `Ctrl/Cmd+Enter` | Primary action of the current step | Shows the same confirmation as a click; never records the Intake container check (always a deliberate click) |
 | `Alt+Down` | Next unconfirmed or invalid field (grossing, intake) | |
 | `G` then `I` / `C` / `W` / `G` / `M` / `O` | Go to Intake / Clarifications / Worklist / Grossing / Materials / Operations | Listed in the help dialog; off when single-key shortcuts are off |
 | `?` | Keyboard shortcut help | |
@@ -824,7 +824,7 @@ The `design:accessibility-review` skill references WCAG 2.1. This spec targets 2
 | Use | Only when | Do not use for |
 |---|---|---|
 | Scanned / Matched record | A barcode or typed ID found a record | "Verified" (a scan identifies a record; it does not prove what tissue is in the bottle) |
-| Staff verified against physical container | A person checked the container and recorded it | Any automatic result |
+| Record: I checked this bottle against the order (recorded as "staff verified against physical container") | A person checked the container and recorded it | Any automatic result |
 | Confirmed | A person confirmed a value or outcome | A system default |
 | Entered in source system (staff attested) | A named person recorded that they entered it in EMA by hand | A source confirmation |
 | Acknowledged (by source, simulated) | The simulated source returned an acknowledgment | A local "marked as entered" (that is an attestation) |
@@ -925,3 +925,27 @@ This spec was written before coding. These are the differences found when it was
 | Automated accessibility scan | Recommended (`@axe-core/playwright`) | Not added |
 
 Screen details not listed here (layout sizes, keyboard shortcuts, exact copy) were not re-verified line by line; where they differ, the running app is what the demo does.
+
+## 14. Visual redesign (2026-10-14): what this spec no longer governs
+
+The visual layer was redesigned after this spec was written. **Sections 2 to 5 are superseded:**
+- 2. Visual language
+- 3. Design tokens
+- 4. Typography
+- 5. Layout, including the left side navigation
+
+The visual and layout parts of Section 6 and Section 7 are superseded too. The current sources are:
+
+- `DESIGN.md` (project root) and `.impeccable/design.json`: the design system, recorded from the shipped code.
+- `docs/redesign/visual-system.md`: the lead's short rules, which cover the severity ladder, what dashed means, red only for patient identity, type roles, motion, keyboard and shared parts.
+- `docs/redesign/README.md`: before/after captures, task walkthroughs, verification results, and what is simulated or unfinished.
+
+**Still in force:**
+- Section 1: principles.
+- Section 8: keyboard model. The Ctrl+Enter target is now always visible, and it never records a container check.
+- Section 9: accessibility checklist.
+- Section 10: copy.
+- Section 12: do not.
+- Every workflow safeguard.
+
+The navigation moved from the left side rail to the hematoxylin top bar. The demo controls (role switch, demo clock, guided demo, settings) moved into its presenter menu; in Stage 5 they moved again, to the presenter console at `/demo`, and the bar keeps only a read-only demo role, demo time and a console link. The keyboard keys are behind the keyboard button in the top bar.

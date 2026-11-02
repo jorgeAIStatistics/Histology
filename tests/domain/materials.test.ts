@@ -8,6 +8,9 @@ import { decodeLabel } from "@/lib/identifiers";
 import { getRetrievalDetail, getTrayDetail, getPrintJobDetail } from "@/server/queries/materials";
 import { demoNow } from "@/server/core/clock";
 import * as q from "@/server/queries/materials";
+import { blockedHeadline, onlyAwaitingScans, slotForScan, traySlots } from "@/components/materials/tray-model";
+import { printOutcome } from "@/components/materials/print-outcome";
+import { retrievalWalk } from "@/components/materials/retrieval-model";
 
 type PrintResult = { outcome: string; printJobId: string; displayId: string; state: string; message: string; printerUnavailable?: boolean; labelId?: string | null; retireLabelId?: string | null };
 
@@ -237,13 +240,14 @@ describe("Acceptance 8: a printer timeout stays unknown until reconciled; no unc
     const db = testDb();
     const block = one<{ id: string }>(db, "SELECT id FROM block WHERE physical_state = 'sectioned' AND custody_state = 'in_workflow' ORDER BY id LIMIT 1");
     const before = { slides: countSlides(db), jobs: countJobs(db) };
+    // Entered by a histotech: recorded as the histotech's entry on a stated request, never as the pathologist's own order.
     const r = must<{ workOrderId: string; slideId: string; slideLabel: string }>(db, STAFF.priya, "slide.orderAdditional", {
-      blockId: block.id, stain: "H&E", level: "deeper L2", reason: "Dr. Marsh asked for a deeper level",
+      blockId: block.id, stain: "H&E", level: "deeper L2", reason: "Dr. Marsh asked for a deeper level", requestReference: "Dr. Marsh, by phone at 10:40",
     });
     expect(countSlides(db)).toBe(before.slides + 1);
     expect(countJobs(db)).toBe(before.jobs);
-    expect(one(db, "SELECT kind, status, authorization_source, target_block_id FROM work_order WHERE id = ?", r.workOrderId)).toEqual({
-      kind: "levels", status: "requested", authorization_source: "pathologist_request", target_block_id: block.id,
+    expect(one(db, "SELECT kind, status, authorization_source, target_block_id, requested_by_staff_id FROM work_order WHERE id = ?", r.workOrderId)).toEqual({
+      kind: "levels", status: "requested", authorization_source: "staff_entered_request", target_block_id: block.id, requested_by_staff_id: STAFF.priya,
     });
     expect(one(db, "SELECT physical_state, label_state, work_order_id FROM slide WHERE id = ?", r.slideId)).toEqual({
       physical_state: "planned", label_state: "none", work_order_id: r.workOrderId,
@@ -290,10 +294,10 @@ describe("Acceptance 9: TRY-M-03 cannot become verified complete with a missing 
     expect(one(db, "SELECT owner_id FROM task WHERE kind = 'tray_exception' AND entity_type = 'tray' AND entity_id = 'tray_m03' AND status = 'open'")).toEqual({ owner_id: STAFF.priya });
 
     // Only a supervisor may release with exceptions; a histotech is refused by the server.
-    const ht = run(db, STAFF.priya, "tray.releaseWithExceptions", { trayId: "tray_m03", note: "Release anyway" });
+    const ht = run(db, STAFF.priya, "tray.releaseWithExceptions", { trayId: "tray_m03", note: "Release anyway", expectedVersion: trayVersion(db) });
     expect(!ht.ok && ht.error.code).toBe("FORBIDDEN");
     // Even a supervisor needs a controlled disposition for the missing slide first.
-    const early = run(db, STAFF.tanya, "tray.releaseWithExceptions", { trayId: "tray_m03", note: "Release" });
+    const early = run(db, STAFF.tanya, "tray.releaseWithExceptions", { trayId: "tray_m03", note: "Release", expectedVersion: trayVersion(db) });
     expect(!early.ok && early.error.code).toBe("BLOCKED");
 
     must(db, STAFF.priya, "tray.setDisposition", { trayId: "tray_m03", slideId: sc.missing, disposition: "follows_separately", note: "Still at the coverslipper; will walk it over" });
@@ -302,7 +306,7 @@ describe("Acceptance 9: TRY-M-03 cannot become verified complete with a missing 
     const stillNot = run(db, STAFF.priya, "tray.complete", { trayId: "tray_m03", expectedVersion: trayVersion(db) });
     expect(!stillNot.ok && stillNot.error.code).toBe("BLOCKED");
 
-    const rel = must<{ status: string }>(db, STAFF.tanya, "tray.releaseWithExceptions", { trayId: "tray_m03", note: "Dr. Marsh agreed to start; A1-2 follows" });
+    const rel = must<{ status: string }>(db, STAFF.tanya, "tray.releaseWithExceptions", { trayId: "tray_m03", note: "Dr. Marsh agreed to start; A1-2 follows", expectedVersion: trayVersion(db) });
     expect(rel.status).toBe("released_with_exceptions");
     // The tray-level exception is decided; the slide that follows separately keeps its own task.
     expect(one(db, "SELECT COUNT(*) n FROM task WHERE kind = 'tray_exception' AND entity_type = 'tray' AND entity_id = 'tray_m03' AND status = 'open'")).toEqual({ n: 0 });
@@ -584,6 +588,105 @@ describe("Materials read models used by /materials", () => {
     expect(q.listTrays(db).length).toBeGreaterThan(0);
     expect(q.storedBlocks(db).length).toBeGreaterThan(0);
     expect(q.pathologistsForTrays(db).find((p) => p.id === STAFF.marsh)!.ready).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("Materials bench drawing (derived, read only): tray slots, holds on slots, print outcomes in words", () => {
+  it("TRY-M-03 is drawn as its ten listed positions in list order; an unexpected slide is shown on the tray but off its list, and completion is refused in words", () => {
+    const db = testDb();
+    const sc = scenario(db);
+    let d = getTrayDetail(db, "TRY-M-03")!;
+    let slots = traySlots(d.view, d.holds);
+    expect(slots.map((x) => x.position)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(slots.filter((x) => x.state === "scanned")).toHaveLength(8);
+    // A slide is drawn in a slot only when its own scan matched; an empty position is a dashed well.
+    expect(slots.every((x) => x.onTray === (x.state === "scanned"))).toBe(true);
+    expect(slots.filter((x) => x.state === "empty").map((x) => x.slideId).sort()).toEqual([sc.expectedUnscanned, sc.missing].sort());
+    expect(slots.find((x) => x.slideId === sc.expectedUnscanned)!.sr).toMatch(/^Position \d+: D26-\d{5} A\d+-\d+ .*\. Expected, not scanned yet\.$/);
+    expect(blockedHeadline(d.view)).toBe("Cannot complete: 2 not scanned.");
+    // Slides still to scan is ordinary progress: the headline is neutral (waiting), not amber.
+    expect(onlyAwaitingScans(d.view)).toBe(true);
+
+    must(db, STAFF.priya, "tray.scan", { trayId: "tray_m03", payload: ident(db, sc.expectedUnscanned) });
+    must(db, STAFF.priya, "tray.scan", { trayId: "tray_m03", payload: ident(db, sc.unexpected) });
+    d = getTrayDetail(db, "TRY-M-03")!;
+    slots = traySlots(d.view, d.holds);
+    const extra = slots.filter((x) => x.position === null);
+    expect(extra).toHaveLength(1);
+    expect(extra[0]).toMatchObject({ slideId: sc.unexpected, state: "remove", tone: "amber", words: "Unexpected", detail: "Dr. Okafor's case", onTray: true });
+    expect(extra[0].sr).toMatch(/^Not on this tray's list: .*Dr\. Samuel Okafor's case.*take it off the tray\.$/);
+    // The newest scan is located on the drawing: the unexpected slide.
+    expect(slotForScan(slots, d.view.scans[0])).toBe(extra[0].key);
+    expect(slots.filter((x) => x.position !== null)).toHaveLength(10);
+    expect(blockedHeadline(d.view)).toBe("Cannot complete: 1 not scanned, 1 unexpected.");
+    // An unexpected slide is a disagreement: amber again.
+    expect(onlyAwaitingScans(d.view)).toBe(false);
+    // The drawing decides nothing: the server still refuses completion with its own reasons.
+    const done = run(db, STAFF.priya, "tray.complete", { trayId: "tray_m03", expectedVersion: trayVersion(db) });
+    expect(!done.ok && done.error.code).toBe("BLOCKED");
+    expect(d.view.blockedSummary).toBe("Cannot complete: 1 not scanned (D26-04747 A1-2), 1 unexpected (D26-04745 A1-1).");
+  });
+
+  it("positions are the rank on the tray's own list, a hold that stops tray delivery is shown on its slot, and a hold for another step is not", () => {
+    const db = testDb();
+    for (const t of q.listTrays(db)) {
+      const d = getTrayDetail(db, t.id)!;
+      expect(traySlots(d.view, d.holds).filter((x) => x.position !== null).map((x) => x.position)).toEqual(d.view.expected.map((_, i) => i + 1));
+    }
+    const before = getTrayDetail(db, "TRY-M-03")!;
+    expect(before.holds).toEqual({});
+    const [held, other] = before.view.expected.filter((e) => e.state === "scanned");
+    must(db, STAFF.tanya, "hold.place", { scope: { type: "slide", id: held.slideId }, scopeLabel: held.label, blocks: ["tray_delivery"], reasonText: "Recut requested before delivery (synthetic)" });
+    must(db, STAFF.tanya, "hold.place", { scope: { type: "slide", id: other.slideId }, scopeLabel: other.label, blocks: ["print"], reasonText: "Label check (synthetic)" });
+    const d = getTrayDetail(db, "TRY-M-03")!;
+    expect(Object.keys(d.holds)).toEqual([held.slideId]);
+    expect(d.holds[held.slideId]).toEqual([expect.objectContaining({ scopeLabel: held.label, reason: "Recut requested before delivery (synthetic)" })]);
+    const slot = traySlots(d.view, d.holds).find((x) => x.slideId === held.slideId)!;
+    expect(slot.holds).toHaveLength(1);
+    expect(slot.sr).toMatch(/On hold: H-\d+, .*Recut requested before delivery/);
+    expect(traySlots(d.view, d.holds).find((x) => x.slideId === other.slideId)!.holds).toHaveLength(0);
+  });
+
+  it("RR-0192's walk: the blocks still to pick in walking order, the next block first; a wrong scan changes nothing, a pick drops the block", () => {
+    const db = testDb();
+    const now = demoNow(db);
+    const before = getRetrievalDetail(db, "RR-0192", now)!;
+    const walk = retrievalWalk(before);
+    // Box 11 first (slot 14, then slot 15), then the block checked out to Marcus Lee: the walk, not the bench order.
+    expect(walk.toPick.map((i) => i.blockLabel)).toEqual(["D26-03990 A1", "D26-03990 B1", "D26-03912 A1"]);
+    expect(walk.next?.blockLabel).toBe("D26-03990 A1");
+    expect(walk.next?.location.code).toBe("CAB-2/DR-4/BX-11/S-14");
+    expect(before.items.map((i) => i.benchSeq)).toEqual([...before.items.map((i) => i.benchSeq)].sort((a, b) => a - b));
+
+    const wrong = must<{ result: string; accepted: boolean }>(db, STAFF.marcus, "retrieval.scan", { requestId: "rr_0192", payload: before.sampleWrongBlock!.payload });
+    expect(wrong).toMatchObject({ result: "mismatch", accepted: false });
+    expect(retrievalWalk(getRetrievalDetail(db, "RR-0192", now)!).toPick.map((i) => i.blockLabel)).toEqual(["D26-03990 A1", "D26-03990 B1", "D26-03912 A1"]);
+
+    const b1 = before.items.find((i) => i.blockLabel === "D26-03990 B1")!;
+    expect(must<{ result: string }>(db, STAFF.marcus, "retrieval.scan", { requestId: "rr_0192", payload: b1.identifier }).result).toBe("picked");
+    const after = retrievalWalk(getRetrievalDetail(db, "RR-0192", now)!);
+    expect(after.toPick.map((i) => i.blockLabel)).toEqual(["D26-03990 A1", "D26-03912 A1"]);
+    expect(after.next?.blockLabel).toBe("D26-03990 A1");
+
+    // A pending block the pick list does not place still counts, after the walk.
+    const orphan = { ...before.items[0], id: "orphan", blockLabel: "D26-00000 Z9" };
+    expect(retrievalWalk({ items: [...before.items, orphan], pickList: before.pickList }).toPick.at(-1)?.blockLabel).toBe("D26-00000 Z9");
+    expect(retrievalWalk({ items: [], pickList: [] })).toEqual({ next: null, toPick: [] });
+  });
+
+  it("print outcomes read in words: PJ-8841 is an unknown outcome to reconcile before reprint; once replaced it reads failed, replaced", () => {
+    const db = testDb();
+    const now = demoNow(db);
+    const row = () => q.listPrintJobs(db, { filter: "all", now }).rows.find((r) => r.displayId === "PJ-8841")!;
+    expect(printOutcome(row())).toEqual({ tone: "amber", words: "Unknown outcome", next: "Reconcile before reprint" });
+    const pj = getPrintJobDetail(db, "PJ-8841", now)!;
+    must(db, STAFF.priya, "print.reconcile", { printJobId: pj.job.id, expectedVersion: pj.job.version, outcome: "not_printed", note: "Output tray empty" });
+    expect(printOutcome(row())).toEqual({ tone: "amber", words: "Failed", next: "Not printed: reprint with a reason" });
+    must(db, STAFF.priya, "print.reprint", { printJobId: pj.job.id, reason: "Not printed after the simulated timeout" });
+    expect(row().supersededBy).toMatch(/^PJ-\d+$/);
+    expect(printOutcome(row())).toEqual({ tone: "muted", words: "Failed", next: null });
+    const printed = q.listPrintJobs(db, { filter: "all", now }).rows.find((r) => r.state === "completion_confirmed")!;
+    expect(printOutcome(printed)).toMatchObject({ tone: "done", words: "Printed" });
   });
 });
 

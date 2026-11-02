@@ -48,7 +48,14 @@ export function DraftRuleSetForm({
   });
   const errs = fieldErrors(cmd.error);
   const used = new Set(changes.map((c) => c.officeId));
-  const incomplete = changes.some((c) => !c.officeId || !c.pathologistId) || reason.trim().length < 3;
+  // A disabled action says why next to it (PRODUCT.md principle 1).
+  const needs = [
+    changes.some((c) => !c.officeId) ? "choose an office" : null,
+    changes.some((c) => !c.pathologistId) ? "choose who it is assigned to" : null,
+    reason.trim().length < 3 ? "write a reason" : null,
+  ].filter((n): n is string => n !== null);
+  const incomplete = needs.length > 0;
+  const needsText = incomplete ? `To create the draft, ${needs.length > 1 ? `${needs.slice(0, -1).join(", ")} and ${needs[needs.length - 1]}` : needs[0]}.` : null;
 
   return (
     <form
@@ -127,10 +134,25 @@ export function DraftRuleSetForm({
         <Textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} disabled={!can.allowed} />
       </Field>
       <div className="flex flex-wrap items-start gap-3">
-        <Button type="submit" variant="primary" loading={cmd.pending} loadingLabel="Creating draft..." disabled={!can.allowed || incomplete}>
+        <Button
+          type="submit"
+          variant="primary"
+          loading={cmd.pending}
+          loadingLabel="Creating draft..."
+          disabled={!can.allowed || incomplete}
+          reasonId={!can.allowed || incomplete ? "draft-create-reason" : undefined}
+        >
           Create draft v{nextVersion}
         </Button>
-        {!can.allowed ? <p className="max-w-[48ch] text-xs text-ink-secondary">{can.reason ?? "Only the operations supervisor can draft routing changes."} The server checks this role on every request.</p> : null}
+        {!can.allowed ? (
+          <p id="draft-create-reason" className="max-w-[48ch] self-center text-sm text-ink-secondary">
+            {can.reason ?? "Only the operations supervisor can draft routing changes."} The server checks this role on every request.
+          </p>
+        ) : needsText ? (
+          <p id="draft-create-reason" className="max-w-[48ch] self-center text-sm text-ink-secondary">
+            {needsText}
+          </p>
+        ) : null}
       </div>
       <CommandError error={cmd.error} />
     </form>

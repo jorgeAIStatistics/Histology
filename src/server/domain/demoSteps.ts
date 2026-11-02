@@ -773,6 +773,7 @@ function step5(r: StepRunner, auto: boolean): StepOutcome {
     r.call("staff", `Load synthetic dictation "${DEMO_IDS.transcriptKey}" (deterministic demo extractor)`, "stf_dana", "gross.loadTranscript", {
       specimenPartId: h.partA.id,
       transcriptKey: DEMO_IDS.transcriptKey,
+      expectedVersion: g.version,
     });
     g = latest();
   }

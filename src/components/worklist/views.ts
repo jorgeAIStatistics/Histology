@@ -82,6 +82,7 @@ export const VIEW_COLUMNS: Record<WorklistView, ColumnKey[]> = {
 export const FILTER_STAGES: Stage[] = [
   "awaiting_gross",
   "gross_in_progress",
+  "awaiting_processing",
   "processing",
   "embedding",
   "sectioning",

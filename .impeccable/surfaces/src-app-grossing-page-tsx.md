@@ -1,0 +1,18 @@
+---
+version: 1
+slug: "src-app-grossing-page-tsx"
+primary_target: "src/app/grossing/page.tsx"
+related_targets: ["src/components/grossing", "src/server/queries/grossing.ts"]
+---
+
+# Grossing workstation (surface brief)
+
+Scope: `/grossing` (bench queue and source-entry view) and `/grossing?part=<accession>-<letter>` (one part's gross record). Mode **Operate**. Audience: the grosser (Dana Whitfield) and the histology assistant who enters approved descriptions into the source system (Sam Ortiz); the supervisor; directors watch it read-only in the demo. Task: read the dictated description against the structured fields, confirm each proposal explicitly (nothing pre-filled counts as confirmed), mark operator reviewed, approve for downstream use, then record the manual source entry (staff attestation) and see the simulated acknowledgement. Constraints: PRODUCT.md (part identity always visible, keyboard and scanner, readable contrast, every disabled action says why, synthetic and simulated labelled, no AI confidence, no fake activity), docs/redesign/visual-system.md (H&E world, severity ladder, no card-in-card, no side stripes, no eyebrows), server commands and payloads unchanged. Baseline problems (before-grossing-1440): every field its own bordered card inside a card, green-bordered confirmed boxes shouting louder than open work, a floating action bar covering the fields, the record states as a row of equal pills.
+
+## Direction contract
+THESIS: One bench sheet answers what was dictated, which values still need the grosser, and what happens to this part next. It refuses the stack of field cards and the floating bar that hides the form.
+OWN-WORLD: The shared H&E world, lent as type (Atkinson Hyperlegible Next for words, Mono only for identifiers), palette (hematoxylin shell and primary, eosin only for focus, cool bench-gray ground, white evidence sheets), density and the specimen-label signature in the shared IdentityBar. Severity ladder on every field row: proposed-not-confirmed is neutral and waits on the grosser; missing or needs review is amber with a triangle ("data may be wrong"); hold is hatched ink; confirmed is quiet (check, muted).
+STORY: Dana reads the part label, one sentence saying what is still open, the six record states in order with who and when, then works down one form sheet with the dictation beside it; the docked next-step column always names her next action, why anything is disabled, and who else is waited on.
+FIRST VIEWPORT: Hematoxylin top bar; IdentityBar led by the solid specimen label; record band (h1, finding sentence, sibling parts, six-step state rail); below it the dictation evidence sheet beside one hairline-rowed form sheet; a fixed "Your next step" column on the right that never overlaps the fields.
+FORM: Extends the Intake world. User-pinned: the user's instruction for this redesign reads "Focus first on making the accessioning workstation excellent. Keep the active case and specimen identity visible, align evidence for comparison, and make the next action clear. Then extend the selected design language to the other screens." The selected language is the Intake H&E workstation (concept A, chosen on the brief's ordering). No concept-seed roll ran for this screen, by design: the user asked for extension of one selected language, not a new direction. Screen-specific form: evidence beside one structured form sheet; draft / reviewed / attested / acknowledged kept distinct (the lead's composition for this job, from the baseline review in docs/redesign/references-and-skills.md).
+FINISH: captures at 1440/1366/1024 for every reachable state, looked at and fixed once; tsc and the grossing domain tests green; e2e assertions for this screen updated at equal strength.

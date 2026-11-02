@@ -22,6 +22,15 @@ export function must<R = unknown>(db: DB, actorId: string, name: string, input: 
   return mustRun<R>(db, actorId, name, input, { idempotencyKey });
 }
 
+/**
+ * Run a simulated world event as the internal system actor, the way the
+ * guided-demo runner does (origin "simulator"). User requests can never act
+ * as "system" (src/server/commands/registry.ts).
+ */
+export function simulate<R = unknown>(db: DB, name: string, input: unknown): R {
+  return mustRun<R>(db, "system", name, input, { origin: "simulator" });
+}
+
 /** Set the paused demo clock to a lab-local time on the demo day, e.g. at(db, "11:00"). */
 export function clockAt(db: DB, hhmm: string, day = "2026-10-14"): void {
   setClock(db, labLocalToIso(day, hhmm), false);

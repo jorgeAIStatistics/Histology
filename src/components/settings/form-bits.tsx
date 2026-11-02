@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useState, type ReactNode } from "react";
+import { TriangleAlert } from "lucide-react";
 import { Button, type ButtonVariant } from "@/components/ui/button";
 import { CommandError } from "@/components/ui/command-button";
 import { Dialog } from "@/components/ui/dialog";
@@ -62,7 +63,12 @@ export function EtDateTime({
         <Input id={`${id}-t`} type="time" size="sm" value={value.time} onChange={(e) => onChange({ ...value, time: e.target.value })} className="w-28" invalid={Boolean(error)} />
       </div>
       {hint ? <p className="mt-1 text-xs text-ink-muted">{hint}</p> : null}
-      {error ? <p className="mt-1 text-xs text-danger-fg">{error}</p> : null}
+      {error ? (
+        <p className="mt-1 flex items-start gap-1 text-xs font-medium text-warning-fg">
+          <TriangleAlert className="mt-px size-3.5 shrink-0 text-warning-solid" aria-hidden />
+          <span>{error}</span>
+        </p>
+      ) : null}
     </fieldset>
   );
 }

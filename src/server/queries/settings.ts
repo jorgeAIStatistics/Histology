@@ -455,6 +455,10 @@ export interface ConnectorCard {
   rolloutMode: string;
   status: string;
   statusLabel: string;
+  /** Derived, read only: the name without its "(simulated …)" suffix. The Integration tab says once, in its banner, that every connector is simulated. */
+  plainName: string;
+  /** Derived, read only: the connection state in plain words, without "(simulated)" (said once by the tab's banner). */
+  stateLabel: string;
   word: CapabilityWord;
   lastSuccessAt: string | null;
   lastAttemptAt: string | null;
@@ -544,6 +548,9 @@ export function loadIntegrationSettings(db: DB): IntegrationSettings {
       rolloutMode: r.rollout_mode,
       status: r.status,
       statusLabel,
+      plainName: r.name.replace(/\s*\((?:simulated[^)]*|deterministic demo)\)\s*$/i, ""),
+      stateLabel:
+        r.status === "connected" ? "Connected" : r.status === "offline" ? (kind === "assistant" ? "Unavailable" : "Offline") : r.status === "degraded" ? "Slow link" : "Unknown",
       word: "Simulated",
       lastSuccessAt: r.last_success_at,
       lastAttemptAt: r.last_attempt_at,
@@ -651,6 +658,8 @@ export interface ContactView {
   categories: string[];
   channel: string;
   channelLabel: string;
+  /** Derived, read only: the channel without "(simulated)"; the Contacts tab says once that every channel is simulated. */
+  channelName: string;
   isPrimary: boolean;
   isEscalation: boolean;
   outUntil: string | null;
@@ -677,6 +686,8 @@ export interface OfficeContactsView {
    */
   routesTo: string | null;
   coverageGap: string | null;
+  /** Derived: true when the gap note only says a backup is covering (nothing is uncovered). */
+  coverageCovered: boolean;
 }
 
 export interface ContactsSettings {
@@ -691,6 +702,11 @@ const CHANNEL_LABEL: Record<string, string> = {
   simulated_ema_message: "EMA message (simulated)",
   simulated_portal: "Office portal (simulated)",
   simulated_phone: "Phone (simulated)",
+};
+const CHANNEL_NAME: Record<string, string> = {
+  simulated_ema_message: "EMA message",
+  simulated_portal: "Office portal",
+  simulated_phone: "Phone",
 };
 function parseCategories(json: string | null): string[] {
   try {
@@ -750,6 +766,7 @@ export function loadContactsSettings(db: DB): ContactsSettings {
           categories: parseCategories(c.covers_categories),
           channel: c.channel,
           channelLabel: CHANNEL_LABEL[c.channel] ?? `${c.channel} (simulated)`,
+          channelName: CHANNEL_NAME[c.channel] ?? c.channel.replace(/^simulated_/, "").replace(/_/g, " "),
           isPrimary: Boolean(c.is_primary),
           isEscalation: Boolean(c.is_escalation),
           outUntil: c.out_until,
@@ -766,6 +783,7 @@ export function loadContactsSettings(db: DB): ContactsSettings {
       const limited = ordered.filter((c) => !c.isEscalation && c.categories.length > 0);
       let routesTo: string | null = null;
       let coverageGap: string | null = null;
+      let coverageCovered = false;
       if (!primary) {
         coverageGap = limited.length
           ? `No contact covers every category; only ${limited.map((c) => `${c.name} (${c.categories.join(", ")})`).join(", ")}.`
@@ -778,6 +796,7 @@ export function loadContactsSettings(db: DB): ContactsSettings {
         if (backup && !backup.isOutNow) {
           routesTo = backup.name;
           coverageGap = `${primary.name} is out until ${fmtDateTime(primary.outUntil)} ET; backup ${backup.name} covers.`;
+          coverageCovered = true;
         } else coverageGap = `${primary.name} is out until ${fmtDateTime(primary.outUntil)} ET and no available backup is on file.`;
       }
       const h = hours;
@@ -791,6 +810,7 @@ export function loadContactsSettings(db: DB): ContactsSettings {
         contacts: list,
         routesTo,
         coverageGap,
+        coverageCovered,
       };
     }),
   };

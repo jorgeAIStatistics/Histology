@@ -1,9 +1,10 @@
+import { CircleCheck } from "lucide-react";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { Card, FactList } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
-import { SimulatedLabel, UnknownValue } from "@/components/domain/honesty";
+import { UnknownValue } from "@/components/domain/honesty";
 import { StaleBanner } from "@/components/domain/stale-banner";
 import { Timestamp } from "@/components/domain/timestamp";
 import { cn } from "@/lib/cn";
@@ -19,33 +20,42 @@ import {
 import { CapabilityPill, FreshnessPill, OutcomePill, VIA_LABEL } from "./bits";
 import { RetryEventButton } from "./retry-button";
 
-const KIND_TITLE: Record<ConnectorCard["kind"], string> = {
+const TOTALS: { key: keyof IntegrationSettings["totals"]; label: string }[] = [
+  { key: "applied", label: "Applied" },
+  { key: "duplicate_ignored", label: "Duplicate ignored" },
+  { key: "stale_ignored", label: "Stale, ignored" },
+  { key: "failed", label: "Failed" },
+];
+
+/** What kind of connector it is: the card's subtitle when the connector's own name does not already say it. */
+const KIND_LABEL: Record<ConnectorCard["kind"], string> = {
   source: "Source system adapter",
   notifications: "Office notifications",
   printer: "Label printers",
   assistant: "Drafting / extraction assistant",
 };
 
+const squash = (t: string) => t.toLowerCase().replace(/[^a-z]/g, "");
+
+/**
+ * One connector. "Simulated" is said once, by the tab's banner; the card is headed by the connector's own name
+ * (e.g. "EMA-SIM Sunrise Coast"), with its kind as the subtitle, and shows one state: a source shows its data
+ * freshness (Synced / Delayed / Stale / Offline), the others their connection state.
+ */
 function ConnectorCardView({ c, now }: { c: ConnectorCard; now: string }) {
   const f = c.freshness;
+  const kind = KIND_LABEL[c.kind];
   return (
-    <Card
-      title={
-        <span className="flex flex-wrap items-center gap-2">
-          {KIND_TITLE[c.kind]}
-          {c.tenantName ? <span className="text-sm font-normal text-ink-muted">· {c.tenantName}</span> : null}
-        </span>
-      }
-      description={c.name}
-      actions={<CapabilityPill word={c.word} />}
-      headingLevel={3}
-    >
-      <div className="grid gap-3">
+    <Card title={c.plainName} description={squash(c.plainName) === squash(kind) ? undefined : kind} headingLevel={3} flush>
+      <div className="grid gap-3 px-4 pt-3 pb-4">
         <div className="flex flex-wrap items-center gap-2">
-          <StatusPill tone={c.status === "connected" ? "success" : c.status === "degraded" ? "warning" : "danger"} size="sm">
-            {c.statusLabel}
-          </StatusPill>
-          {f ? <FreshnessPill state={f.state} /> : null}
+          {f ? (
+            <FreshnessPill state={f.state} />
+          ) : (
+            <StatusPill tone={c.status === "connected" ? "neutral" : "warning"} icon={c.status === "connected" ? CircleCheck : undefined} size="sm">
+              {c.stateLabel}
+            </StatusPill>
+          )}
         </div>
         <FactList
           items={[
@@ -78,33 +88,35 @@ function ConnectorCardView({ c, now }: { c: ConnectorCard; now: string }) {
             { label: "Last error", value: c.lastError ?? "None" },
           ]}
         />
-        {c.capabilities.length ? (
-          <Table caption={`Capability discovery result for ${c.name}`}>
-            <THead>
-              <tr>
-                <TH>Capability</TH>
-                <TH>Discovery result</TH>
-                <TH>Status</TH>
-              </tr>
-            </THead>
-            <TBody>
-              {c.capabilities.map((cap) => (
-                <TR key={cap.capability}>
-                  <TD className="id-mono text-xs">{cap.capability}</TD>
-                  <TD wrap className="text-sm text-ink-secondary">
-                    {cap.raw}
-                  </TD>
-                  <TD>
-                    <CapabilityPill word={cap.word} />
-                  </TD>
-                </TR>
-              ))}
-            </TBody>
-          </Table>
-        ) : (
-          <UnknownValue reason="the connector reported no capabilities" />
-        )}
       </div>
+      {c.capabilities.length ? (
+        <Table caption={`Capability discovery result for ${c.plainName}`} wrapperClassName="rounded-none rounded-b-lg border-x-0 border-b-0">
+          <THead>
+            <tr>
+              <TH>Capability</TH>
+              <TH>Discovery result</TH>
+              <TH>Status</TH>
+            </tr>
+          </THead>
+          <TBody>
+            {c.capabilities.map((cap) => (
+              <TR key={cap.capability}>
+                <TD className="id-mono text-xs">{cap.capability}</TD>
+                <TD wrap className="text-sm text-ink-secondary">
+                  {cap.raw}
+                </TD>
+                <TD>
+                  <CapabilityPill word={cap.word} />
+                </TD>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
+      ) : (
+        <div className="border-t border-line px-4 py-3">
+          <UnknownValue reason="the connector reported no capabilities" />
+        </div>
+      )}
     </Card>
   );
 }
@@ -113,7 +125,7 @@ export function IntegrationTab({ data, canRetry }: { data: IntegrationSettings; 
   const { now, connectors, log, failures, totals } = data;
   const stale = connectors.filter((c) => c.freshness?.stale);
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       <AlertBanner tone="info" title="This demo runs in mode A: local demonstration">
         Every connector here is simulated: generated data, no credentials, and nothing leaves this computer. Local completion of a task never writes to a source system. Real access needs
         the approvals listed under rollout modes B–D.
@@ -148,7 +160,7 @@ export function IntegrationTab({ data, canRetry }: { data: IntegrationSettings; 
         </dl>
       </section>
 
-      <div className="grid items-start gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
         {connectors.map((c) => (
           <ConnectorCardView key={c.id} c={c} now={now} />
         ))}
@@ -181,11 +193,11 @@ export function IntegrationTab({ data, canRetry }: { data: IntegrationSettings; 
                     <Timestamp iso={f.receivedAt} now={now} showAge />
                   </TD>
                   <TD className="text-ink-secondary">{f.sourceName.replace(/ \(simulated source adapter\)$/, "")}</TD>
-                  <TD>
+                  <TD className="py-2">
                     <span className="id-mono">{f.messageId}</span>
                     <span className="block text-xs text-ink-muted">{f.messageType}</span>
                   </TD>
-                  <TD wrap className="max-w-[52ch] text-sm text-danger-fg">
+                  <TD wrap className="max-w-[52ch] text-sm text-warning-fg">
                     {f.detail ?? "No reason recorded"}
                   </TD>
                   <TD numeric>{f.attempts || 1}</TD>
@@ -205,16 +217,17 @@ export function IntegrationTab({ data, canRetry }: { data: IntegrationSettings; 
         )}
       </Card>
 
-      <Card
-        title="Integration event log"
-        description={
-          <>
-            Latest 50 receipts. Totals: {totals.applied} applied · {totals.duplicate_ignored} duplicate ignored · {totals.stale_ignored} stale, ignored · {totals.failed} failed.
-          </>
-        }
-        actions={<SimulatedLabel connector="source adapters" />}
-        flush
-      >
+      <Card title="Integration event log" description="Latest 50 receipts, newest first. The totals count every receipt." flush>
+        <div role="group" aria-label="Receipt totals" className="border-b border-line px-4 py-2">
+          <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+            {TOTALS.map((t) => (
+              <div key={t.key} className="flex items-baseline gap-1.5">
+                <dt className="text-ink-muted">{t.label}</dt>
+                <dd className="num-tabular font-semibold text-ink">{totals[t.key]}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
         {log.length ? (
           <Table caption="Inbound source messages and their outcomes, newest first" scroll="container" maxHeight="520px" wrapperClassName="rounded-none border-0">
             <THead>
@@ -233,10 +246,10 @@ export function IntegrationTab({ data, canRetry }: { data: IntegrationSettings; 
                   <TD>
                     <Timestamp iso={e.at} now={now} />
                   </TD>
-                  <TD>
+                  <TD className="py-2">
                     <span className="id-mono">{e.messageId}</span>
                     <span className="block text-xs text-ink-muted">
-                      {e.messageType} · {e.sourceName.replace(/ \(simulated source adapter\)$/, "")}
+                      {e.messageType}, {e.sourceName.replace(/ \(simulated source adapter\)$/, "")}
                     </span>
                   </TD>
                   <TD>

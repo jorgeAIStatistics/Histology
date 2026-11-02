@@ -1,0 +1,112 @@
+# DermPath Research Workbench: local container stack.
+#
+# UNVERIFIED: written 2026-10-26 on a machine whose Docker daemon was not running. None of
+# these services has been started. Research use only; demo mode only (secured mode is not
+# implemented and refuses all requests).
+#
+#   docker compose up --build        # then open http://localhost:3000 (web) / :8000 (api)
+#
+# Services: postgres (database), minio (private S3-compatible object store), api (FastAPI),
+# worker (DB-backed job queue worker), web (Next.js; its Dockerfile belongs to workbench/web).
+# Secrets below are DEMO placeholders. Do not reuse them anywhere.
+
+x-backend-env: &backend-env
+  WB_MODE: demo
+  WB_SECRET: "change-me-demo-only-0123456789abcdef0123456789abcdef"
+  WB_DATABASE_URL: postgresql+psycopg://dermpath:dermpath-demo@postgres:5432/dermpath
+  WB_OBJECT_STORE: s3
+  WB_S3_ENDPOINT: http://minio:9000
+  WB_S3_BUCKET: dermpath-private
+  WB_S3_REGION: us-east-1
+  WB_S3_ACCESS_KEY: dermpath
+  WB_S3_SECRET_KEY: dermpath-demo-secret
+  WB_VAR_DIR: /var/lib/dermpath
+  WB_CORS_ORIGINS: http://localhost:3600,http://127.0.0.1:3600
+  WB_AUTO_SEED: "1"
+
+services:
+  postgres:
+    image: postgres:16.4
+    environment:
+      POSTGRES_DB: dermpath
+      POSTGRES_USER: dermpath
+      POSTGRES_PASSWORD: dermpath-demo
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dermpath -d dermpath"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:RELEASE.2024-08-17T01-24-54Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: dermpath
+      MINIO_ROOT_PASSWORD: dermpath-demo-secret
+    volumes:
+      - miniodata:/data
+    # No public bucket policy is ever applied; objects are reachable only through the API.
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-08-17T11-33-50Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "mc alias set local http://minio:9000 dermpath dermpath-demo-secret &&
+                  mc mb --ignore-existing local/dermpath-private &&
+                  mc anonymous set none local/dermpath-private"
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    environment: *backend-env
+    ports:
+      - "8000:8000"
+    volumes:
+      - apivar:/var/lib/dermpath
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  worker:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    command: ["python", "-m", "dermpath.worker", "--poll", "1.0"]
+    environment: *backend-env
+    volumes:
+      - workervar:/var/lib/dermpath
+    depends_on:
+      api:
+        condition: service_healthy
+
+  web:
+    # Built from workbench/web/Dockerfile. UNVERIFIED (no Docker daemon when written).
+    # The browser talks only to the web app; /api/v1/* is proxied to the API inside the network,
+    # so WB_API_URL is the API's in-network address, baked in at build time.
+    build:
+      context: ./web
+      args:
+        WB_API_URL: http://api:8000
+    ports:
+      - "3600:3600"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  miniodata:
+  apivar:
+  workervar:

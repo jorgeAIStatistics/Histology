@@ -198,7 +198,7 @@ export function seedScenario(db: DB, h: HistoryResult): void {
         body: c.answer, delivery_state: "received", is_simulated: 1, idempotency_key: `seed-${id}-answer`, created_at: c.answeredAt, created_by: null,
       });
     }
-    seedAudit(db, { at: c.createdAt, actor: c.createdBy, role: "accessioner", action: "clarification.created", entityType: "clarification", entityId: id, accessionId: c.accessionId ?? null, intakeItemId: c.intakeId ?? null, summary: `${c.display} created: ${c.question}` });
+    seedAudit(db, { at: c.createdAt, actor: c.createdBy, role: "accessioner", action: "clarification.created", entityType: "clarification", entityId: id, accessionId: c.accessionId ?? null, intakeItemId: c.intakeId ?? null, summary: `${c.display} created: ${c.category.replace(/_/g, " ")} question on ${c.subject} (the question is on the clarification record)` });
     return id;
   };
 

@@ -1,4 +1,5 @@
 import type { DB } from "@/server/db/db";
+import { holdNextSteps } from "./hold-next";
 import type { Role, Permission } from "@/lib/roles";
 import { roleCan, rolesFor, ROLE_LABEL } from "@/lib/roles";
 import { CLARIFICATION_CATEGORY, CLARIFICATION_STATE, OPEN_CLARIFICATION_STATES, type ClarificationState } from "@/lib/domain";
@@ -31,10 +32,10 @@ import { assistantMode } from "@/server/assist/drafter";
 // ------------------------------------------------------------------ filters
 
 export const CLARIFICATION_FILTERS = [
-  { key: "my_open", label: "My open", description: "Open clarifications you own or have a task on" },
+  { key: "my_open", label: "My open", description: "Open clarifications you own or have a task on, and closed ones whose hold you release" },
   { key: "overdue", label: "Overdue", description: "Waiting on the office past the next follow-up time" },
   { key: "awaiting_office", label: "Awaiting office", description: "Sent, delivery pending or failed, or acknowledged" },
-  { key: "needs_review", label: "Needs review", description: "Answered or reviewed: a lead or supervisor acts next" },
+  { key: "needs_review", label: "Needs review", description: "Answered or reviewed, or closed with a hold still to release: a lead or supervisor acts next" },
   { key: "resolved", label: "Resolved", description: "Resolved or canceled" },
   { key: "all", label: "All", description: "Every clarification, open first" },
 ] as const;
@@ -70,9 +71,45 @@ export interface ClarificationListRow {
   followUpText: string;
   lastEventAt: string;
   lastEventLabel: string;
-  activeHolds: { id: string; displayId: string; scopeLabel: string }[];
+  /** scopeShort (derived, read only): the scope in words, e.g. "Part B". */
+  activeHolds: { id: string; displayId: string; scopeLabel: string; scopeShort: string }[];
   createdAt: string;
   isOpen: boolean;
+  /** Derived (read only): the affected material as the bench reads it, for its label reference. */
+  material: MaterialRef;
+  /** Derived (read only): the lead who reviews answers and resolves (the review task goes to this person). */
+  escalationOwnerName: string | null;
+  /** Derived (read only): that lead's staff id (they also decide on releasing a closed question's hold). */
+  escalationOwnerId: string | null;
+  /**
+   * Derived (read only): resolved or canceled, but a linked hold is still active. A lead still has
+   * to release it with a reason, so the row stays on Needs review (and the lead's My open) until then.
+   */
+  holdToRelease: boolean;
+  /**
+   * Closed, its hold still active, and the resolution means the order itself must change
+   * (confirmed_observed / source_amended) with no newer order version imported yet: the hold
+   * waits for the amended order, not for a release. Same rule as Operations (queries/hold-next.ts).
+   */
+  awaitingAmendedOrder: boolean;
+}
+
+/**
+ * The affected material, structured for display (derived from the same joins as `affectedLabel`):
+ * the label shown first is the official accession, else the provisional INT id, else the source order.
+ */
+export interface MaterialRef {
+  kind: "accession" | "provisional" | "order" | "other";
+  /** Identifier set as the label reference (D26-…, INT-…, ORD-…); the subject label for "other". */
+  labelId: string;
+  /** Part letter when the question is about one part. */
+  part: string | null;
+  /** "part": one part; "all_parts" / "all_containers": an identity question covers every part or container. */
+  scope: "part" | "all_parts" | "all_containers" | "whole";
+  /** Source order id when the label is not the order itself (shown beside a provisional id). */
+  orderRef: string | null;
+  /** Accession numbering namespace (official labels only), e.g. "EMA-SIM DERM". */
+  namespace: string | null;
 }
 
 export interface ContactView {
@@ -331,7 +368,9 @@ interface BaseRow extends ClarificationRow {
   office_name: string;
   contact_name: string | null;
   owner_name: string | null;
+  escalation_owner_name: string | null;
   accession_number: string | null;
+  accession_namespace: string | null;
   intake_display: string | null;
   sp_designation: string | null;
   op_designation: string | null;
@@ -341,6 +380,7 @@ interface BaseRow extends ClarificationRow {
 
 const BASE_SQL = `
   SELECT c.*, o.name AS office_name, oc.display_name AS contact_name, s.display_name AS owner_name,
+         eo.display_name AS escalation_owner_name, a.namespace AS accession_namespace,
          a.accession_number, ii.display_id AS intake_display, sp.designation AS sp_designation,
          op.designation AS op_designation, so.source_order_id AS order_ref,
          (SELECT MAX(m.created_at) FROM clarification_message m WHERE m.clarification_id = c.id) AS last_msg_at
@@ -348,6 +388,7 @@ const BASE_SQL = `
     JOIN office o ON o.id = c.office_id
     LEFT JOIN office_contact oc ON oc.id = c.contact_id
     LEFT JOIN staff s ON s.id = c.lab_owner_id
+    LEFT JOIN staff eo ON eo.id = c.escalation_owner_id
     LEFT JOIN accession a ON a.id = c.accession_id
     LEFT JOIN intake_item ii ON ii.id = c.intake_item_id
     LEFT JOIN specimen_part sp ON sp.id = c.specimen_part_id
@@ -368,6 +409,18 @@ function affectedLabel(r: BaseRow): string {
   return r.subject_label;
 }
 
+/** The affected material, structured (same precedence as `affectedLabel`). */
+function materialRef(r: BaseRow): MaterialRef {
+  const part = r.sp_designation ?? r.op_designation;
+  const identity = r.category === "identity_conflict";
+  if (r.accession_number)
+    return { kind: "accession", labelId: r.accession_number, part: identity ? null : part, scope: identity ? "all_parts" : part ? "part" : "whole", orderRef: null, namespace: r.accession_namespace };
+  if (r.intake_display)
+    return { kind: "provisional", labelId: r.intake_display, part: identity ? null : part, scope: identity ? "all_containers" : part ? "part" : "whole", orderRef: r.order_ref, namespace: null };
+  if (r.order_ref) return { kind: "order", labelId: r.order_ref, part, scope: part ? "part" : "whole", orderRef: null, namespace: null };
+  return { kind: "other", labelId: r.subject_label, part: null, scope: "whole", orderRef: null, namespace: null };
+}
+
 const LAST_EVENT_FIELDS: [keyof ClarificationRow, string][] = [
   ["created_at", "Drafted"],
   ["sent_at", "Sent (simulated)"],
@@ -379,7 +432,7 @@ const LAST_EVENT_FIELDS: [keyof ClarificationRow, string][] = [
   ["escalated_at", "Escalated"],
 ];
 
-function toListRow(r: BaseRow, holds: Map<string, HoldRow[]>, now: string): ClarificationListRow {
+function toListRow(r: BaseRow, holds: Map<string, HoldRow[]>, now: string, shortOf: (h: HoldRow) => string = (h) => h.scope_label): ClarificationListRow {
   const isOpen = OPEN_CLARIFICATION_STATES.includes(r.state);
   const awaiting = AWAITING_OFFICE_STATES.includes(r.state);
   const overdueMinutes = awaiting && r.next_follow_up_at && Date.parse(r.next_follow_up_at) <= Date.parse(now) ? minutesBetween(r.next_follow_up_at, now) : null;
@@ -429,22 +482,32 @@ function toListRow(r: BaseRow, holds: Map<string, HoldRow[]>, now: string): Clar
     followUpText,
     lastEventAt,
     lastEventLabel,
-    activeHolds: (holds.get(r.id) ?? []).map((h) => ({ id: h.id, displayId: h.display_id, scopeLabel: h.scope_label })),
+    activeHolds: (holds.get(r.id) ?? []).map((h) => ({ id: h.id, displayId: h.display_id, scopeLabel: h.scope_label, scopeShort: shortOf(h) })),
     createdAt: r.created_at,
     isOpen,
+    material: materialRef(r),
+    escalationOwnerName: r.escalation_owner_name ?? null,
+    escalationOwnerId: r.escalation_owner_id ?? null,
+    holdToRelease: !isOpen && (holds.get(r.id) ?? []).length > 0,
+    awaitingAmendedOrder: false,
   };
 }
 
+/**
+ * `myTasks` holds the clarification ids and the hold ids the actor has an open task on. A closed
+ * question whose hold is still active is the releasing lead's work: it counts as theirs.
+ */
 function matches(row: ClarificationListRow, filter: ClarificationFilter, actorId: string, myTasks: Set<string>): boolean {
   switch (filter) {
     case "my_open":
+      if (row.holdToRelease) return row.escalationOwnerId === actorId || row.activeHolds.some((h) => myTasks.has(h.id));
       return row.isOpen && (row.labOwnerId === actorId || myTasks.has(row.id));
     case "overdue":
       return row.overdueMinutes !== null;
     case "awaiting_office":
       return AWAITING_OFFICE_STATES.includes(row.state);
     case "needs_review":
-      return row.state === "answered" || row.state === "reviewed";
+      return row.state === "answered" || row.state === "reviewed" || row.holdToRelease;
     case "resolved":
       return row.state === "resolved" || row.state === "canceled";
     default:
@@ -455,6 +518,8 @@ function matches(row: ClarificationListRow, filter: ClarificationFilter, actorId
 const PRIORITY_RANK: Record<string, number> = { urgent: 0, high: 1, routine: 2 };
 
 function rank(r: ClarificationListRow): number {
+  // A closed question with a hold still to release is lead work, after the answers to review.
+  if (r.holdToRelease) return 3.5;
   if (!r.isOpen) return 9;
   if (r.overdueMinutes !== null) return 0;
   if (r.state === "delivery_failed") return 1;
@@ -498,13 +563,23 @@ export interface ClarificationQueue {
   sortNote: string;
 }
 
+/** Marks closed rows whose hold waits for the amended order (the shared hold next-step rule). */
+function withAmendmentWaits(db: DB, rows: ClarificationListRow[]): ClarificationListRow[] {
+  const holdIds = rows.filter((r) => r.holdToRelease).flatMap((r) => r.activeHolds.map((h) => h.id));
+  if (!holdIds.length) return rows;
+  const steps = holdNextSteps(db, holdIds);
+  return rows.map((r) =>
+    r.holdToRelease && r.activeHolds.some((h) => steps.get(h.id)?.waiting === "source_amendment") ? { ...r, awaitingAmendedOrder: true } : r,
+  );
+}
+
 export function listClarifications(db: DB, opts: { filter?: ClarificationFilter | null; actorId: string; now: string }): ClarificationQueue {
   const base = db.prepare(BASE_SQL).all() as BaseRow[];
   const holds = activeHoldsByClarification(db);
-  const all = base.map((r) => toListRow(r, holds, opts.now));
+  const all = withAmendmentWaits(db, base.map((r) => toListRow(r, holds, opts.now, (h) => holdScope(db, h).short)));
   const myTasks = new Set(
     (db
-      .prepare("SELECT entity_id FROM task WHERE entity_type = 'clarification' AND status IN ('open','in_progress') AND owner_id = ?")
+      .prepare("SELECT entity_id FROM task WHERE entity_type IN ('clarification','hold') AND status IN ('open','in_progress') AND owner_id = ?")
       .all(opts.actorId) as { entity_id: string }[]).map((t) => t.entity_id),
   );
   const counts = Object.fromEntries(
@@ -518,7 +593,33 @@ export function listClarifications(db: DB, opts: { filter?: ClarificationFilter 
     counts,
     total: all.length,
     now: opts.now,
-    sortNote: filter === "resolved" ? "Sorted: most recently closed first" : "Sorted: overdue and delivery problems first, then answers awaiting review, then by next follow-up",
+    sortNote: filter === "resolved" ? "Sorted: most recently closed first" : "Sorted: overdue and delivery problems first, then lead reviews and releases, then follow-ups",
+  };
+}
+
+/**
+ * What needs attention across the whole desk (derived, read only), for the
+ * landing pane when no question is open: overdue or undelivered questions
+ * first, then office answers a lead must review or resolve. Takes the rows of
+ * the "all" list (already in urgency order); never changes anything.
+ */
+export interface DeskAttention {
+  /** Open, and overdue or with a failed or unknown delivery. */
+  problems: ClarificationListRow[];
+  /** Answered or reviewed (and not already listed above): a lead acts next. */
+  toReview: ClarificationListRow[];
+  /** Resolved or canceled, but a hold it placed is still active: a lead releases it, with a reason. */
+  toRelease: ClarificationListRow[];
+}
+
+export function deskAttention(allRows: ClarificationListRow[]): DeskAttention {
+  const open = allRows.filter((r) => r.isOpen);
+  const problems = open.filter((r) => r.overdueMinutes !== null || r.state === "delivery_failed" || r.state === "delivery_unknown");
+  const listed = new Set(problems.map((r) => r.id));
+  return {
+    problems,
+    toReview: open.filter((r) => (r.state === "answered" || r.state === "reviewed") && !listed.has(r.id)),
+    toRelease: allRows.filter((r) => !r.isOpen && r.holdToRelease),
   };
 }
 
@@ -832,7 +933,7 @@ export function getClarificationDetail(db: DB, idOrDisplay: string, opts: { now:
   const staff = staffNames(db);
   const holdsAll = db.prepare("SELECT * FROM hold WHERE clarification_id = ? ORDER BY placed_at, display_id").all(r.id) as HoldRow[];
   const activeMap = new Map<string, HoldRow[]>([[r.id, holdsAll.filter((h) => h.status === "active")]]);
-  const row = toListRow(r, activeMap, now);
+  const row = withAmendmentWaits(db, [toListRow(r, activeMap, now, (h) => holdScope(db, h).short)])[0];
   const info = subjectContext(db, r);
 
   // Patient (synthetic) and tenant, for identity while editing.
