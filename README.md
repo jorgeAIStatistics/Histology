@@ -284,3 +284,9 @@ References like [R1] point to [`docs/research-notes.md`](docs/research-notes.md)
 - **Port 3100 is busy:** another copy is probably running. Stop it, or run `npx next dev -p 3101`.
 - **Settings says the database is "from an older version":** use **Reset demo data** there, or stop the app and run `npm run db:reset`.
 - **`npm install` fails on `better-sqlite3`:** check that Node is version 22 or newer, then try again. This package includes a compiled part that has to match your Node version.
+
+## Ownership and permissions
+
+Maintained by **Jorge Rodriguez** ([@jorgeAIStatistics](https://github.com/jorgeAIStatistics)).
+See [COPYRIGHT.md](COPYRIGHT.md) for ownership and third-party attribution scope,
+and [LICENSE](LICENSE) for permissions. Source-visible for portfolio review; reuse rights are reserved.
