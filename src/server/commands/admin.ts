@@ -51,6 +51,7 @@ defineCommand({
   name: "integration.setSourceStatus",
   description: "Demo control: simulate a source-system outage (offline), a slow link (degraded) or restore it (connected).",
   permission: null,
+  audience: "presenter",
   input: z.object({ sourceId: z.string().min(1), status: z.enum(["connected", "offline", "degraded"]) }),
   run(ctx, input) {
     const src = sourceAdapterRow(ctx, input.sourceId);
@@ -85,6 +86,7 @@ defineCommand({
   name: "integration.syncNow",
   description: "Poll the simulated source adapters now and deliver anything due (same pipeline as the background poll).",
   permission: null,
+  audience: "presenter",
   input: z.object({ sourceId: z.string().optional() }),
   run(ctx, input) {
     if (input.sourceId) sourceAdapterRow(ctx, input.sourceId);
@@ -129,6 +131,7 @@ defineCommand({
   name: "integration.deliverQueuedNow",
   description: "Demo control: make every pending simulated source message available now, then sync (delivers only if the source is connected).",
   permission: null,
+  audience: "presenter",
   input: z.object({ sourceId: z.string().optional() }),
   run(ctx, input) {
     const ids = input.sourceId ? [sourceAdapterRow(ctx, input.sourceId).id] : null;
@@ -172,6 +175,7 @@ defineCommand({
   name: "integration.replayDuplicate",
   description: "Demo control: the simulated source re-sends a message it already sent (same message id). Must be ignored as a duplicate.",
   permission: null,
+  audience: "presenter",
   input: z.object({ sourceId: z.string().optional(), eventId: z.string().optional() }),
   run(ctx, input) {
     const sourceId = defaultSourceId(ctx, input.sourceId);
@@ -206,6 +210,7 @@ defineCommand({
   name: "integration.deliverOlderVersion",
   description: "Demo control: the simulated source sends an OLDER version of an order late (out of order). Must be ignored as stale.",
   permission: null,
+  audience: "presenter",
   input: z.object({ sourceId: z.string().optional() }),
   run(ctx, input) {
     const sourceId = defaultSourceId(ctx, input.sourceId);
@@ -255,6 +260,7 @@ defineCommand({
   name: "integration.injectImportFailure",
   description: "Demo control: the next message from this source fails processing (appears in the failure queue, retryable).",
   permission: null,
+  audience: "presenter",
   input: z.object({ sourceId: z.string().min(1), enabled: z.boolean().default(true) }),
   run(ctx, input) {
     const src = sourceAdapterRow(ctx, input.sourceId);
@@ -275,6 +281,7 @@ defineCommand({
   name: "printer.setStatus",
   description: "Demo control: set a simulated printer online, offline, or to time out after the next submission.",
   permission: null,
+  audience: "presenter",
   input: z.object({ printerId: z.string().min(1), status: z.enum(["online", "offline", "simulate_timeout"]) }),
   run(ctx, input) {
     const p = ctx.db.prepare("SELECT id, name, status FROM printer WHERE id = ?").get(input.printerId) as { id: string; name: string; status: string } | undefined;
@@ -298,6 +305,7 @@ defineCommand({
   name: "notifications.setStatus",
   description: "Demo control: take the simulated office-notification connector offline (sends are recorded as delivery failed) or restore it.",
   permission: null,
+  audience: "presenter",
   input: z.object({ status: z.enum(["connected", "offline"]) }),
   run(ctx, input) {
     const row = ctx.db.prepare("SELECT id, name, status FROM integration_source WHERE adapter = 'simulated_notifications' LIMIT 1").get() as
@@ -327,6 +335,7 @@ defineCommand({
   name: "assistant.setMode",
   description: "Demo control: the drafting/extraction assistant is deterministic (demo output) or unavailable (manual work continues).",
   permission: null,
+  audience: "presenter",
   input: z.object({ mode: z.enum(["deterministic", "unavailable"]) }),
   run(ctx, input) {
     const before = getSetting(ctx.db, "assistant_mode") ?? "deterministic";
@@ -356,6 +365,7 @@ defineCommand({
   name: "demo.setClock",
   description: "Demo control: pause/resume the demo clock, advance it, or jump forward to a time. Never moves backwards unless it is an explicit reset.",
   permission: null,
+  audience: "presenter",
   input: z
     .object({
       iso: isoString.optional(),
@@ -476,7 +486,7 @@ defineCommand({
   permission: "routing.editRules",
   input: z.object({
     contactId: z.string().min(1),
-    expectedVersion: z.number().int().min(1).optional(),
+    expectedVersion: z.number().int().min(1),
     patch: z
       .object({
         out_until: isoString.nullable().optional(),
@@ -491,7 +501,7 @@ defineCommand({
     const c = db.prepare("SELECT * FROM office_contact WHERE id = ?").get(input.contactId) as ContactRow | undefined;
     if (!c) throw new DomainError("NOT_FOUND", "Office contact not found");
     const current = contactVersion(ctx, c.id);
-    if (input.expectedVersion !== undefined && input.expectedVersion !== current) {
+    if (input.expectedVersion !== current) {
       // Who saved the newer version and when (spec §7 conflict dialog: "their value (who, when)").
       const rev = db.prepare("SELECT updated_at, updated_by FROM office_contact_revision WHERE contact_id = ?").get(c.id) as
         | { updated_at: string | null; updated_by: string | null }

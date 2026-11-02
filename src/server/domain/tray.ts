@@ -684,17 +684,43 @@ export function completeTray(ctx: Ctx, trayIdOrDisplay: string, expectedVersion:
     throw new DomainError("BLOCKED", `${tray.display_id} ${view.blockedSummary ?? "cannot be completed."}`, { reasons: view.completeBlockers });
   }
   const note = `Every expected slide scanned individually (${view.counts.scanned} of ${view.counts.expected}); nothing unexpected remains.`;
-  updateVersioned(ctx.db, "tray", tray.id, expectedVersion, { status: "verified_complete", closed_by: ctx.actor.id, closed_at: ctx.now, close_note: note });
+  const updated = updateVersioned(ctx.db, "tray", tray.id, expectedVersion, { status: "verified_complete", closed_by: ctx.actor.id, closed_at: ctx.now, close_note: note });
   closeTasks(ctx, TRAY_EXCEPTION_TASK, "tray", tray.id);
-  audit(ctx, { action: "tray.completed", entityType: "tray", entityId: tray.id, summary: `${tray.display_id} verified complete by ${ctx.actor.name}. ${note}` });
+  audit(ctx, {
+    action: "tray.completed",
+    entityType: "tray",
+    entityId: tray.id,
+    summary: `${tray.display_id} verified complete by ${ctx.actor.name}. ${note}`,
+    before: { status: tray.status, version: tray.version },
+    after: {
+      status: "verified_complete",
+      version: updated.version,
+      pathologistId: tray.pathologist_id,
+      scannedSlideIds: view.expected.filter((e) => e.state === "scanned").map((e) => e.slideId),
+      counts: view.counts,
+    },
+  });
   return { trayId: tray.id, status: "verified_complete", message: `${tray.display_id} verified complete. ${note}` };
 }
 
-export function releaseTrayWithExceptions(ctx: Ctx, trayIdOrDisplay: string, note: string): { trayId: string; status: TrayStatus; message: string } {
+export function releaseTrayWithExceptions(
+  ctx: Ctx,
+  trayIdOrDisplay: string,
+  note: string,
+  expectedVersion: number,
+): { trayId: string; status: TrayStatus; message: string } {
   const why = requireText(note, "A note is required to release a tray with exceptions");
   const tray = mustTray(ctx.db, trayIdOrDisplay);
   if (tray.status === "released_with_exceptions") return { trayId: tray.id, status: tray.status, message: `${tray.display_id} was already released with exceptions. Nothing changed.` };
   assertActive(tray);
+  // Same stale-view rule as completing a tray: the supervisor decides on the list they reviewed, not on a newer one.
+  if (tray.version !== expectedVersion) {
+    throw new DomainError(
+      "CONFLICT",
+      `${tray.display_id} changed since you looked at it (another scan or decision was recorded). Review the latest list before releasing it with exceptions.`,
+      { table: "tray", id: tray.id, expectedVersion, currentVersion: tray.version },
+    );
+  }
   const view = computeTrayView(ctx.db, tray.id);
   if (view.releaseBlockers.length) {
     throw new DomainError("BLOCKED", `${tray.display_id} cannot be released yet: ${view.releaseBlockers.join("; ")}.`, { reasons: view.releaseBlockers });
@@ -703,10 +729,27 @@ export function releaseTrayWithExceptions(ctx: Ctx, trayIdOrDisplay: string, not
     .filter((e) => e.state !== "scanned" && e.state !== "canceled")
     .map((e) => `${e.label} (${DISPOSITION_LABEL[e.disposition!].toLowerCase()}: ${e.dispositionNote})`);
   const closeNote = `Released with exceptions by ${ctx.actor.name}: ${why}. Scanned ${view.counts.scanned} of ${view.counts.expected}. Outstanding: ${outstanding.join("; ")}.`;
-  updateVersioned(ctx.db, "tray", tray.id, undefined, { status: "released_with_exceptions", closed_by: ctx.actor.id, closed_at: ctx.now, close_note: closeNote });
+  const updated = updateVersioned(ctx.db, "tray", tray.id, expectedVersion, { status: "released_with_exceptions", closed_by: ctx.actor.id, closed_at: ctx.now, close_note: closeNote });
   // The tray-level exception is decided; each outstanding slide keeps its own task.
   closeTasks(ctx, TRAY_EXCEPTION_TASK, "tray", tray.id);
-  audit(ctx, { action: "tray.released_with_exceptions", entityType: "tray", entityId: tray.id, summary: `${tray.display_id}: ${closeNote}`, reason: why });
+  audit(ctx, {
+    action: "tray.released_with_exceptions",
+    entityType: "tray",
+    entityId: tray.id,
+    summary: `${tray.display_id}: ${closeNote}`,
+    reason: why,
+    before: { status: tray.status, version: tray.version },
+    after: {
+      status: "released_with_exceptions",
+      version: updated.version,
+      pathologistId: tray.pathologist_id,
+      scannedSlideIds: view.expected.filter((e) => e.state === "scanned").map((e) => e.slideId),
+      outstanding: view.expected
+        .filter((e) => e.state !== "scanned" && e.state !== "canceled")
+        .map((e) => ({ slideId: e.slideId, disposition: e.disposition, note: e.dispositionNote })),
+      counts: view.counts,
+    },
+  });
   return { trayId: tray.id, status: "released_with_exceptions", message: `${tray.display_id} released with documented exceptions (not verified complete). ${outstanding.length} item(s) outstanding.` };
 }
 
@@ -729,15 +772,29 @@ export function deliverTray(ctx: Ctx, trayIdOrDisplay: string): { trayId: string
   for (const e of scanned) assertNotHeld(ctx.db, "tray_delivery", scopesForSlide(ctx.db, e.slideId), `Delivering ${e.label}`);
   const byAccession = new Map<string, number>();
   const wos = new Set<string>();
+  const deliveredSlides: { slideId: string; label: string; from: string }[] = [];
   for (const e of scanned) {
     const s = getSlide(ctx.db, e.slideId)!;
     if (isCanceledSlide(s)) throw new DomainError("INVARIANT", `${slideText(s)} is not active ordered work and cannot be delivered`);
-    if (s.physical_state !== "delivered") updateVersioned(ctx.db, "slide", s.id, undefined, { physical_state: "delivered" });
+    if (s.physical_state !== "delivered") {
+      updateVersioned(ctx.db, "slide", s.id, undefined, { physical_state: "delivered" });
+      deliveredSlides.push({ slideId: s.id, label: slideText(s), from: s.physical_state });
+      // One row per slide marked delivered, on the slide itself (shows in the case history).
+      audit(ctx, {
+        action: "slide.delivered",
+        entityType: "slide",
+        entityId: s.id,
+        accessionId: s.accession_id,
+        summary: `${slideText(s)}: ${s.physical_state.replace(/_/g, " ")} → delivered on ${tray.display_id} (${ctx.actor.name})`,
+        before: { physical_state: s.physical_state },
+        after: { physical_state: "delivered", trayId: tray.id, trayDisplayId: tray.display_id, pathologistId: tray.pathologist_id },
+      });
+    }
     if (s.work_order_id) wos.add(s.work_order_id);
     byAccession.set(s.accession_id, (byAccession.get(s.accession_id) ?? 0) + 1);
   }
   for (const wo of wos) refreshWorkOrderProgress(ctx, wo);
-  updateVersioned(ctx.db, "tray", tray.id, undefined, { status: "delivered" });
+  const deliveredTray = updateVersioned(ctx.db, "tray", tray.id, undefined, { status: "delivered" });
   const outstanding = view.expected.filter((e) => e.state === "missing" || e.state === "follows_separately").map((e) => e.label);
   for (const [accessionId, n] of byAccession) {
     const acc = ctx.db.prepare("SELECT accession_number FROM accession WHERE id = ?").get(accessionId) as { accession_number: string };
@@ -753,6 +810,15 @@ export function deliverTray(ctx: Ctx, trayIdOrDisplay: string): { trayId: string
     entityType: "tray",
     entityId: tray.id,
     summary: `${tray.display_id} delivered to ${view.pathologistName}: ${scanned.length} slide(s)${outstanding.length ? `; still outstanding: ${outstanding.join(", ")}` : ""}`,
+    before: { status: tray.status, version: tray.version },
+    after: {
+      status: "delivered",
+      version: deliveredTray.version,
+      pathologistId: tray.pathologist_id,
+      deliveredSlideIds: scanned.map((e) => e.slideId),
+      newlyDelivered: deliveredSlides.map((d) => ({ slideId: d.slideId, from: d.from })),
+      outstandingSlideIds: view.expected.filter((e) => e.state === "missing" || e.state === "follows_separately").map((e) => e.slideId),
+    },
   });
   return {
     trayId: tray.id,

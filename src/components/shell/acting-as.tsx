@@ -7,11 +7,12 @@ import { hasUnsavedChanges, unsavedLabels } from "@/lib/client/unsaved";
 import { isReadOnlyRole } from "@/lib/client/shell-context";
 import type { ShellActor, ShellStaff } from "@/lib/client/types";
 import { ConfirmDialog } from "@/components/ui/dialog";
+import { Select } from "@/components/ui/field";
 import { useToast } from "@/components/ui/toast";
 import { ReadOnlyTag } from "@/components/domain/honesty";
 
 /** Short role names for the selector ("Maya Torres, Accessioner"); the option groups carry the full role name. */
-const ROLE_SHORT: Record<Role, string> = {
+export const ROLE_SHORT: Record<Role, string> = {
   ...ROLE_LABEL,
   histotech: "Histotech",
   supervisor: "Supervisor",
@@ -20,13 +21,13 @@ const ROLE_SHORT: Record<Role, string> = {
 };
 
 /** "Maya Torres, Accessioner"; demo-only people whose name already is the role ("Director of Operations (demo)") are not repeated. */
-function optionText(s: { name: string; role: Role }): string {
+export function optionText(s: { name: string; role: Role }): string {
   return /\(demo\)$/.test(s.name) ? s.name : `${s.name}, ${ROLE_SHORT[s.role]}`;
 }
 
 /**
- * "Acting as" role selector (spec §5.1): a native <select>. Demo role switch,
- * not a sign-in. The server checks permissions on every action whatever this
+ * "Acting as" role selector (spec §5.1), on the presenter console (Role and
+ * clock), never on a bench screen: a native <select>. Demo role switch, not a sign-in. The server checks permissions on every action whatever this
  * says. Switching with unsaved edits asks first.
  */
 export function ActingAs({ actor, staff }: { actor: ShellActor; staff: ShellStaff[] }) {
@@ -69,11 +70,11 @@ export function ActingAs({ actor, staff }: { actor: ShellActor; staff: ShellStaf
   const readOnly = isReadOnlyRole(actor.role);
 
   return (
-    <div className="flex shrink-0 items-center gap-2">
-      <div className="flex flex-col leading-tight">
-        <span className="flex items-center gap-1.5 text-xs text-ink-muted">
+    <div className="flex items-center gap-2">
+      <div className="flex w-full flex-col gap-1 leading-tight">
+        <span className="flex items-center gap-1.5 text-sm font-semibold text-ink">
           <label htmlFor="acting-as" title="Demo role switch. Not a sign-in.">
-            Acting as (demo role switch<span className="max-2xl:sr-only">, not a sign-in</span>)
+            Acting as<span className="sr-only"> (demo role switch, not a sign-in)</span>
           </label>
           {readOnly ? (
             <span id="acting-as-readonly">
@@ -81,7 +82,7 @@ export function ActingAs({ actor, staff }: { actor: ShellActor; staff: ShellStaf
             </span>
           ) : null}
         </span>
-        <select
+        <Select
           id="acting-as"
           value={actor.id}
           disabled={pending}
@@ -93,7 +94,7 @@ export function ActingAs({ actor, staff }: { actor: ShellActor; staff: ShellStaf
             if (hasUnsavedChanges()) setConfirmFor(id);
             else void switchTo(id);
           }}
-          className="h-7 w-auto min-w-[10rem] max-w-[17rem] rounded-sm border border-line-strong bg-surface pl-1.5 pr-6 text-sm font-medium text-ink [field-sizing:content] hover:border-ink-secondary disabled:text-ink-disabled"
+          className="font-medium"
         >
           {groups.map((g) => (
             <optgroup key={g.role} label={ROLE_LABEL[g.role]}>
@@ -104,7 +105,7 @@ export function ActingAs({ actor, staff }: { actor: ShellActor; staff: ShellStaf
               ))}
             </optgroup>
           ))}
-        </select>
+        </Select>
       </div>
       <ConfirmDialog
         open={confirmFor !== null}

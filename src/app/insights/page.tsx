@@ -1,17 +1,20 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { getDb } from "@/server/db/db";
-import { DEFINITIONS, P90_THRESHOLD_NOTE, fmtMinutes, getInsights, type InsightsData } from "@/server/queries/insights";
+import { requireView } from "@/server/auth/guard";
+import { DEFINITIONS, P90_THRESHOLD_NOTE, TODAY_PROVENANCE, fmtMinutes, getInsights, type DurationSummary, type InsightsData } from "@/server/queries/insights";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
-import { PageBody, PageHeader } from "@/components/ui/page-header";
+import { PageBody } from "@/components/ui/page-header";
 import { DoctorChip } from "@/components/domain/doctor-chip";
+import { IdText } from "@/components/domain/id-text";
+import { IllustrativeTag } from "@/components/domain/honesty";
 import { ChartCard } from "@/components/insights/chart-card";
 import { ArrivalsChart, ColumnChart, DoctorChart, WorkAgeChart } from "@/components/insights/charts";
 import { DefinitionDisclosure } from "@/components/insights/definition";
 import { InsightsFilters, fmtDay } from "@/components/insights/filters";
-import { TimingTiles } from "@/components/insights/timing-tiles";
+import { TimingTable, type TimingRow } from "@/components/insights/timing-table";
 import { ScenarioCalculator } from "@/components/insights/scenario-calculator";
 import { fmtTime } from "@/lib/time";
 import type { PathologistColor } from "@/lib/domain";
@@ -20,11 +23,26 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Insights" };
 
 const PRIOR_TAG = "Illustrative: synthetic prior-day data";
-const TODAY_TAG = "Today: synthetic demo data";
+// One provenance wording for every "today" figure (queries/insights.ts): seeded synthetic records plus this session.
+// "Seeded synthetic + this session" already says synthetic; the tag stays short enough not to push a narrow card sideways.
+const TODAY_TAG = `Today: ${TODAY_PROVENANCE.toLowerCase()}`;
+
+/** In-page index: the page is long, and a presenter jumps to one measure at a time. */
+const MEASURES = [
+  { id: "arrivals", label: "Arrivals by hour" },
+  { id: "clarifications", label: "Clarification times" },
+  { id: "gross-entry", label: "Approval to source entry" },
+  { id: "entry-hours", label: "Entry time of day" },
+  { id: "work-age", label: "Unresolved work age" },
+  { id: "by-doctor", label: "Cases by dermatopathologist" },
+  { id: "scenario-calculator", label: "Scenario calculator" },
+] as const;
 
 type SP = Promise<{ from?: string; to?: string; office?: string; doctor?: string }>;
 
 export default async function InsightsPage({ searchParams }: { searchParams: SP }) {
+  // The one guard: signed in (or the demo role), with this screen's view permission, before any data is read.
+  await requireView("view.insights");
   const sp = await searchParams;
   let data: InsightsData;
   try {
@@ -33,8 +51,8 @@ export default async function InsightsPage({ searchParams }: { searchParams: SP 
     console.error("[insights] failed", e);
     return (
       <PageBody>
-        <PageHeader title="Insights" description="How a pilot would be measured." />
-        <AlertBanner tone="danger" title="Could not compute the insight metrics" blocking>
+        <h1 className="text-xl font-bold tracking-[-0.015em] text-ink">Insights</h1>
+        <AlertBanner tone="warning" title="Could not compute the insight measures">
           The local demo database could not be read. Nothing was changed. Reload the page; if it keeps failing, reset the demo data in Settings.
         </AlertBanner>
       </PageBody>
@@ -44,18 +62,41 @@ export default async function InsightsPage({ searchParams }: { searchParams: SP 
   const asOfLabel = `${fmtTime(data.asOf)} ET`;
   const range = data.priorDays.length ? `${fmtDay(data.priorDays[0])} to ${fmtDay(data.priorDays[data.priorDays.length - 1])}` : "no days";
   const nDays = data.priorDays.length;
+  const todayArrivals = data.arrivals.bins.filter((b) => b.today > 0);
 
   return (
     <PageBody>
-      <PageHeader
-        title="Insights"
-        description="How a pilot would be measured, with every definition visible. Median and 90th percentile use the nearest-rank method; still-open items and missing event data are always shown separately."
-      />
-      <p className="-mt-2 text-xs text-ink-muted">{P90_THRESHOLD_NOTE}</p>
-      <AlertBanner tone="info" title="Synthetic data only. Nothing here is observed lab performance.">
-        Charts tagged “{PRIOR_TAG}” use generated events for {nDays} prior working days ({range}). Figures tagged “{TODAY_TAG}” come from this demo session’s
-        synthetic records at demo clock {asOfLabel}. The two are never mixed. No savings, scores or rankings are shown; the scenario calculator at the bottom starts blank.
-      </AlertBanner>
+      <header className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-xl font-bold tracking-[-0.015em] text-ink">Insights</h1>
+          <IllustrativeTag>Synthetic data only</IllustrativeTag>
+        </div>
+        {/* The page's one focal line (lg): the honesty statement, before any number. */}
+        <p className="max-w-[60ch] text-lg font-semibold tracking-[-0.01em] text-ink">Nothing on this page is observed lab performance.</p>
+        <p className="-mt-1 max-w-[95ch] text-md text-ink-secondary">How a pilot would measure the bench, with every definition visible.</p>
+        <div role="note" aria-label="How to read these numbers" className="flex max-w-[110ch] flex-col gap-1 text-sm text-ink-secondary">
+          <p>
+            Charts tagged “{PRIOR_TAG}” use generated events for {nDays} prior working days ({range}). Figures tagged “{TODAY_TAG}” come from the seeded synthetic demo day plus any records created in this session, at demo clock {asOfLabel}. The two are never mixed. No savings, scores or rankings are shown; the scenario calculator at the bottom starts blank.
+          </p>
+          <p>
+            Median and 90th percentile use the nearest-rank method; still-open items and missing event data are always shown separately. {P90_THRESHOLD_NOTE}
+          </p>
+        </div>
+        <nav aria-label="Measures on this page">
+          <ul className="flex flex-wrap gap-x-1 gap-y-0.5 text-sm">
+            {MEASURES.map((m) => (
+              <li key={m.id}>
+                <a
+                  href={`#${m.id}`}
+                  className="inline-flex min-h-[max(2rem,var(--hlo-target-min))] items-center rounded-sm px-2 text-brand underline-offset-2 hover:bg-brand-50 hover:underline"
+                >
+                  {m.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      </header>
 
       <InsightsFilters days={data.options.days} offices={data.options.offices} doctors={data.options.doctors} value={data.filters} />
 
@@ -65,8 +106,7 @@ export default async function InsightsPage({ searchParams }: { searchParams: SP 
         </EmptyState>
       ) : null}
 
-      <div className="grid gap-4">
-        {/* Arrivals by hour */}
+      <div className="grid grid-cols-1 gap-5">
         <ChartCard
           id="arrivals"
           title="Arrivals by hour"
@@ -91,66 +131,61 @@ export default async function InsightsPage({ searchParams }: { searchParams: SP 
             ],
           }}
           aside={
-            <div className="rounded-md border border-line p-3">
-              <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-ink">Today so far</p>
-              <p className="text-xs text-ink-muted">{TODAY_TAG}. Intake items received on the demo day.</p>
-              <ul className="mt-2 grid gap-1 text-sm">
-                {data.arrivals.bins.filter((b) => b.today > 0).length ? (
-                  data.arrivals.bins
-                    .filter((b) => b.today > 0)
-                    .map((b) => (
-                      <li key={b.hour} className="flex justify-between gap-2">
-                        <span className="text-ink-secondary">{b.label} hour</span>
-                        <span className="num-tabular font-medium text-ink">{b.today}</span>
-                      </li>
-                    ))
-                ) : (
-                  <li className="text-ink-muted">No arrivals recorded today yet.</li>
-                )}
-              </ul>
-              <p className="mt-2 text-xs text-ink-muted">
+            <TodayFigures note="Intake items received on the demo day.">
+              {todayArrivals.length ? (
+                <ul className="divide-y divide-line text-sm">
+                  {todayArrivals.map((b) => (
+                    <li key={b.hour} className="flex items-baseline justify-between gap-2 py-1.5">
+                      <span className="text-ink-secondary">{b.label} hour</span>
+                      <span className="num-tabular font-semibold text-ink">{b.today}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-ink-muted">No arrivals recorded today yet.</p>
+              )}
+              <p className="mt-2 text-sm text-ink-muted">
                 Total today: {data.arrivals.todayArrivals}
                 {data.arrivals.todayUnknownTime ? `; ${data.arrivals.todayUnknownTime} with unknown arrival time` : ""}. The 11:00 courier appears after it is received
                 (guided demo step 1).
               </p>
-            </div>
+            </TodayFigures>
           }
           definition={<DefinitionDisclosure def={DEFINITIONS.arrivals} />}
         />
 
-        {/* Clarification times */}
         <Card
           id="clarifications"
           title="Clarification acknowledgement and resolution time"
-          description="Median and 90th percentile with n. Still-open items and missing event data are counted beside the medians, never inside them."
+          description="Median and 90th percentile with n, the illustrative prior days set against today. Still-open items and missing event data are counted beside the medians, never inside them."
+          flush
+          footer={
+            <>
+              <DefinitionDisclosure def={DEFINITIONS.clarAck} />
+              <DefinitionDisclosure def={DEFINITIONS.clarResolve} />
+            </>
+          }
         >
-          <div className="grid gap-4">
-            <TimingBlock
-              heading="Acknowledgement: sent to first office acknowledgement or reply"
-              prior={<TimingTiles label="Acknowledgement" summary={data.clarAck.prior} illustrative={PRIOR_TAG} />}
-              today={<TimingTiles label="Acknowledgement" summary={data.clarAck.today} illustrative={TODAY_TAG} href="/clarifications" />}
-              todayNote={excludedNote([
-                [data.clarAck.todayNotSent, "drafted but not sent yet: not in the denominator"],
-                [data.clarAck.todayCanceledBeforeSend, "canceled before sending: excluded"],
-                [data.clarAck.todayCanceledUnacknowledged, "canceled after sending, never acknowledged: no end event, not timed"],
-              ])}
-            />
-            <TimingBlock
-              heading="Resolution: sent to reviewed resolution (an answer is not a resolution)"
-              prior={<TimingTiles label="Resolution" summary={data.clarResolve.prior} illustrative={PRIOR_TAG} />}
-              today={<TimingTiles label="Resolution" summary={data.clarResolve.today} illustrative={TODAY_TAG} href="/clarifications" />}
-              todayNote={excludedNote([[data.clarResolve.todayCanceledAfterSend, "canceled after sending: never resolved, excluded"]])}
-            />
-            <p className="text-xs text-ink-muted">
-              Office results are for collaboration, not blame. Faster responses need an agreement with the offices about ownership and escalation; more notifications alone
-              may only add noise.
-            </p>
-            <DefinitionDisclosure def={DEFINITIONS.clarAck} />
-            <DefinitionDisclosure def={DEFINITIONS.clarResolve} />
-          </div>
+          <TimingSection
+            heading="Acknowledgement: sent to first office acknowledgement or reply"
+            rows={timingRows(data.clarAck.prior, data.clarAck.today, { href: "/clarifications", label: "Open Clarifications" })}
+            note={excludedNote([
+              [data.clarAck.todayNotSent, "drafted but not sent yet: not in the denominator"],
+              [data.clarAck.todayCanceledBeforeSend, "canceled before sending: excluded"],
+              [data.clarAck.todayCanceledUnacknowledged, "canceled after sending, never acknowledged: no end event, not timed"],
+            ])}
+          />
+          <TimingSection
+            heading="Resolution: sent to reviewed resolution (an answer is not a resolution)"
+            rows={timingRows(data.clarResolve.prior, data.clarResolve.today, { href: "/clarifications", label: "Open Clarifications" })}
+            note={excludedNote([[data.clarResolve.todayCanceledAfterSend, "canceled after sending: never resolved, excluded"]])}
+          />
+          <p className="max-w-[100ch] px-4 py-3 text-sm text-ink-secondary">
+            Office results are for collaboration, not blame. Faster responses need an agreement with the offices about ownership and escalation; more notifications alone may
+            only add noise.
+          </p>
         </Card>
 
-        {/* Gross approval -> source entry */}
         <ChartCard
           id="gross-entry"
           title="Gross approval to source-system entry delay"
@@ -175,17 +210,22 @@ export default async function InsightsPage({ searchParams }: { searchParams: SP 
             ],
           }}
           below={
-            <TimingBlock
-              prior={<TimingTiles label="Delay" summary={data.grossEntry.prior} illustrative={PRIOR_TAG} />}
-              today={<TimingTiles label="Delay today" summary={data.grossEntry.today} illustrative={TODAY_TAG} href="/worklist" />}
-            />
+            <section aria-labelledby="gross-entry-compare">
+              <h3 id="gross-entry-compare" className="mb-2 text-sm font-semibold text-ink">
+                Delay, prior days against today
+              </h3>
+              <TimingTable
+                caption="Delay from gross approval to source entry: median and 90th percentile, prior days and today"
+                rows={timingRows(data.grossEntry.prior, data.grossEntry.today, { href: "/worklist", label: "Open the Worklist" })}
+              />
+            </section>
           }
           footnote={
             <>
               In the illustrative events, <strong>{data.grossEntry.eveningEntries}</strong> of <strong>{data.grossEntry.priorEntries}</strong> source entries were made at
-              or after 18:00 ET. The generator was written to show how this metric would expose the evening batch entry pattern described by the lab; it is not a measurement. Today,
-              “entered” means staff attested a manual entry; it is not a source acknowledgement. To find the real constraint, grossing work, transcription, verification,
-              batch waiting and integration lag must be measured separately.
+              or after 18:00 ET. The generator was written to show how this measure would expose the evening batch entry pattern described by the lab; it is not a measurement.
+              Today, “entered” means staff attested a manual entry; it is not a source acknowledgement. To find the real constraint, grossing work, transcription,
+              verification, batch waiting and integration lag must be measured separately.
             </>
           }
           definition={<DefinitionDisclosure def={DEFINITIONS.grossEntry} />}
@@ -207,7 +247,6 @@ export default async function InsightsPage({ searchParams }: { searchParams: SP 
           definition={<DefinitionDisclosure def={DEFINITIONS.grossEntry} />}
         />
 
-        {/* Unresolved work age (live snapshot) */}
         <ChartCard
           id="work-age"
           title="Unresolved work age"
@@ -254,26 +293,30 @@ export default async function InsightsPage({ searchParams }: { searchParams: SP 
                 unknown: r.ageUnknown,
                 median: r.count ? fmtMinutes(r.medianMin) : "None open",
                 p90: r.count ? (r.p90Min === null ? r.p90Note ?? "Unknown" : fmtMinutes(r.p90Min)) : "None open",
-                oldest: r.oldestRef ? `${r.oldestRef} (${fmtMinutes(r.oldestMin)})` : r.count ? "Unknown" : "None open",
+                oldest: r.oldestRef ? <IdText text={`${r.oldestRef} (${fmtMinutes(r.oldestMin)})`} /> : r.count ? "Unknown" : "None open",
               };
             }),
           }}
-          aside={
-            <ul className="grid gap-1.5 text-sm">
+          below={
+            <ul className="grid gap-x-6 sm:grid-cols-2 xl:grid-cols-3" aria-label="Open work by type, with the records behind each count">
               {data.workAge.rows.map((r) => (
-                <li key={r.type} className="rounded-sm border border-line px-2 py-1.5">
-                  <Link href={r.link} className="flex items-baseline justify-between gap-2 text-ink hover:text-brand">
+                <li key={r.type} className="border-t border-line py-2 text-sm">
+                  <Link href={r.link} className="flex min-h-[max(1.75rem,var(--hlo-target-min))] items-center justify-between gap-2 font-medium text-ink underline-offset-2 hover:text-brand hover:underline">
                     <span>{r.label}</span>
                     <span className="num-tabular font-semibold">{r.count === null ? "Unknown" : r.count}</span>
                   </Link>
-                  <span className="block text-xs text-ink-muted">
-                    {r.count === null
-                      ? `${r.readError ?? "Unknown"}. Not counted as zero.`
-                      : r.count === 0
-                        ? "None open"
-                        : `Median age ${fmtMinutes(r.medianMin)}; oldest ${r.oldestRef ?? "Unknown"}${r.oldestMin !== null ? ` (${fmtMinutes(r.oldestMin)})` : ""}${r.ageUnknown ? `; ${r.ageUnknown} with unknown age` : ""}`}
-                  </span>
-                  <span className="block text-xs text-ink-muted">Owner: {r.ownerRoles}</span>
+                  <p className="text-ink-muted">
+                    {r.count === null ? (
+                      `${r.readError ?? "Unknown"}. Not counted as zero.`
+                    ) : r.count === 0 ? (
+                      "None open."
+                    ) : (
+                      <IdText
+                        text={`Median age ${fmtMinutes(r.medianMin)}; oldest ${r.oldestRef ?? "Unknown"}${r.oldestMin !== null ? ` (${fmtMinutes(r.oldestMin)})` : ""}${r.ageUnknown ? `; ${r.ageUnknown} with unknown age` : ""}.`}
+                      />
+                    )}
+                  </p>
+                  <p className="text-ink-muted">Owner: {r.ownerRoles}</p>
                 </li>
               ))}
             </ul>
@@ -281,7 +324,6 @@ export default async function InsightsPage({ searchParams }: { searchParams: SP 
           definition={<DefinitionDisclosure def={DEFINITIONS.workAge} />}
         />
 
-        {/* Cases by assigned dermatopathologist */}
         <ChartCard
           id="by-doctor"
           title="Cases by assigned dermatopathologist"
@@ -297,30 +339,34 @@ export default async function InsightsPage({ searchParams }: { searchParams: SP 
             rows: data.byDoctor.rows.map((r) => ({ doctor: r.name, mean: r.priorMean, total: r.priorTotal })),
           }}
           aside={
-            <div className="rounded-md border border-line p-3">
-              <p className="text-sm font-semibold text-ink">Accessioned today</p>
-              <p className="text-xs text-ink-muted">{TODAY_TAG}. Every dermatopathologist, whatever the filter.</p>
-              <ul className="mt-2 grid gap-1.5 text-sm">
+            <TodayFigures title="Accessioned today" note="Every dermatopathologist, whatever the filter.">
+              <ul className="divide-y divide-line text-sm">
                 {data.byDoctor.todayRows.map((r) => (
-                  <li key={r.id ?? "none"} className="flex items-center justify-between gap-2">
+                  <li key={r.id ?? "none"} className="flex items-center justify-between gap-2 py-1.5">
                     <DoctorChip name={r.id ? r.name : null} color={(r.color as PathologistColor | null) ?? undefined} compact />
-                    <span className="num-tabular font-medium text-ink">{r.today}</span>
+                    <span className="num-tabular font-semibold text-ink">{r.today}</span>
                   </li>
                 ))}
               </ul>
-              <p className="mt-2 text-xs text-ink-muted">
-                Waiting for routing review (unknown office, not accessioned):{" "}
-                {data.byDoctor.todayRoutingExceptions}. These are never assigned by guess.
+              <p className="mt-2 text-sm text-ink-muted">
+                Waiting for routing review (unknown office, not accessioned): {data.byDoctor.todayRoutingExceptions}. These are never assigned by guess.
               </p>
-            </div>
+            </TodayFigures>
           }
           definition={<DefinitionDisclosure def={DEFINITIONS.byDoctor} />}
         />
-      </div>
 
-      <ScenarioCalculator />
+        <ScenarioCalculator />
+      </div>
     </PageBody>
   );
+}
+
+function timingRows(prior: DurationSummary, today: DurationSummary, records: { href: string; label: string }): TimingRow[] {
+  return [
+    { label: "Prior days", tag: PRIOR_TAG, summary: prior },
+    { label: "Today so far", tag: TODAY_TAG, summary: today, records },
+  ];
 }
 
 /** "2 drafted but not sent yet: …; 1 canceled …" — only the non-zero parts, or null. */
@@ -329,21 +375,25 @@ function excludedNote(parts: [number, string][]): string | null {
   return shown.length ? `Today: ${shown.join("; ")}.` : null;
 }
 
-function TimingBlock({ heading, prior, today, todayNote }: { heading?: string; prior: ReactNode; today: ReactNode; todayNote?: string | null }) {
+/** One timing comparison inside the clarification sheet: its question, the aligned table, and today's exclusions. */
+function TimingSection({ heading, rows, note }: { heading: string; rows: TimingRow[]; note?: string | null }) {
   return (
-    <section aria-label={heading ?? "Median and 90th percentile"}>
-      {heading ? <h3 className="mb-2 text-sm font-semibold text-ink">{heading}</h3> : null}
-      <div className="grid gap-3 lg:grid-cols-2">
-        <div>
-          <p className="mb-1 text-xs font-medium text-ink-muted">Prior days (illustrative)</p>
-          {prior}
-        </div>
-        <div>
-          <p className="mb-1 text-xs font-medium text-ink-muted">Today so far (demo data)</p>
-          {today}
-          {todayNote ? <p className="mt-1 text-xs text-ink-muted">{todayNote}</p> : null}
-        </div>
-      </div>
+    <section aria-label={heading} className="border-b border-line">
+      <h3 className="px-4 pt-3 pb-2 text-sm font-semibold text-ink">{heading}</h3>
+      <TimingTable caption={`${heading}: median and 90th percentile, prior days and today`} rows={rows} className="border-b-0" />
+      {note ? <p className="border-t border-line px-4 py-2 text-sm text-ink-muted">{note}</p> : null}
+    </section>
+  );
+}
+
+/** Today's demo-record figures beside a prior-day chart, behind the sheet's hairline (never a box). */
+function TodayFigures({ title = "Today so far", note, children }: { title?: string; note: string; children: ReactNode }) {
+  return (
+    <section aria-label={title}>
+      <h3 className="text-sm font-semibold text-ink">{title}</h3>
+      <IllustrativeTag className="mt-1">{TODAY_TAG}</IllustrativeTag>
+      <p className="mt-1 mb-2 text-sm text-ink-muted">{note}</p>
+      {children}
     </section>
   );
 }

@@ -89,7 +89,7 @@ export function DemoToolbar({ doneCount, total }: { doneCount: number; total: nu
         fail(body.error?.message ?? `Reset failed (HTTP ${res.status}). Reload the page to see the current state of the demo data.`);
         return;
       }
-      toast.show({ tone: "success", title: "Demo data reset", body: body.result?.message ?? "Back to the 10:52 ET starting state (synthetic)." });
+      toast.show({ tone: "info", title: "Demo data reset", body: body.result?.message ?? "Back to the 10:52 ET starting state (synthetic)." });
       setConfirming(false);
       // The guide remounts after the reseed (it is keyed on the seed time), so no old action log survives.
       router.push("/demo?tab=guide&step=1");
@@ -103,14 +103,16 @@ export function DemoToolbar({ doneCount, total }: { doneCount: number; total: nu
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-line bg-surface px-3 py-2 shadow-1">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-line bg-surface px-4 py-2">
         <p className="text-sm text-ink">
           <span className="font-semibold">
             {doneCount} of {total} steps done
           </span>{" "}
           <span className="text-ink-muted">(read from the records)</span>
         </p>
-        <p className="text-sm text-ink-secondary">Demo clock {fmtTime(now)} ET{running ? " · running" : " · paused"}</p>
+        <p className="text-sm text-ink-secondary">
+          Demo clock <span className="font-semibold text-ink">{fmtTime(now)} ET</span>, {running ? "running" : "paused"}
+        </p>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button variant="quiet" size="sm" icon={<Type />} aria-pressed={large} onClick={toggle}>
             {large ? "Presenter text size: large" : "Presenter text size: normal"}

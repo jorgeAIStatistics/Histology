@@ -1,6 +1,9 @@
 import fs from "node:fs";
+import path from "node:path";
+import { log } from "@/server/core/log";
 import { closeSharedDb, databasePath, getDb } from "@/server/db/db";
 import { readClock, setClockRunning } from "@/server/core/clock";
+import { isDemoMode } from "@/server/runtime-mode";
 import { rejectCrossOrigin } from "@/server/session";
 
 /**
@@ -19,6 +22,8 @@ export const runtime = "nodejs";
 export async function POST(req: Request) {
   const blocked = rejectCrossOrigin(req);
   if (blocked) return blocked;
+  // Presenter-only: does not exist outside synthetic demo mode.
+  if (!isDemoMode()) return Response.json({ ok: false, error: { code: "NOT_FOUND", message: "Not found." } }, { status: 404 });
 
   let body: { confirm?: unknown } = {};
   try {
@@ -42,7 +47,7 @@ export async function POST(req: Request) {
         try {
           fs.rmSync(f, { force: true });
         } catch (e) {
-          console.error("[demo/reset] could not remove", f, e);
+          log("error", "demo_reset.remove_failed", { file: path.basename(f), error: e });
         }
       }
     }
@@ -55,10 +60,11 @@ export async function POST(req: Request) {
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (e) {
-    console.error("[demo/reset] failed", e);
+    // The error goes to the server log (name, code, scrubbed message); the response never echoes it.
+    log("error", "demo_reset.failed", { error: e });
     return Response.json(
-      { ok: false, error: { code: "VALIDATION", message: `Reset failed: ${e instanceof Error ? e.message : String(e)}. Restart the demo server if the problem continues.` } },
-      { status: 500 },
+      { ok: false, error: { code: "VALIDATION", message: "Reset failed on the server. Restart the demo server if the problem continues." } },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

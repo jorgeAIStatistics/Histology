@@ -11,7 +11,6 @@ export * from "./kbd";
 export * from "./page-header";
 export * from "./side-panel";
 export * from "./skeleton";
-export * from "./stat-tile";
 export * from "./status-pill";
 export * from "./table";
 export * from "./tabs";

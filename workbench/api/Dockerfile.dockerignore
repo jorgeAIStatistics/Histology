@@ -1,0 +1,7 @@
+# BuildKit per-Dockerfile ignore file (context = workbench/). UNVERIFIED.
+**
+!api/requirements.txt
+!api/dermpath/**
+!fixtures/CMU-1-Small-Region.svs
+!fixtures/README.md
+**/__pycache__

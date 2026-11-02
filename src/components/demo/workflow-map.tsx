@@ -150,14 +150,15 @@ function refText(text: string): string {
 const KIND_STYLE: Record<BoxKind, { cls: string; tag: string | null }> = {
   step: { cls: "border-line bg-surface", tag: null },
   ema: { cls: "border-brand bg-brand-50", tag: "Stays in EMA" },
-  review: { cls: "border-dashed border-line-strong bg-surface-subtle", tag: "Human review" },
+  // A person decides here: a stronger hairline on the quiet ground, and the words "Human review" (dashed is kept for "not yet real").
+  review: { cls: "border-line-strong bg-surface-subtle", tag: "Human review" },
   paper: { cls: "border-line bg-surface", tag: "Paper" },
   wait: { cls: "border-line bg-surface", tag: "Waiting" },
 };
 
 function Swimlanes({ lanes, label }: { lanes: Lane[]; label: string }) {
   return (
-    <div role="group" aria-label={label} className="overflow-x-auto rounded-md border border-line">
+    <div role="group" aria-label={label} className="overflow-x-auto rounded-lg border border-line bg-surface">
       {lanes.map((lane, li) => (
         <section key={lane.name} aria-label={`Lane: ${lane.name}`} className={cn("grid grid-cols-[9.5rem_minmax(0,1fr)]", li > 0 && "border-t border-line")}>
           <h3 className="border-r border-line bg-surface-subtle px-3 py-2 text-sm font-semibold text-ink">{lane.name}</h3>
@@ -169,7 +170,7 @@ function Swimlanes({ lanes, label }: { lanes: Lane[]; label: string }) {
                   <div className={cn("flex w-52 flex-col justify-between rounded-sm border px-2 py-1.5 text-sm text-ink", k.cls)}>
                     <span>{b.text}</span>
                     {k.tag || b.ref ? (
-                      <span className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-ink-muted">
+                      <span className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-ink-muted">
                         {k.tag ? <span className="font-medium text-ink-secondary">{k.tag}</span> : null}
                         {b.ref ? <span className="whitespace-nowrap">{refText(b.ref)}</span> : null}
                       </span>
@@ -186,19 +187,27 @@ function Swimlanes({ lanes, label }: { lanes: Lane[]; label: string }) {
   );
 }
 
+/** An honesty caveat in the same solid-hairline chip as "Illustrative", "Simulated" and "Synthetic" (dashed means "not yet real" only): a caveat, not a warning. */
+function HonestyChip({ children }: { children: string }) {
+  return (
+    <span className="hlo-chip inline-flex items-center rounded-sm border border-sim-border bg-sim-bg px-1.5 py-0.5 text-xs font-medium text-sim-fg">{children}</span>
+  );
+}
+
 function Legend() {
   return (
-    <ul className="flex flex-wrap gap-3 text-xs text-ink-secondary" aria-label="Map legend">
+    <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-secondary" aria-label="Map legend">
       <li className="inline-flex items-center gap-1.5">
         <span className="inline-block h-3 w-5 rounded-sm border border-brand bg-brand-50" aria-hidden /> Stays in EMA (authoritative)
       </li>
       <li className="inline-flex items-center gap-1.5">
-        <span className="inline-block h-3 w-5 rounded-sm border border-dashed border-line-strong bg-surface-subtle" aria-hidden /> Human review or decision
+        <span className="inline-block h-3 w-5 rounded-sm border border-line-strong bg-surface-subtle" aria-hidden /> Human review or decision (labeled in words)
       </li>
       <li className="inline-flex items-center gap-1.5">
         <span className="inline-block h-3 w-5 rounded-sm border border-line bg-surface" aria-hidden /> Step (paper and waiting steps are labeled in words)
       </li>
-      <li>Obs. = staff observation (not a measured rate) · Hyp. = hypothesis to measure</li>
+      <li>Obs.: staff observation (not a measured rate)</li>
+      <li>Hyp.: hypothesis to measure</li>
     </ul>
   );
 }
@@ -208,10 +217,10 @@ export function WorkflowMap() {
     <div className="grid gap-6">
       <section aria-labelledby="map-before" className="grid gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 id="map-before" className="text-md font-semibold text-ink">
+          <h2 id="map-before" className="text-lg font-bold tracking-[-0.01em] text-ink">
             Before: the current workflow, as observed
           </h2>
-          <span className="rounded-sm border border-line-strong bg-surface-subtle px-1.5 py-0.5 text-xs font-medium text-ink-secondary">Employee observations, not audited or measured</span>
+          <HonestyChip>Employee observations, not audited or measured</HonestyChip>
         </div>
         <p className="max-w-[90ch] text-sm text-ink-secondary">
           Steps whose exact object, order or owner has not been confirmed are marked “confirm locally”. Physical work and documentation run on separate tracks; what
@@ -231,12 +240,10 @@ export function WorkflowMap() {
 
       <section aria-labelledby="map-after" className="grid gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 id="map-after" className="text-md font-semibold text-ink">
+          <h2 id="map-after" className="text-lg font-bold tracking-[-0.01em] text-ink">
             Proposed after: with Histology Lab OS as a companion to EMA
           </h2>
-          <span className="rounded-sm border border-warning-border bg-warning-bg px-1.5 py-0.5 text-xs font-semibold text-warning-fg">
-            Proposed. Not yet validated with lab staff.
-          </span>
+          <HonestyChip>Proposed. Not yet validated with lab staff.</HonestyChip>
         </div>
         <p className="max-w-[90ch] text-sm text-ink-secondary">
           Every benefit shown here is a hypothesis to measure, not a demonstrated result. EMA stays the system of record; physical work stays physical; clinical decisions

@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FileAudio, Mic } from "lucide-react";
+import { Info, Mic } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { GrossFields } from "@/lib/gross";
 import { Button, DisabledReason } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { CommandError } from "@/components/ui/command-button";
 import { Field, Select } from "@/components/ui/field";
@@ -31,10 +30,19 @@ interface SpanInfo {
   status: string;
 }
 
+/** Highlight treatments on the severity ladder: waiting on the grosser (neutral), data may be wrong (amber), done (quiet). */
+const MARK = {
+  waiting: "bg-surface-sunken underline decoration-ink-muted decoration-dashed decoration-1 underline-offset-[5px]",
+  amber: "bg-warning-bg underline decoration-warning-solid decoration-2 underline-offset-[5px]",
+  quiet: "bg-transparent underline decoration-ink-muted decoration-1 underline-offset-[5px]",
+  ignored: "border border-dashed border-sim-border bg-sim-bg line-through decoration-ink-muted",
+} as const;
+
 /**
- * Left pane: the synthetic dictation with evidence highlights. Each highlight
+ * Evidence sheet: the synthetic dictation, set as text to read. Each highlight
  * is the exact text a proposed value came from; selecting it moves to the
- * field. Original text and structured values stay distinguishable.
+ * field. Original text and structured values stay distinguishable, and
+ * instruction-like sentences are shown only as quoted data.
  */
 export function TranscriptPane({
   transcript,
@@ -51,6 +59,7 @@ export function TranscriptPane({
   attachError,
   now,
   extractedWithoutText = false,
+  className,
 }: {
   transcript: TranscriptView | null;
   fields: GrossFields | null;
@@ -68,8 +77,11 @@ export function TranscriptPane({
   now: string;
   /** The record has extracted proposals but no stored transcript (seeded drafts). */
   extractedWithoutText?: boolean;
+  className?: string;
 }) {
-  const [choice, setChoice] = useState<string>(() => (transcript?.fixtureKey && options.some((o) => o.key === transcript.fixtureKey) ? transcript.fixtureKey : options[0]?.key ?? ""));
+  const [choice, setChoice] = useState<string>(() =>
+    transcript?.fixtureKey && options.some((o) => o.key === transcript.fixtureKey) ? transcript.fixtureKey : (options[0]?.key ?? ""),
+  );
   const chosen = options.find((o) => o.key === choice) ?? null;
 
   const segments = useMemo(() => {
@@ -104,7 +116,7 @@ export function TranscriptPane({
   }, [reveal]);
 
   const reasonId = "transcript-attach-reason";
-  const micReasonIdEarly = "transcript-mic-reason";
+  const micReasonId = "transcript-mic-reason";
 
   const unavailable = assistantMode === "unavailable";
   /** Values were already confirmed without a stored dictation: attaching one is an exception, so it stays collapsed. */
@@ -133,126 +145,138 @@ export function TranscriptPane({
         >
           {transcript ? "Replace transcript and re-extract" : "Attach transcript and extract"}
         </Button>
-        <Button variant="quiet" size="sm" icon={<Mic />} disabled reasonId={micReasonIdEarly}>
+        <Button variant="quiet" size="sm" icon={<Mic />} disabled reasonId={micReasonId}>
           Dictate
         </Button>
       </div>
       {unavailable || attachDisabledReason ? (
         <DisabledReason id={reasonId}>{unavailable ? "Extraction not available. Enter values manually." : attachDisabledReason}</DisabledReason>
       ) : null}
-      <DisabledReason id={micReasonIdEarly}>Microphone input: not configured in this demo.</DisabledReason>
-      {transcript ? <p className="text-xs text-ink-muted">Replacing proposes new values for unconfirmed fields only. Confirmed values are kept.</p> : null}
+      <DisabledReason id={micReasonId}>Microphone input: not configured in this demo.</DisabledReason>
+      {transcript ? <p className="text-sm text-ink-muted">Replacing proposes new values for unconfirmed fields only. Confirmed values are kept.</p> : null}
     </div>
   );
 
   return (
-    <Card
-      title="Dictation transcript"
-      description="Synthetic transcript. Extraction is a deterministic demo."
-      actions={<SimulatedLabel connector="dictation fixture" />}
-      className="flex min-w-0 flex-col"
-      bodyClassName="flex flex-col gap-3"
-    >
-      {unavailable ? (
-        <AlertBanner tone="info" title="Extraction not available. Enter values manually.">
-          The extraction assistant is set to Unavailable (Settings). Every field stays editable and approval works the same way.
-        </AlertBanner>
-      ) : null}
-
-      {transcript ? (
-        <div>
-          <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-muted">
-            <FileAudio className="size-3.5" aria-hidden />
-            <span>{transcript.title ?? "Synthetic dictation"}</span>
-            <span aria-hidden>·</span>
-            <span>
-              Attached by {transcript.capturedBy ?? "Unknown"} at <Timestamp iso={transcript.capturedAt} now={now} />
-            </span>
-            <span aria-hidden>·</span>
-            <span>No audio in this demo</span>
-          </div>
-          <blockquote
-            ref={quoteRef}
-            className="rounded-md border border-line bg-surface-subtle px-3 py-2.5 text-base leading-7 text-ink"
-            aria-label="Transcript text with evidence highlights"
-          >
-            {segments.map((seg) => {
-              const text = transcript.text.slice(seg.from, seg.to);
-              if (!seg.covering.length) return <span key={seg.from}>{text}</span>;
-              const ignored = seg.covering.some((c) => c.key === "ignored");
-              const fieldSpans = seg.covering.filter((c) => c.key !== "ignored");
-              const target = fieldSpans[0]?.key as FieldKey | undefined;
-              const active = activeField !== null && fieldSpans.some((c) => c.key === activeField);
-              const worst = fieldSpans.some((c) => c.status === "needs_review" || c.status === "missing")
-                ? "warn"
-                : fieldSpans.every((c) => c.status === "confirmed")
-                  ? "ok"
-                  : "proposed";
-              const labels = fieldSpans.map((c) => FIELD_LABEL[c.key as FieldKey]).join(", ");
-              return (
-                <mark
-                  key={seg.from}
-                  data-fields={fieldSpans.map((c) => c.key).join(" ")}
-                  title={ignored ? "Instruction-like text: treated as dictation data and ignored" : `Evidence for: ${labels}`}
-                  onClick={target ? () => onSelectField(target) : undefined}
-                  className={cn(
-                    "rounded-sm px-px text-ink",
-                    ignored
-                      ? "border border-dashed border-sim-border bg-sim-bg line-through decoration-ink-muted"
-                      : worst === "warn"
-                        ? "border-b-2 border-warning-solid bg-warning-bg"
-                        : worst === "ok"
-                          ? "border-b-2 border-success-solid bg-success-bg"
-                          : "border-b-2 border-dashed border-info-solid bg-info-bg",
-                    target && "cursor-pointer",
-                    active && "outline outline-2 outline-offset-1 outline-focus",
-                  )}
-                >
-                  {text}
-                </mark>
-              );
-            })}
-          </blockquote>
-          <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-muted" aria-label="Highlight legend">
-            <li className="flex items-center gap-1"><span aria-hidden className="inline-block h-3 w-4 border-b-2 border-dashed border-info-solid bg-info-bg" /> Proposed, not confirmed</li>
-            <li className="flex items-center gap-1"><span aria-hidden className="inline-block h-3 w-4 border-b-2 border-warning-solid bg-warning-bg" /> Needs review or missing</li>
-            <li className="flex items-center gap-1"><span aria-hidden className="inline-block h-3 w-4 border-b-2 border-success-solid bg-success-bg" /> Confirmed by operator</li>
-            {transcript.ignored.length ? (
-              <li className="flex items-center gap-1"><span aria-hidden className="inline-block h-3 w-4 border border-dashed border-sim-border bg-sim-bg" /> Instruction-like text, ignored</li>
-            ) : null}
-          </ul>
-          {transcript.ignored.length ? (
-            <AlertBanner tone="warning" title="Instruction-like text was treated as dictation data" className="mt-2">
-              {transcript.ignored.map((i) => `"${i.text}"`).join(" ")} changed nothing: no value was confirmed, no role or approval changed. Only an operator can confirm and approve.
-            </AlertBanner>
-          ) : null}
+    <section aria-labelledby="gross-dictation-title" className={cn("flex min-w-0 flex-col rounded-lg border border-line bg-surface", className)}>
+      <header className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 border-b border-line px-4 py-3 max-xl:px-3">
+        <div className="min-w-0">
+          <h2 id="gross-dictation-title" className="text-md font-semibold tracking-[-0.01em] text-ink">
+            Dictation
+          </h2>
+          <p className="text-sm text-ink-muted">Synthetic transcript. Extraction is a deterministic demo.</p>
         </div>
-      ) : (
-        <p className="text-sm text-ink-secondary">
-          {extractedWithoutText
-            ? "The dictation text for this seeded draft is not stored in this demo. The values proposed from it, and their review notes, are shown in the fields."
-            : <>No transcript attached. {unavailable ? "Type the values in the fields." : "Attach a synthetic dictation to get proposed values, or type the values in the fields."}</>}
-        </p>
-      )}
+        <SimulatedLabel connector="dictation fixture" />
+      </header>
 
-      {!frozen ? (
-        transcript || anyConfirmed ? (
-          <div className="flex flex-col gap-2 border-t border-line pt-3">
-            <details>
-              <summary className="cursor-pointer text-sm font-medium text-brand">{transcript ? "Replace the dictation…" : "Attach a synthetic dictation…"}</summary>
-              <div className="mt-2">{controls}</div>
-            </details>
-            <CommandError error={attachError} />
+      <div className="flex min-h-0 flex-col gap-3 px-4 py-3 max-xl:px-3">
+        {unavailable ? (
+          <AlertBanner tone="info" title="Extraction not available. Enter values manually.">
+            The extraction assistant is set to Unavailable (Settings). Every field stays editable and approval works the same way.
+          </AlertBanner>
+        ) : null}
+
+        {transcript ? (
+          <div className="flex flex-col gap-2">
+            <p className="text-sm text-ink-secondary">
+              <span className="font-medium text-ink">{transcript.title ?? "Synthetic dictation"}</span>. Attached by {transcript.capturedBy ?? "Unknown"} at{" "}
+              <Timestamp iso={transcript.capturedAt} now={now} />. No audio in this demo.
+            </p>
+            {transcript.ignored.length ? (
+              <AlertBanner tone="warning" title="Instruction-like text was treated as dictation data">
+                {transcript.ignored.map((i) => `"${i.text}"`).join(" ")} changed nothing: no value was confirmed, no role or approval changed. Only an operator can confirm
+                and approve.
+              </AlertBanner>
+            ) : null}
+            <blockquote ref={quoteRef} className="text-md leading-8 text-ink" aria-label="Transcript text with evidence highlights">
+              {segments.map((seg) => {
+                const text = transcript.text.slice(seg.from, seg.to);
+                if (!seg.covering.length) return <span key={seg.from}>{text}</span>;
+                const ignored = seg.covering.some((c) => c.key === "ignored");
+                const fieldSpans = seg.covering.filter((c) => c.key !== "ignored");
+                const target = fieldSpans[0]?.key as FieldKey | undefined;
+                const active = activeField !== null && fieldSpans.some((c) => c.key === activeField);
+                const tone = fieldSpans.some((c) => c.status === "needs_review" || c.status === "missing")
+                  ? "amber"
+                  : fieldSpans.every((c) => c.status === "confirmed")
+                    ? "quiet"
+                    : "waiting";
+                const labels = fieldSpans.map((c) => FIELD_LABEL[c.key as FieldKey]).join(", ");
+                return (
+                  <mark
+                    key={seg.from}
+                    data-fields={fieldSpans.map((c) => c.key).join(" ")}
+                    title={ignored ? "Instruction-like text: treated as dictation data and ignored" : `Evidence for: ${labels}`}
+                    onClick={target ? () => onSelectField(target) : undefined}
+                    className={cn(
+                      "rounded-sm px-px text-ink [box-decoration-break:clone]",
+                      ignored ? MARK.ignored : MARK[tone],
+                      target && "cursor-pointer",
+                      active && "outline outline-2 outline-offset-1 outline-focus",
+                    )}
+                  >
+                    {text}
+                  </mark>
+                );
+              })}
+            </blockquote>
+            <ul className="flex flex-wrap gap-x-4 gap-y-1.5 border-t border-line pt-2 text-sm text-ink-secondary" aria-label="Highlight legend">
+              <LegendItem mark={MARK.waiting}>Proposed, waiting for you</LegendItem>
+              <LegendItem mark={MARK.amber}>Needs review or missing</LegendItem>
+              <LegendItem mark={MARK.quiet}>Confirmed</LegendItem>
+              {transcript.ignored.length ? <LegendItem mark={MARK.ignored}>Instruction-like text, ignored</LegendItem> : null}
+            </ul>
           </div>
         ) : (
-          <div className="flex flex-col gap-2 border-t border-line pt-3">
-            {controls}
-            <CommandError error={attachError} />
-          </div>
-        )
-      ) : (
-        <p className="border-t border-line pt-3 text-xs text-ink-muted">This version is frozen. Amend to attach a different dictation.</p>
-      )}
-    </Card>
+          <p className="text-base text-ink-secondary">
+            {extractedWithoutText ? (
+              "The dictation text for this seeded draft is not stored in this demo. The values proposed from it, and their review notes, are shown in the fields."
+            ) : frozen ? (
+              "No dictation is stored with this version. Its values were entered and confirmed in the fields."
+            ) : (
+              <>No transcript attached. {unavailable ? "Type the values in the fields." : "Attach a synthetic dictation to get proposed values, or type the values in the fields."}</>
+            )}
+          </p>
+        )}
+
+        {!frozen && attachDisabledReason && !unavailable ? (
+          <p className="flex items-start gap-1.5 border-t border-line pt-3 text-sm text-ink-secondary">
+            <Info className="mt-0.5 size-4 shrink-0 text-ink-muted" aria-hidden />
+            <span>{attachDisabledReason}</span>
+          </p>
+        ) : !frozen ? (
+          transcript || anyConfirmed ? (
+            <div className="flex flex-col gap-2 border-t border-line pt-3">
+              <details>
+                <summary className="flex min-h-[var(--hlo-target-min)] cursor-pointer items-center text-sm font-semibold text-brand">
+                  {transcript ? "Replace the dictation…" : "Attach a synthetic dictation…"}
+                </summary>
+                <div className="mt-2">{controls}</div>
+              </details>
+              <CommandError error={attachError} />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2 border-t border-line pt-3">
+              {controls}
+              <CommandError error={attachError} />
+            </div>
+          )
+        ) : (
+          <p className="border-t border-line pt-3 text-sm text-ink-muted">This version is frozen. Amend to attach a different dictation.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** A legend entry drawn with the same mark as the transcript, on a short sample. */
+function LegendItem({ mark, children }: { mark: string; children: string }) {
+  return (
+    <li className="flex items-center gap-1.5">
+      <span aria-hidden className={cn("rounded-sm px-1 leading-5 text-ink", mark)}>
+        Aa
+      </span>
+      {children}
+    </li>
   );
 }

@@ -10,7 +10,7 @@ export default function IntakeError({ error, reset }: { error: Error & { digest?
     <PageBody>
       <PageHeader title="Intake" />
       <AlertBanner
-        tone="danger"
+        tone="warning"
         blocking
         title="Could not load the intake bench"
         action={

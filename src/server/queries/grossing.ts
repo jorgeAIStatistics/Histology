@@ -16,7 +16,8 @@ import { TRANSCRIPTS, transcriptOptionsFor } from "@/server/seed/fixtures/transc
 import { decodeLabel, namespaceCode } from "@/lib/identifiers";
 import { labDay } from "@/lib/time";
 import type { FinalizeBlocker, GrossFields } from "@/lib/gross";
-import type { GrossState, SourceUpdateState } from "@/lib/domain";
+import { AWAITING_SOURCE_ACK, AWAITING_SOURCE_ENTRY, type GrossState, type SourceUpdateState } from "@/lib/domain";
+import { holdNextSteps } from "./hold-next";
 
 // ------------------------------------------------------------------ shared shapes
 
@@ -37,8 +38,13 @@ export interface HoldSummary {
   clarificationId: string | null;
   clarificationDisplayId: string | null;
   clarificationState: string | null;
-  /** Lab owner of the linked clarification (who owns the next step), if any. */
+  /**
+   * Who holds the hold's next step (shared helper, the same answer Operations and the case page give): an open task on the
+   * hold, then the clarification's task, its escalation owner, then its lab owner.
+   */
   owner: string | null;
+  /** The hold's next step in words (shared helper). */
+  nextStep: string | null;
   nextFollowUpAt: string | null;
   placedAt: string;
   placedBy: string | null;
@@ -69,19 +75,20 @@ export const PART_STATE_LABEL: Record<PartStateKey, string> = {
 };
 
 function holdSummaries(db: DB, holds: HoldRow[]): HoldSummary[] {
+  const next = holdNextSteps(db, holds.map((h) => h.id));
   return holds.map((h) => {
     const blocks = blockedTransitions(h);
     const clr = h.clarification_id
-      ? (db
-          .prepare("SELECT c.display_id, c.state, c.next_follow_up_at, s.display_name AS owner FROM clarification c LEFT JOIN staff s ON s.id = c.lab_owner_id WHERE c.id = ?")
-          .get(h.clarification_id) as { display_id: string; state: string; next_follow_up_at: string | null; owner: string | null } | undefined)
+      ? (db.prepare("SELECT c.display_id, c.state, c.next_follow_up_at FROM clarification c WHERE c.id = ?").get(h.clarification_id) as
+          | { display_id: string; state: string; next_follow_up_at: string | null }
+          | undefined)
       : undefined;
     const placedBy = db.prepare("SELECT display_name FROM staff WHERE id = ?").get(h.placed_by) as { display_name: string } | undefined;
     return {
       id: h.id, displayId: h.display_id, scopeType: h.scope_type, scopeLabel: h.scope_label, reasonText: h.reason_text, blocks,
       blocksApproval: blocks.includes("all") || blocks.includes("gross_approval"),
       clarificationId: h.clarification_id, clarificationDisplayId: clr?.display_id ?? null, clarificationState: clr?.state ?? null,
-      owner: clr?.owner ?? null, nextFollowUpAt: clr?.next_follow_up_at ?? null,
+      owner: next.get(h.id)?.owner ?? null, nextStep: next.get(h.id)?.nextStep ?? null, nextFollowUpAt: clr?.next_follow_up_at ?? null,
       placedAt: h.placed_at, placedBy: placedBy?.display_name ?? h.placed_by, version: h.version,
     };
   });
@@ -119,9 +126,15 @@ export interface QueueRow {
   pathologist: PathologistRef | null;
   officeName: string | null;
   state: PartStateKey;
-  record: { id: string; recordVersion: number; state: GrossState; sourceUpdateState: SourceUpdateState; updatedAt: string; approvedAt: string | null; blockerCount: number } | null;
+  record: {
+    id: string; recordVersion: number; state: GrossState; sourceUpdateState: SourceUpdateState; updatedAt: string; approvedAt: string | null; blockerCount: number;
+    /** Derived, read-only: who started the record (display name). */
+    grosser: string | null;
+  } | null;
   holds: HoldSummary[];
   otherParts: { designation: string; state: PartStateKey }[];
+  /** Derived, read-only: owner of the open source-entry task for this part, if any. */
+  sourceEntryOwner: string | null;
 }
 
 const QUEUE_ORDER: PartStateKey[] = [
@@ -160,9 +173,13 @@ export function grossingQueue(db: DB): QueueRow[] {
       pathologist: p.assigned_pathologist_id ? { id: p.assigned_pathologist_id, name: p.path_name ?? p.assigned_pathologist_id, color: p.color_token } : null,
       officeName: p.office_name, state: partState(rec, holds, p.status),
       record: rec
-        ? { id: rec.id, recordVersion: rec.record_version, state: rec.state, sourceUpdateState: rec.source_update_state, updatedAt: rec.updated_at, approvedAt: rec.approved_at, blockerCount }
+        ? {
+            id: rec.id, recordVersion: rec.record_version, state: rec.state, sourceUpdateState: rec.source_update_state, updatedAt: rec.updated_at, approvedAt: rec.approved_at, blockerCount,
+            grosser: name(db, rec.grosser_id),
+          }
         : null,
       holds, otherParts: [],
+      sourceEntryOwner: rec?.state === "approved_for_downstream" ? sourceEntryOwnerOf(db, p.id) : null,
     };
   });
   const byAcc = new Map<string, QueueRow[]>();
@@ -174,6 +191,17 @@ export function grossingQueue(db: DB): QueueRow[] {
     .filter((r) => r.state !== "canceled")
     .filter((r) => !r.state.startsWith("approved") || r.state === "approved_pending_entry" || (r.record?.approvedAt ? labDay(r.record.approvedAt) === today : false))
     .sort((a, b) => QUEUE_ORDER.indexOf(a.state) - QUEUE_ORDER.indexOf(b.state) || (a.priority === "rush" ? -1 : 0) - (b.priority === "rush" ? -1 : 0) || a.ref.localeCompare(b.ref));
+}
+
+/** Display name of the owner of the open source-entry task for a part (read-only). */
+function sourceEntryOwnerOf(db: DB, partId: string): string | null {
+  const r = db
+    .prepare(
+      `SELECT s.display_name AS owner FROM task tk LEFT JOIN staff s ON s.id = tk.owner_id
+        WHERE tk.kind = 'source_entry' AND tk.entity_id = ? AND tk.status IN ('open','in_progress') LIMIT 1`,
+    )
+    .get(partId) as { owner: string | null } | undefined;
+  return r?.owner ?? null;
 }
 
 // ------------------------------------------------------------------ source entry queue (Sam)
@@ -202,7 +230,10 @@ export interface SourceEntryRow {
   pathologist: PathologistRef | null;
 }
 
-/** Approved gross records whose source-system entry is pending or attested but not acknowledged (oldest first). */
+/**
+ * Sam's entry queue (oldest first): the shared source-entry backlog (lib/domain AWAITING_SOURCE_ENTRY: not started,
+ * pending or failed, on an active part) plus entries attested by staff that the source has not acknowledged yet.
+ */
 export function sourceEntryQueue(db: DB): SourceEntryRow[] {
   const rows = db
     .prepare(
@@ -223,8 +254,9 @@ export function sourceEntryQueue(db: DB): SourceEntryRow[] {
          LEFT JOIN staff ap ON ap.id = gr.approved_by
          LEFT JOIN staff en ON en.id = gr.source_entry_by
          LEFT JOIN staff p ON p.id = a.assigned_pathologist_id
-        WHERE gr.state = 'approved_for_downstream' AND gr.source_update_state IN ('pending_entry', 'failed', 'entered_attested')
-        ORDER BY CASE gr.source_update_state WHEN 'failed' THEN 0 WHEN 'pending_entry' THEN 1 ELSE 2 END, gr.approved_at`,
+        WHERE gr.state = 'approved_for_downstream' AND sp.status <> 'canceled'
+          AND gr.source_update_state IN (${[...AWAITING_SOURCE_ENTRY, ...AWAITING_SOURCE_ACK].map((st) => `'${st}'`).join(", ")})
+        ORDER BY CASE gr.source_update_state WHEN 'failed' THEN 0 WHEN 'pending_entry' THEN 1 WHEN 'not_started' THEN 1 ELSE 2 END, gr.approved_at`,
     )
     .all() as {
     id: string; version: number; record_version: number; specimen_part_id: string; source_update_state: SourceUpdateState; approved_at: string | null;
@@ -513,8 +545,7 @@ export function partWorkspace(db: DB, partId: string): PartWorkspace | null {
   const r = computeReadiness(db, [p.accession_id]).get(p.accession_id);
   if (r) {
     const pr = r.parts.find((x) => x.partId === partId);
-    // Worded locally: the shared stage "Processing" is also used for a loaded cassette that is only eligible for the
-    // next processing run, which would overstate physical progress right after approval.
+    // The shared stage words (a loaded cassette with an approved record is "ready for processing", never "processing").
     const caseSummary = r.parts
       .map((x) => {
         const what =
@@ -522,9 +553,7 @@ export function partWorkspace(db: DB, partId: string): PartWorkspace | null {
             ? "canceled"
             : x.holds.length
               ? `on hold (${[...new Set(x.holds.map((h) => h.displayId))].join(", ")})`
-              : x.stage === "processing" && x.blocks.length > 0 && x.blocks.every((b) => b.state === "cassette_loaded")
-                ? "approved, ready for processing"
-                : x.stage === "gross_in_progress"
+              : x.stage === "gross_in_progress"
                   ? x.grossState === "not_started" ? "grossed, no gross record" : `gross record ${x.grossState.replace(/_/g, " ")}`
                   : STAGE_SHORT[x.stage].toLowerCase();
         return `Part ${x.designation}: ${what}`;

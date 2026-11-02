@@ -124,10 +124,13 @@ export interface CustodyFacts {
 
 /** Overdue rule (demo default, labeled in the UI): a checkout is expected back the same lab day. */
 export function custodyFacts(db: DB, b: BlockInfo, now: string): CustodyFacts {
+  // A hand-over at the request's destination is logged as a checked_out event too (custody unchanged); the checkout
+  // still started when the block was picked, so hand-overs never move "since".
   const last = db
     .prepare(
       `SELECT event, at, destination, note FROM custody_event WHERE material_type = 'block' AND material_id = ?
-         AND event IN ('checked_out','sent_out','missing_reported') ORDER BY at DESC, id DESC LIMIT 1`,
+         AND event IN ('checked_out','sent_out','missing_reported') AND COALESCE(note, '') NOT LIKE '${HANDOVER_NOTE_PREFIX}%'
+       ORDER BY at DESC, id DESC LIMIT 1`,
     )
     .get(b.id) as { event: string; at: string; destination: string | null; note: string | null } | undefined;
   const stateLabel = CUSTODY_STATE[b.custody_state as keyof typeof CUSTODY_STATE] ?? b.custody_state;
@@ -454,21 +457,45 @@ export function markNotFound(ctx: Ctx, itemId: string, note: string): { itemId: 
   return { itemId, taskId, message: `${label} recorded as not found. Investigation task opened. Request is ${RETRIEVAL_STATUS[status as keyof typeof RETRIEVAL_STATUS]?.toLowerCase() ?? status}.` };
 }
 
-export function deliverRequest(ctx: Ctx, requestIdOrDisplay: string): { requestId: string; delivered: number; status: string; message: string } {
+/** Note prefix of the custody event that records a hand-over at a request's destination. */
+const HANDOVER_NOTE_PREFIX = "Delivered to ";
+
+/**
+ * Hand picked blocks over at the request's destination. The hand-over is a custody record ("delivered to <destination>",
+ * logged as a checked_out event with the destination: the block stays in the picker's custody). It is NOT a location
+ * confirmation: the last confirmed location and its time and person change only when the destination itself is scanned
+ * (`opts.scannedLocationCode`, a storage location whose code or label is the destination).
+ */
+export function deliverRequest(
+  ctx: Ctx,
+  requestIdOrDisplay: string,
+  opts: { scannedLocationCode?: string | null } = {},
+): { requestId: string; delivered: number; status: string; message: string } {
   const req = mustRequest(ctx.db, requestIdOrDisplay);
   const picked = itemsOf(ctx.db, req.id).filter((i) => i.status === "picked");
   if (!picked.length) throw new DomainError("VALIDATION", `Nothing picked for ${req.display_id} yet. Scan each block first.`);
-  const bench = ctx.db.prepare("SELECT id FROM storage_location WHERE lower(label) = lower(?) LIMIT 1").get(req.destination) as { id: string } | undefined;
+  let scanned: { id: string; code: string } | undefined;
+  if (opts.scannedLocationCode?.trim()) {
+    const code = opts.scannedLocationCode.trim().toUpperCase();
+    scanned = ctx.db.prepare("SELECT id, code FROM storage_location WHERE upper(code) = ? AND (lower(label) = lower(?) OR upper(code) = upper(?))").get(code, req.destination, req.destination) as
+      | { id: string; code: string }
+      | undefined;
+    if (!scanned) throw new DomainError("VALIDATION", `${code} is not the destination of ${req.display_id} (${req.destination}). Nothing was delivered.`);
+  }
   for (const i of picked) {
     const b = mustBlock(ctx.db, i.block_id);
     ctx.db.prepare("UPDATE retrieval_item SET status = 'delivered', delivered_at = ? WHERE id = ?").run(ctx.now, i.id);
-    if (bench) updateVersioned(ctx.db, "block", b.id, undefined, { current_location_id: bench.id, location_confirmed_at: ctx.now, location_confirmed_by: ctx.actor.id });
+    if (scanned) updateVersioned(ctx.db, "block", b.id, undefined, { current_location_id: scanned.id, location_confirmed_at: ctx.now, location_confirmed_by: ctx.actor.id });
     ctx.db
       .prepare(
         `INSERT INTO custody_event (id, material_type, material_id, event, location_id, holder_id, destination, actor_id, at, note, request_id)
-         VALUES (?, 'block', ?, 'location_confirmed', ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, 'block', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(newId(ctx.db, "ce"), b.id, bench?.id ?? null, b.checkout_holder_id, req.destination, ctx.actor.id, ctx.now, `Delivered to ${req.destination} for ${req.display_id}`, req.id);
+      .run(
+        newId(ctx.db, "ce"), b.id, scanned ? "location_confirmed" : "checked_out", scanned?.id ?? null, b.checkout_holder_id, req.destination, ctx.actor.id, ctx.now,
+        `${HANDOVER_NOTE_PREFIX}${req.destination} for ${req.display_id}${scanned ? ` (destination ${scanned.code} scanned)` : " (hand-over recorded; destination not scanned, last confirmed location unchanged)"}`,
+        req.id,
+      );
   }
   const status = refreshRequestStatus(ctx, req.id);
   audit(ctx, {
@@ -486,7 +513,11 @@ export function deliverRequest(ctx: Ctx, requestIdOrDisplay: string): { requestI
   };
 }
 
-export function returnBlock(ctx: Ctx, blockId: string, locationCode: string): { blockId: string; message: string } {
+/**
+ * Return a block to a storage slot. Only a block that is checked out or missing (investigation open) can be
+ * returned; a block that was missing also needs a note saying where it was found (A-11).
+ */
+export function returnBlock(ctx: Ctx, blockId: string, locationCode: string, note?: string | null): { blockId: string; message: string } {
   const code = requireText(locationCode, "Scan or type the storage slot, e.g. CAB-2/DR-4/BX-11/S-14").toUpperCase();
   const block = getBlock(ctx.db, blockId) ?? getBlockByIdentifier(ctx.db, blockId);
   if (!block) throw new DomainError("NOT_FOUND", "Block not found");
@@ -500,7 +531,18 @@ export function returnBlock(ctx: Ctx, blockId: string, locationCode: string): { 
   if (block.custody_state === "sent_out") {
     throw new DomainError("BLOCKED", `${label} is recorded as sent outside the lab. Record it as received back before filing it.`);
   }
+  if (block.custody_state !== "checked_out" && block.custody_state !== "missing_investigation") {
+    const state = CUSTODY_STATE[block.custody_state as keyof typeof CUSTODY_STATE] ?? block.custody_state;
+    throw new DomainError(
+      "BLOCKED",
+      `${label} is recorded as "${state}"${block.location_code ? ` at ${block.location_code}` : ""}. Only a checked-out or missing block can be returned to storage. Nothing changed.`,
+    );
+  }
   const wasMissing = block.custody_state === "missing_investigation";
+  const foundNote = (note ?? "").trim();
+  if (wasMissing && !foundNote) {
+    throw new DomainError("VALIDATION", `${label} was reported missing. Say where it was found before filing it in ${loc.code}. Nothing changed.`);
+  }
   updateVersioned(ctx.db, "block", block.id, undefined, {
     custody_state: "stored",
     checkout_holder_id: null,
@@ -513,7 +555,10 @@ export function returnBlock(ctx: Ctx, blockId: string, locationCode: string): { 
       `INSERT INTO custody_event (id, material_type, material_id, event, location_id, holder_id, destination, actor_id, at, note, request_id)
        VALUES (?, 'block', ?, ?, ?, NULL, NULL, ?, ?, ?, NULL)`,
     )
-    .run(newId(ctx.db, "ce"), block.id, wasMissing ? "found" : "returned", loc.id, ctx.actor.id, ctx.now, `Returned and filed in ${loc.code} (this block's scan only; other contents of the slot are not confirmed)`);
+    .run(
+      newId(ctx.db, "ce"), block.id, wasMissing ? "found" : "returned", loc.id, ctx.actor.id, ctx.now,
+      `${wasMissing ? `Found (${foundNote}); ` : ""}Returned and filed in ${loc.code} (this block's scan only; other contents of the slot are not confirmed)`,
+    );
   const items = ctx.db
     .prepare("SELECT id, request_id, status FROM retrieval_item WHERE block_id = ? AND status IN ('picked','delivered','missing_investigation','not_found')")
     .all(block.id) as { id: string; request_id: string; status: string }[];
@@ -532,7 +577,8 @@ export function returnBlock(ctx: Ctx, blockId: string, locationCode: string): { 
     entityType: "block",
     entityId: block.id,
     accessionId: block.accession_id,
-    summary: `${label} returned to ${loc.code} by ${ctx.actor.name}${wasMissing ? " (was missing; investigation closed)" : ""}`,
+    summary: `${label} returned to ${loc.code} by ${ctx.actor.name}${wasMissing ? ` (was missing; investigation closed: ${foundNote})` : ""}`,
+    reason: wasMissing ? foundNote : undefined,
   });
   return { blockId: block.id, message: `${label} filed in ${loc.code}. Location confirmed now by ${ctx.actor.name}.` };
 }

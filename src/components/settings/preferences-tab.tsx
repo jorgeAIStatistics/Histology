@@ -26,19 +26,19 @@ function RadioGroup<T extends string>({
 }) {
   const id = useId();
   return (
-    <fieldset className="grid gap-2" aria-describedby={hint ? `${id}-hint` : undefined}>
+    <fieldset className="grid gap-1" aria-describedby={hint ? `${id}-hint` : undefined}>
       <legend className="text-sm font-medium text-ink">{legend}</legend>
       {hint ? (
-        <p id={`${id}-hint`} className="-mt-1 text-xs text-ink-muted">
+        <p id={`${id}-hint`} className="text-sm text-ink-muted">
           {hint}
         </p>
       ) : null}
       {options.map((o) => (
-        <label key={o.value} className="flex cursor-pointer items-start gap-2 text-sm">
-          <input type="radio" name={name} value={o.value} checked={value === o.value} onChange={() => onChange(o.value)} className="mt-0.5 size-4 accent-[var(--hlo-brand)]" />
+        <label key={o.value} className="flex min-h-[max(2rem,var(--hlo-target-min))] cursor-pointer items-start gap-2.5 rounded-sm py-1 text-sm">
+          <input type="radio" name={name} value={o.value} checked={value === o.value} onChange={() => onChange(o.value)} className="mt-0.5 size-[1.125rem] shrink-0 accent-[var(--hlo-brand)]" />
           <span>
             <span className="text-ink">{o.label}</span>
-            {o.hint ? <span className="block text-xs text-ink-muted">{o.hint}</span> : null}
+            {o.hint ? <span className="block text-sm text-ink-muted">{o.hint}</span> : null}
           </span>
         </label>
       ))}
@@ -68,8 +68,8 @@ export function PreferencesTab() {
   }, []);
 
   return (
-    <div className="grid items-start gap-4 xl:grid-cols-2">
-      <div className="grid content-start gap-4">
+    <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 content-start gap-4">
         <Card title="Display" description="Saved in this browser only. Other workstations keep their own settings.">
           <RadioGroup<Density>
             legend="Table density"
@@ -78,8 +78,8 @@ export function PreferencesTab() {
             onChange={setDensity}
             options={[
               { value: "auto", label: "Automatic", hint: "Compact on wide screens, comfortable below 1280px or on touch screens" },
-              { value: "compact", label: "Compact", hint: "36px rows, 13px text — workstation" },
-              { value: "comfortable", label: "Comfortable", hint: "48px rows, 15px text, 44px touch targets — bench tablet" },
+              { value: "compact", label: "Compact", hint: "Bench workstation: 36px rows, 13px text" },
+              { value: "comfortable", label: "Comfortable", hint: "Bench tablet: 48px rows, 15px text, 44px touch targets" },
             ]}
           />
           <p className="mt-4 text-sm text-ink-secondary">
@@ -110,7 +110,7 @@ export function PreferencesTab() {
       </div>
 
       <Card title="Scanning and sound" description="Saved in this browser only.">
-        <div className="grid gap-4">
+        <div className="grid grid-cols-1 gap-4">
           <Checkbox
             label="Sound feedback after scans"
             hint="Off by default. A short high tone for a match, two lower tones for a mismatch. Always shown on screen too."
@@ -130,7 +130,7 @@ export function PreferencesTab() {
                 step={0.05}
                 value={volume}
                 onChange={(e) => setVolume(Number(e.target.value))}
-                className="w-48 accent-[var(--hlo-brand)]"
+                className="h-[max(2rem,var(--hlo-target-min))] w-48 accent-[var(--hlo-brand)]"
               />
               <Button size="sm" icon={<Volume2 />} onClick={() => playTone("match", volume)}>
                 Play match tone

@@ -55,7 +55,7 @@ export const STEPS: StepContent[] = [
     click: [
       "Press “Run simulator events” to record the 11:00 courier arrival and unpack every container (simulated).",
       "Open Intake. Read the manifest strip: expected vs received per office. Mangrove Bay Dermatology shows expected “Unknown (no manifest)”.",
-      "Open the first Avery Quinlan item and accept the suggested routing. The card names the rule: Harbor Point Dermatology to Dr. Elena Marsh, rule set v3.",
+      "Open the first Avery Quinlan item and press “Accept routing” in the decision column. The routing evidence names the rule: Harbor Point Dermatology to Dr. Elena Marsh, rule set v3.",
       "Open the Seagrape Skin Studio item: it is in the exception lane with no doctor assigned.",
     ],
     notice: [
@@ -85,7 +85,7 @@ export const STEPS: StepContent[] = [
     cast: "Maya Torres, then Kim Nguyen (accessioning lead)",
     seconds: 30,
     click: [
-      "On the first Quinlan item, press “Staff verified against physical container” for part A.",
+      "On the first Quinlan item, press “Record: I checked this bottle against the order” in the decision column for part A (Ctrl+Enter never records it).",
       "Open the related-order card. Read the reasons (same patient reference, encounter ENC-55031, office and collection day) and the two order IDs.",
       "Switch “Acting as” to Kim Nguyen and choose “Link as related (keeps both orders)” with a short reason.",
     ],
@@ -255,6 +255,48 @@ export const STEPS: StepContent[] = [
     ],
   },
 ];
+
+/** One step's progress as the records report it (shape of the server's DemoStatus step; type-only mirror). */
+export interface StepRecords {
+  step: number;
+  state: "done" | "in_progress" | "not_started";
+  checks: { label: string; done: boolean; detail?: string }[];
+}
+
+/**
+ * "0 of 1 check done": how many of a step's record checks are in. The step rail and the step's own chip both use it,
+ * so the rail never says "not started" while the step sheet shows a finished simulator run.
+ */
+export function recordsDoneText(checks: { done: boolean }[]): string {
+  const done = checks.filter((c) => c.done).length;
+  return `${done} of ${checks.length} check${checks.length === 1 ? "" : "s"} done`;
+}
+
+/** Step 8 has one check: steps 1 to 7 reached their outcomes (src/server/domain/demoSteps.ts). */
+const REVIEW_STEP = 8;
+
+/**
+ * A step's check as the guide words it: a condition to look for in the records, never a claim that it happened.
+ * Only step 8's check needs rewording; its server label is a sentence about the earlier steps.
+ */
+export function checkText(step: number, label: string): string {
+  return step === REVIEW_STEP ? "Steps 1 to 7 reach their outcomes in the records; Operations then shows what is still blocked" : label;
+}
+
+/**
+ * The record a step is still missing, named as a record (after "Missing record:"), or null when every check is in.
+ * Step 8 names the outcomes of steps 1 to 7 and how many of them the records already show.
+ */
+export function missingRecordText(status: StepRecords, all: StepRecords[]): string | null {
+  const missing = status.checks.filter((c) => !c.done);
+  if (!missing.length) return null;
+  if (status.step === REVIEW_STEP) {
+    const earlier = all.filter((s) => s.step < REVIEW_STEP);
+    const done = earlier.filter((s) => s.state === "done").length;
+    return `Outcomes of steps 1 to ${REVIEW_STEP - 1} (${done} of ${earlier.length} in the records so far)`;
+  }
+  return `${missing[0].label}${missing.length > 1 ? `, and ${missing.length - 1} more under Progress` : ""}`;
+}
 
 export const SPEAKER_NOTES: { heading: string; seconds: number; text: string }[] = [
   {

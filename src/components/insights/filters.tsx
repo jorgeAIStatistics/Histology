@@ -30,7 +30,7 @@ export function InsightsFilters({
       key={`${value.from}|${value.to}|${value.office ?? ""}|${value.doctor ?? ""}`}
       method="get"
       action="/insights"
-      className="rounded-md border border-line bg-surface p-3 shadow-1"
+      className="rounded-lg border border-line bg-surface px-4 py-3"
       aria-label="Insight filters"
     >
       <div className="flex flex-wrap items-end gap-3">
@@ -82,7 +82,7 @@ export function InsightsFilters({
           </Link>
         </div>
       </div>
-      <p className="mt-2 text-xs text-ink-muted">
+      <p className="mt-2 text-sm text-ink-muted">
         Filters apply to the illustrative prior-day charts. Today&apos;s figures and the open-work snapshot always cover the whole synthetic lab.
       </p>
     </form>

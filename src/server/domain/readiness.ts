@@ -1,8 +1,9 @@
 import type { DB } from "../db/db";
-import type { HoldRow, HoldTransition } from "./holds";
+import type { HoldRow, HoldTransition, ScopeType } from "./holds";
 import { blockedTransitions, HOLD_TRANSITION_LABEL } from "./holds";
+import { trayReadinessProblem } from "./tray";
 import type { BlockState, GrossState, SlideState, SourceUpdateState, Stage } from "@/lib/domain";
-import { BLOCK_STATE_ORDER, SLIDE_STATE_ORDER } from "@/lib/domain";
+import { awaitsSourceEntry, BLOCK_STATE_ORDER, SLIDE_STATE_ORDER, STAGE } from "@/lib/domain";
 import { getSetting } from "../core/settings";
 
 /**
@@ -53,7 +54,14 @@ export interface WorkOrderView {
 export interface HoldView {
   id: string;
   displayId: string;
+  /** What the hold is on (intake_item, container, order_part, specimen_part, block, slide, work_order, accession). Kept so scope never collapses. */
+  scopeType: ScopeType;
   scopeLabel: string;
+  /**
+   * Derived, short: the exact material held, as this part sees it ("Part B", "A1", "A1-2", "WO-2213", "Whole case").
+   * A block or slide hold names that block or slide, never the whole part.
+   */
+  target: string;
   reasonText: string;
   blocks: HoldTransition[];
   clarificationId: string | null;
@@ -109,9 +117,8 @@ export interface CaseReadiness {
   lastUpdateAt: string | null;
 }
 
-const STAGE_ORDER: Stage[] = [
-  "intake", "awaiting_gross", "gross_in_progress", "processing", "embedding", "sectioning", "staining", "qc", "ready_for_tray", "delivered",
-];
+/** Bench-path order (lib/domain STAGE order, without canceled). */
+const STAGE_ORDER: Stage[] = (Object.keys(STAGE) as Stage[]).filter((s) => s !== "canceled");
 
 function minByOrder<T extends string>(values: T[], order: readonly T[]): T | null {
   let best: T | null = null;
@@ -119,12 +126,27 @@ function minByOrder<T extends string>(values: T[], order: readonly T[]): T | nul
   return best;
 }
 
-function toHoldView(h: HoldRow): HoldView {
-  return { id: h.id, displayId: h.display_id, scopeLabel: h.scope_label, reasonText: h.reason_text, blocks: blockedTransitions(h), clarificationId: h.clarification_id, placedAt: h.placed_at };
+function toHoldView(h: HoldRow, target: string): HoldView {
+  return {
+    id: h.id, displayId: h.display_id, scopeType: h.scope_type, scopeLabel: h.scope_label, target, reasonText: h.reason_text, blocks: blockedTransitions(h),
+    clarificationId: h.clarification_id, placedAt: h.placed_at,
+  };
 }
 
-function holdBlocks(holds: HoldView[], t: HoldTransition): HoldView[] {
+function holdBlocks<T extends { blocks: HoldTransition[] }>(holds: T[], t: HoldTransition): T[] {
   return holds.filter((h) => h.blocks.includes("all") || h.blocks.includes(t));
+}
+
+/** Short reason a QC-reviewed slide is not accepted on a tray (from trayReadinessProblem, the tray rules). */
+function trayReasonShort(problem: string): { reason: string; kind: "hold" | "on_tray" | "other" } {
+  let m: RegExpExecArray | null;
+  if ((m = /active hold blocking tray delivery \((.+)\)$/.exec(problem))) return { reason: m[1], kind: "hold" };
+  if ((m = /is already listed on (\S+)$/.exec(problem))) return { reason: m[1], kind: "on_tray" };
+  if (/label has not been scanned/.test(problem)) return { reason: "label not scanned after it was applied", kind: "other" };
+  if ((m = /belongs to (\S+), which is (.+)$/.exec(problem))) return { reason: `${m[1]} is ${m[2]}`, kind: "other" };
+  if (/is void/.test(problem)) return { reason: "void", kind: "other" };
+  if (/awaiting review of a source change/.test(problem)) return { reason: "awaiting review of a source change", kind: "other" };
+  return { reason: problem, kind: "other" };
 }
 
 /** Batch-compute readiness for many cases with a fixed number of queries. */
@@ -178,7 +200,24 @@ export function computeReadiness(db: DB, accessionIds: string[]): Map<string, Ca
     id: string; specimen_part_id: string; record_version: number; state: GrossState; source_update_state: SourceUpdateState; fields: string; updated_at: string;
   }[];
 
-  // Holds: on parts, their accession, order parts, containers, blocks, slides, work orders.
+  // The intake item(s) each part came from: its container's intake item; with no container, the intake items on
+  // the same accession that carried its order (holds.ts intakeItemsForPart, batched).
+  const fromContainer = new Map<string, string[]>();
+  for (const r of db
+    .prepare(`SELECT sp.id AS part_id, c.intake_item_id FROM specimen_part sp JOIN container c ON c.id = sp.container_id WHERE sp.accession_id IN (${ph})`)
+    .all(...accessionIds) as { part_id: string; intake_item_id: string }[]) fromContainer.set(r.part_id, [r.intake_item_id]);
+  const fromLink = new Map<string, string[]>();
+  for (const r of db
+    .prepare(
+      `SELECT sp.id AS part_id, ii.id AS intake_item_id FROM specimen_part sp
+         JOIN intake_item ii ON ii.accession_id = sp.accession_id
+         JOIN intake_order_link l ON l.intake_item_id = ii.id AND l.source_order_id = sp.source_order_id
+        WHERE sp.accession_id IN (${ph}) ORDER BY ii.id`,
+    )
+    .all(...accessionIds) as { part_id: string; intake_item_id: string }[]) fromLink.set(r.part_id, [...(fromLink.get(r.part_id) ?? []), r.intake_item_id]);
+  const intakeItemsOf = (partId: string) => fromContainer.get(partId) ?? fromLink.get(partId) ?? [];
+
+  // Holds: on parts, their accession, order parts, containers, intake items, blocks, slides, work orders.
   const holdRows = db.prepare("SELECT * FROM hold WHERE status = 'active'").all() as HoldRow[];
   const holdsByScope = new Map<string, HoldRow[]>();
   for (const h of holdRows) {
@@ -202,18 +241,29 @@ export function computeReadiness(db: DB, accessionIds: string[]): Map<string, Ca
       const pSlides = slides.filter((s) => s.part_id === p.id);
       const pWos = wos.filter((w) => w.accession_id === a.id && (w.target_part_id === p.id || (!w.target_part_id && !!w.block_label && pBlocks.some((b) => b.label_text === w.block_label))));
       const g = gross.find((x) => x.specimen_part_id === p.id) ?? null;
-      const blockIds = new Set(pBlocks.map((b) => b.id));
-      const slideIds = new Set(pSlides.map((s) => s.id));
-      const holdList: HoldRow[] = [
+      // Part-level holds stop everything made from the part; a block, slide or work-order hold stops only that
+      // material (the same scope chains holds.ts enforces: scopesForPart / scopesForBlock / scopesForSlide).
+      const partLevelRows: HoldRow[] = [
         ...holdsFor("specimen_part", p.id),
         ...holdsFor("order_part", p.source_order_part_id),
         ...holdsFor("container", p.container_id),
+        ...intakeItemsOf(p.id).flatMap((ii) => holdsFor("intake_item", ii)),
         ...caseHolds,
-        ...[...blockIds].flatMap((id) => holdsFor("block", id)),
-        ...[...slideIds].flatMap((id) => holdsFor("slide", id)),
-        ...pWos.flatMap((w) => holdsFor("work_order", w.id)),
       ];
-      const holds = [...new Map(holdList.map((h) => [h.id, toHoldView(h)])).values()];
+      const partTarget = (h: HoldRow) => (h.scope_type === "accession" ? "Whole case" : `Part ${p.designation}`);
+      const partLevel = [...new Map(partLevelRows.map((h) => [h.id, toHoldView(h, partTarget(h))])).values()];
+      const blockHolds = new Map(pBlocks.map((b) => [b.id, holdsFor("block", b.id).map((h) => toHoldView(h, b.label_text))]));
+      const slideHolds = new Map(pSlides.map((s) => [s.id, holdsFor("slide", s.id).map((h) => toHoldView(h, `${s.block_label}-${s.slide_seq}`))]));
+      const woHolds = new Map(pWos.map((w) => [w.id, holdsFor("work_order", w.id).map((h) => toHoldView(h, w.display_id))]));
+      const holdList: HoldView[] = [
+        ...partLevel,
+        ...[...blockHolds.values()].flat(),
+        ...[...slideHolds.values()].flat(),
+        ...[...woHolds.values()].flat(),
+      ];
+      const holds = [...new Map(holdList.map((h) => [h.id, h])).values()];
+      /** Holds that apply to one block (part-level + that block). */
+      const holdsOnBlock = (blockId: string) => [...partLevel, ...(blockHolds.get(blockId) ?? [])];
 
       const counts = Object.fromEntries(SLIDE_STATE_ORDER.map((s) => [s, 0])) as Record<SlideState, number>;
       const activeSlides = pSlides.filter((s) => s.status === "active");
@@ -236,7 +286,8 @@ export function computeReadiness(db: DB, accessionIds: string[]): Map<string, Ca
       else if (!pBlocks.length) stage = g ? "gross_in_progress" : "awaiting_gross";
       else {
         const minBlock = minByOrder(pBlocks.map((b) => b.physical_state), BLOCK_STATE_ORDER)!;
-        if (minBlock === "cassette_loaded") stage = approved ? "processing" : "gross_in_progress";
+        // A loaded cassette is not "processing": with an approved record it is ready for (waiting on) the next run.
+        if (minBlock === "cassette_loaded") stage = approved ? "awaiting_processing" : "gross_in_progress";
         else if (minBlock === "processing" || minBlock === "processed") stage = "processing";
         else if (minBlock === "embedded") stage = "sectioning";
         else {
@@ -255,32 +306,68 @@ export function computeReadiness(db: DB, accessionIds: string[]): Map<string, Ca
       const eligible: string[] = [];
       const blockedBy: string[] = [];
       for (const h of holds) blockedBy.push(`${h.displayId} on ${h.scopeLabel}: ${h.reasonText} (holds ${h.blocks.map((b) => HOLD_TRANSITION_LABEL[b] ?? b).join(", ")})`);
-      if (!g && !pBlocks.length && p.status !== "canceled") {
-        const hb = holdBlocks(holds, "gross_approval");
-        if (hb.length) blockedBy.push(`Grossing documentation for part ${p.designation} cannot be approved until ${hb.map((h) => h.displayId).join(", ")} is released`);
-        else eligible.push(`Part ${p.designation}: ready for grossing`);
+      if (p.status !== "canceled") {
+        // Gross approval is a part-level step: only part-level holds stop it (holds.ts scopesForPart).
+        const approvalHolds = holdBlocks(partLevel, "gross_approval");
+        if (!g && !pBlocks.length) {
+          if (approvalHolds.length) blockedBy.push(`Grossing documentation for part ${p.designation} cannot be approved until ${approvalHolds.map((h) => h.displayId).join(", ")} is released`);
+          else eligible.push(`Part ${p.designation}: ready for grossing`);
+        }
+        if (g && g.state !== "approved_for_downstream" && approvalHolds.length) {
+          blockedBy.push(`Gross record for part ${p.designation} cannot be approved: ${approvalHolds.map((h) => h.displayId).join(", ")}`);
+        }
       }
-      if (g && g.state !== "approved_for_downstream") {
-        const hb = holdBlocks(holds, "gross_approval");
-        if (hb.length) blockedBy.push(`Gross record for part ${p.designation} cannot be approved: ${hb.map((h) => h.displayId).join(", ")}`);
-      }
-      if (approved && (g!.source_update_state === "not_started" || g!.source_update_state === "pending_entry")) {
+      if (g && awaitsSourceEntry({ grossState: g.state, sourceUpdateState: g.source_update_state, partStatus: p.status })) {
         eligible.push(`Part ${p.designation}: enter approved gross description in source system (pending)`);
       }
+      /** Blocks grouped by the holds that stop `t` on each one: free blocks, and held blocks per hold set. */
+      const splitByHold = (list: typeof pBlocks, t: HoldTransition) => {
+        const free: typeof pBlocks = [];
+        const held = new Map<string, typeof pBlocks>();
+        for (const b of list) {
+          const hb = holdBlocks(holdsOnBlock(b.id), t);
+          if (!hb.length) free.push(b);
+          else {
+            const key = [...new Set(hb.map((h) => h.displayId))].join(", ");
+            held.set(key, [...(held.get(key) ?? []), b]);
+          }
+        }
+        return { free, held };
+      };
       const loaded = pBlocks.filter((b) => b.physical_state === "cassette_loaded");
       if (loaded.length) {
-        const hb = holdBlocks(holds, "processing");
-        if (hb.length) blockedBy.push(`${loaded.map((b) => b.label_text).join(", ")} held from processing: ${hb.map((h) => h.displayId).join(", ")}`);
-        else if (!approved && requireApproved) blockedBy.push(`${loaded.map((b) => b.label_text).join(", ")} loaded but not eligible for processing: gross record not approved (local policy setting)`);
-        else eligible.push(`${loaded.map((b) => b.label_text).join(", ")} eligible for the next processing run`);
+        const { free, held } = splitByHold(loaded, "processing");
+        for (const [ids, bs] of held) blockedBy.push(`${bs.map((b) => b.label_text).join(", ")} held from processing: ${ids}`);
+        if (free.length) {
+          if (!approved && requireApproved) blockedBy.push(`${free.map((b) => b.label_text).join(", ")} loaded but not eligible for processing: gross record not approved (local policy setting)`);
+          else eligible.push(`${free.map((b) => b.label_text).join(", ")} eligible for the next processing run`);
+        }
       }
       const toSection = pBlocks.filter((b) => b.physical_state === "embedded" || (b.physical_state === "sectioned" && activeSlides.some((s) => s.block_label === b.label_text && s.physical_state === "planned")));
       if (toSection.length) {
-        const hb = holdBlocks(holds, "sectioning");
-        if (hb.length) blockedBy.push(`Sectioning held: ${hb.map((h) => h.displayId).join(", ")}`);
-        else eligible.push(`Sectioning: ${toSection.map((b) => `${b.label_text} (${activeSlides.filter((s) => s.block_label === b.label_text && s.physical_state === "planned").length} planned)`).join(", ")}`);
+        const { free, held } = splitByHold(toSection, "sectioning");
+        for (const [ids, bs] of held) blockedBy.push(`Sectioning held: ${bs.map((b) => b.label_text).join(", ")} (${ids})`);
+        if (free.length) eligible.push(`Sectioning: ${free.map((b) => `${b.label_text} (${activeSlides.filter((s) => s.block_label === b.label_text && s.physical_state === "planned").length} planned)`).join(", ")}`);
       }
-      if (counts.qc_reviewed > 0 && !holdBlocks(holds, "tray_delivery").length) eligible.push(`${counts.qc_reviewed} slide(s) ready for tray`);
+      // Ready for a tray: only slides a tray would accept (the tray rules, domain/tray.ts trayReadinessProblem).
+      const qcSlides = activeSlides.filter((s) => s.physical_state === "qc_reviewed");
+      if (qcSlides.length) {
+        let ready = 0;
+        const byKind = { hold: new Map<string, string[]>(), on_tray: new Map<string, string[]>(), other: new Map<string, string[]>() };
+        for (const s of qcSlides) {
+          const problem = trayReadinessProblem(db, s.id);
+          if (!problem) {
+            ready += 1;
+            continue;
+          }
+          const { reason, kind } = trayReasonShort(problem);
+          byKind[kind].set(reason, [...(byKind[kind].get(reason) ?? []), `${s.block_label}-${s.slide_seq}`]);
+        }
+        for (const [ids, labels] of byKind.hold) blockedBy.push(`${labels.join(", ")} held from tray delivery: ${ids}`);
+        for (const [tray, labels] of byKind.on_tray) blockedBy.push(`${labels.join(", ")} already listed on ${tray} (tray not delivered yet)`);
+        if (byKind.other.size) blockedBy.push(`Not ready for a tray: ${[...byKind.other].map(([reason, labels]) => `${labels.join(", ")} (${reason})`).join("; ")}`);
+        if (ready > 0) eligible.push(`${ready} slide(s) ready for tray`);
+      }
       const canceledReview = pSlides.filter((s) => s.status === "canceled_needs_review");
       if (canceledReview.length) blockedBy.push(`Review needed: ${canceledReview.map((s) => `${s.block_label}-${s.slide_seq} ${s.stain}`).join(", ")} prepared/printed for work that was canceled or amended at the source`);
 
@@ -325,7 +412,7 @@ export function computeReadiness(db: DB, accessionIds: string[]): Map<string, Ca
     const eligible = partViews.flatMap((p) => p.eligible);
     const blockedBy = partViews.flatMap((p) => p.blockedBy);
     const readinessText = isComplete
-      ? "All parts delivered"
+      ? ALL_SENT_ON_TRAYS
       : blockedBy.length && !eligible.length
         ? `Not ready: ${blockedBy[0]}`
         : eligible.length
@@ -341,17 +428,21 @@ export function computeReadiness(db: DB, accessionIds: string[]): Map<string, Ca
   return out;
 }
 
+/** Case-complete sentence: tray delivery is recorded digitally; no receipt by the pathologist is recorded. */
+export const ALL_SENT_ON_TRAYS = "All parts sent on trays; receipt not recorded";
+
 export const STAGE_SHORT: Record<Stage, string> = {
   intake: "Intake",
   awaiting_gross: "Awaiting grossing",
   gross_in_progress: "Gross documentation",
+  awaiting_processing: STAGE.awaiting_processing,
   processing: "Processing",
   embedding: "Embedding",
   sectioning: "Sectioning",
   staining: "Staining",
   qc: "QC",
   ready_for_tray: "Ready for tray",
-  delivered: "Delivered",
+  delivered: STAGE.delivered,
   canceled: "Canceled",
 };
 

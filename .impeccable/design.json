@@ -1,0 +1,974 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-15T01:43:54+00:00",
+  "title": "Design System: Histology Lab OS",
+  "extensions": {
+    "colorMeta": {
+      "shell": {
+        "role": "primary",
+        "displayName": "Hematoxylin Night",
+        "canonical": "#1B1F47",
+        "tonalRamp": [
+          "#1B1F47",
+          "#272C5E",
+          "#2E3384",
+          "#3A3F9E",
+          "#3A4078",
+          "#5D63BC",
+          "#8F94D6",
+          "#B9BCE0",
+          "#DCDEF4",
+          "#EEEFFA"
+        ]
+      },
+      "shell-2": {
+        "role": "primary",
+        "displayName": "Hematoxylin Raised",
+        "canonical": "#272C5E",
+        "tonalRamp": [
+          "#1B1F47",
+          "#272C5E",
+          "#2E3384",
+          "#3A3F9E",
+          "#3A4078",
+          "#5D63BC",
+          "#8F94D6",
+          "#B9BCE0",
+          "#DCDEF4",
+          "#EEEFFA"
+        ]
+      },
+      "shell-line": {
+        "role": "primary",
+        "displayName": "Hematoxylin Rule",
+        "canonical": "#3A4078",
+        "tonalRamp": [
+          "#1B1F47",
+          "#272C5E",
+          "#2E3384",
+          "#3A3F9E",
+          "#3A4078",
+          "#5D63BC",
+          "#8F94D6",
+          "#B9BCE0",
+          "#DCDEF4",
+          "#EEEFFA"
+        ]
+      },
+      "shell-muted": {
+        "role": "primary",
+        "displayName": "Pale Nuclear Lilac",
+        "canonical": "#B9BCE0",
+        "tonalRamp": [
+          "oklch(15% 0.051 281.4)",
+          "oklch(26% 0.051 281.4)",
+          "oklch(38% 0.051 281.4)",
+          "oklch(49% 0.051 281.4)",
+          "oklch(61% 0.051 281.4)",
+          "oklch(72% 0.051 281.4)",
+          "oklch(84% 0.051 281.4)",
+          "oklch(95% 0.051 281.4)"
+        ]
+      },
+      "brand": {
+        "role": "primary",
+        "displayName": "Hematoxylin",
+        "canonical": "#3A3F9E",
+        "tonalRamp": [
+          "oklch(15% 0.152 275.5)",
+          "oklch(26% 0.152 275.5)",
+          "oklch(38% 0.152 275.5)",
+          "oklch(49% 0.152 275.5)",
+          "oklch(61% 0.152 275.5)",
+          "oklch(72% 0.152 275.5)",
+          "oklch(84% 0.152 275.5)",
+          "oklch(95% 0.152 275.5)"
+        ]
+      },
+      "brand-hover": {
+        "role": "primary",
+        "displayName": "Deep Hematoxylin",
+        "canonical": "#2E3384",
+        "tonalRamp": [
+          "oklch(15% 0.134 275.0)",
+          "oklch(26% 0.134 275.0)",
+          "oklch(38% 0.134 275.0)",
+          "oklch(49% 0.134 275.0)",
+          "oklch(61% 0.134 275.0)",
+          "oklch(72% 0.134 275.0)",
+          "oklch(84% 0.134 275.0)",
+          "oklch(95% 0.134 275.0)"
+        ]
+      },
+      "brand-50": {
+        "role": "primary",
+        "displayName": "Hematoxylin Wash",
+        "canonical": "#EEEFFA",
+        "tonalRamp": [
+          "oklch(15% 0.015 282.0)",
+          "oklch(26% 0.015 282.0)",
+          "oklch(38% 0.015 282.0)",
+          "oklch(49% 0.015 282.0)",
+          "oklch(61% 0.015 282.0)",
+          "oklch(72% 0.015 282.0)",
+          "oklch(84% 0.015 282.0)",
+          "oklch(95% 0.015 282.0)"
+        ]
+      },
+      "brand-100": {
+        "role": "primary",
+        "displayName": "Hematoxylin Tint",
+        "canonical": "#DCDEF4",
+        "tonalRamp": [
+          "oklch(15% 0.030 281.6)",
+          "oklch(26% 0.030 281.6)",
+          "oklch(38% 0.030 281.6)",
+          "oklch(49% 0.030 281.6)",
+          "oklch(61% 0.030 281.6)",
+          "oklch(72% 0.030 281.6)",
+          "oklch(84% 0.030 281.6)",
+          "oklch(95% 0.030 281.6)"
+        ]
+      },
+      "eosin": {
+        "role": "secondary",
+        "displayName": "Eosin",
+        "canonical": "#C2336F",
+        "tonalRamp": [
+          "oklch(15% 0.185 359.8)",
+          "oklch(26% 0.185 359.8)",
+          "oklch(38% 0.185 359.8)",
+          "oklch(49% 0.185 359.8)",
+          "oklch(61% 0.185 359.8)",
+          "oklch(72% 0.185 359.8)",
+          "oklch(84% 0.185 359.8)",
+          "oklch(95% 0.185 359.8)"
+        ]
+      },
+      "eosin-light": {
+        "role": "secondary",
+        "displayName": "Light Eosin",
+        "canonical": "#F07AAA",
+        "tonalRamp": [
+          "oklch(15% 0.153 355.9)",
+          "oklch(26% 0.153 355.9)",
+          "oklch(38% 0.153 355.9)",
+          "oklch(49% 0.153 355.9)",
+          "oklch(61% 0.153 355.9)",
+          "oklch(72% 0.153 355.9)",
+          "oklch(84% 0.153 355.9)",
+          "oklch(95% 0.153 355.9)"
+        ]
+      },
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Bench Gray",
+        "canonical": "#ECEEF3",
+        "tonalRamp": [
+          "oklch(15% 0.007 268.5)",
+          "oklch(26% 0.007 268.5)",
+          "oklch(38% 0.007 268.5)",
+          "oklch(49% 0.007 268.5)",
+          "oklch(61% 0.007 268.5)",
+          "oklch(72% 0.007 268.5)",
+          "oklch(84% 0.007 268.5)",
+          "oklch(95% 0.007 268.5)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Evidence White",
+        "canonical": "#FFFFFF",
+        "tonalRamp": [
+          "oklch(15% 0.000 89.9)",
+          "oklch(26% 0.000 89.9)",
+          "oklch(38% 0.000 89.9)",
+          "oklch(49% 0.000 89.9)",
+          "oklch(61% 0.000 89.9)",
+          "oklch(72% 0.000 89.9)",
+          "oklch(84% 0.000 89.9)",
+          "oklch(95% 0.000 89.9)"
+        ]
+      },
+      "surface-subtle": {
+        "role": "neutral",
+        "displayName": "Bench Subtle",
+        "canonical": "#F4F5F8",
+        "tonalRamp": [
+          "oklch(15% 0.004 271.4)",
+          "oklch(26% 0.004 271.4)",
+          "oklch(38% 0.004 271.4)",
+          "oklch(49% 0.004 271.4)",
+          "oklch(61% 0.004 271.4)",
+          "oklch(72% 0.004 271.4)",
+          "oklch(84% 0.004 271.4)",
+          "oklch(95% 0.004 271.4)"
+        ]
+      },
+      "surface-sunken": {
+        "role": "neutral",
+        "displayName": "Bench Sunken",
+        "canonical": "#E3E6EE",
+        "tonalRamp": [
+          "oklch(15% 0.011 269.5)",
+          "oklch(26% 0.011 269.5)",
+          "oklch(38% 0.011 269.5)",
+          "oklch(49% 0.011 269.5)",
+          "oklch(61% 0.011 269.5)",
+          "oklch(72% 0.011 269.5)",
+          "oklch(84% 0.011 269.5)",
+          "oklch(95% 0.011 269.5)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#D8DBE5",
+        "tonalRamp": [
+          "oklch(15% 0.014 272.7)",
+          "oklch(26% 0.014 272.7)",
+          "oklch(38% 0.014 272.7)",
+          "oklch(49% 0.014 272.7)",
+          "oklch(61% 0.014 272.7)",
+          "oklch(72% 0.014 272.7)",
+          "oklch(84% 0.014 272.7)",
+          "oklch(95% 0.014 272.7)"
+        ]
+      },
+      "line-strong": {
+        "role": "neutral",
+        "displayName": "Strong Hairline",
+        "canonical": "#878DA8",
+        "tonalRamp": [
+          "oklch(15% 0.041 275.3)",
+          "oklch(26% 0.041 275.3)",
+          "oklch(38% 0.041 275.3)",
+          "oklch(49% 0.041 275.3)",
+          "oklch(61% 0.041 275.3)",
+          "oklch(72% 0.041 275.3)",
+          "oklch(84% 0.041 275.3)",
+          "oklch(95% 0.041 275.3)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "#151A30",
+        "tonalRamp": [
+          "oklch(15% 0.044 272.8)",
+          "oklch(26% 0.044 272.8)",
+          "oklch(38% 0.044 272.8)",
+          "oklch(49% 0.044 272.8)",
+          "oklch(61% 0.044 272.8)",
+          "oklch(72% 0.044 272.8)",
+          "oklch(84% 0.044 272.8)",
+          "oklch(95% 0.044 272.8)"
+        ]
+      },
+      "ink-secondary": {
+        "role": "neutral",
+        "displayName": "Secondary Ink",
+        "canonical": "#383E5C",
+        "tonalRamp": [
+          "oklch(15% 0.052 274.9)",
+          "oklch(26% 0.052 274.9)",
+          "oklch(38% 0.052 274.9)",
+          "oklch(49% 0.052 274.9)",
+          "oklch(61% 0.052 274.9)",
+          "oklch(72% 0.052 274.9)",
+          "oklch(84% 0.052 274.9)",
+          "oklch(95% 0.052 274.9)"
+        ]
+      },
+      "ink-muted": {
+        "role": "neutral",
+        "displayName": "Muted Ink",
+        "canonical": "#565C78",
+        "tonalRamp": [
+          "oklch(15% 0.046 275.1)",
+          "oklch(26% 0.046 275.1)",
+          "oklch(38% 0.046 275.1)",
+          "oklch(49% 0.046 275.1)",
+          "oklch(61% 0.046 275.1)",
+          "oklch(72% 0.046 275.1)",
+          "oklch(84% 0.046 275.1)",
+          "oklch(95% 0.046 275.1)"
+        ]
+      },
+      "ink-disabled": {
+        "role": "neutral",
+        "displayName": "Disabled Ink",
+        "canonical": "#8C91A8",
+        "tonalRamp": [
+          "oklch(15% 0.035 275.7)",
+          "oklch(26% 0.035 275.7)",
+          "oklch(38% 0.035 275.7)",
+          "oklch(49% 0.035 275.7)",
+          "oklch(61% 0.035 275.7)",
+          "oklch(72% 0.035 275.7)",
+          "oklch(84% 0.035 275.7)",
+          "oklch(95% 0.035 275.7)"
+        ]
+      },
+      "info-fg": {
+        "role": "tertiary",
+        "displayName": "Information Blue Fg",
+        "canonical": "#2C4A86",
+        "tonalRamp": [
+          "#2C4A86",
+          "#3D63B5",
+          "#AFC2E6",
+          "#EDF2FB"
+        ]
+      },
+      "info-bg": {
+        "role": "tertiary",
+        "displayName": "Information Blue Bg",
+        "canonical": "#EDF2FB",
+        "tonalRamp": [
+          "#2C4A86",
+          "#3D63B5",
+          "#AFC2E6",
+          "#EDF2FB"
+        ]
+      },
+      "info-border": {
+        "role": "tertiary",
+        "displayName": "Information Blue Border",
+        "canonical": "#AFC2E6",
+        "tonalRamp": [
+          "#2C4A86",
+          "#3D63B5",
+          "#AFC2E6",
+          "#EDF2FB"
+        ]
+      },
+      "info-solid": {
+        "role": "tertiary",
+        "displayName": "Information Blue Solid",
+        "canonical": "#3D63B5",
+        "tonalRamp": [
+          "#2C4A86",
+          "#3D63B5",
+          "#AFC2E6",
+          "#EDF2FB"
+        ]
+      },
+      "warning-fg": {
+        "role": "tertiary",
+        "displayName": "Disagreement Amber Fg",
+        "canonical": "#9A4304",
+        "tonalRamp": [
+          "#9A4304",
+          "#D9650F",
+          "#F0B47F",
+          "#FFF2E5"
+        ]
+      },
+      "warning-bg": {
+        "role": "tertiary",
+        "displayName": "Disagreement Amber Bg",
+        "canonical": "#FFF2E5",
+        "tonalRamp": [
+          "#9A4304",
+          "#D9650F",
+          "#F0B47F",
+          "#FFF2E5"
+        ]
+      },
+      "warning-border": {
+        "role": "tertiary",
+        "displayName": "Disagreement Amber Border",
+        "canonical": "#F0B47F",
+        "tonalRamp": [
+          "#9A4304",
+          "#D9650F",
+          "#F0B47F",
+          "#FFF2E5"
+        ]
+      },
+      "warning-solid": {
+        "role": "tertiary",
+        "displayName": "Disagreement Amber Solid",
+        "canonical": "#D9650F",
+        "tonalRamp": [
+          "#9A4304",
+          "#D9650F",
+          "#F0B47F",
+          "#FFF2E5"
+        ]
+      },
+      "danger-fg": {
+        "role": "tertiary",
+        "displayName": "Identity Red Fg",
+        "canonical": "#A3221B",
+        "tonalRamp": [
+          "#A3221B",
+          "#B42318",
+          "#EBA19C",
+          "#FCEBEA"
+        ]
+      },
+      "danger-bg": {
+        "role": "tertiary",
+        "displayName": "Identity Red Bg",
+        "canonical": "#FCEBEA",
+        "tonalRamp": [
+          "#A3221B",
+          "#B42318",
+          "#EBA19C",
+          "#FCEBEA"
+        ]
+      },
+      "danger-border": {
+        "role": "tertiary",
+        "displayName": "Identity Red Border",
+        "canonical": "#EBA19C",
+        "tonalRamp": [
+          "#A3221B",
+          "#B42318",
+          "#EBA19C",
+          "#FCEBEA"
+        ]
+      },
+      "danger-solid": {
+        "role": "tertiary",
+        "displayName": "Identity Red Solid",
+        "canonical": "#B42318",
+        "tonalRamp": [
+          "#A3221B",
+          "#B42318",
+          "#EBA19C",
+          "#FCEBEA"
+        ]
+      },
+      "hold-fg": {
+        "role": "tertiary",
+        "displayName": "Hold Ink Fg",
+        "canonical": "#2F3450",
+        "tonalRamp": [
+          "#2F3450",
+          "#9EA3BC",
+          "#EEF0F5"
+        ]
+      },
+      "hold-bg": {
+        "role": "tertiary",
+        "displayName": "Hold Ink Bg",
+        "canonical": "#EEF0F5",
+        "tonalRamp": [
+          "#2F3450",
+          "#9EA3BC",
+          "#EEF0F5"
+        ]
+      },
+      "hold-border": {
+        "role": "tertiary",
+        "displayName": "Hold Ink Border",
+        "canonical": "#9EA3BC",
+        "tonalRamp": [
+          "#2F3450",
+          "#9EA3BC",
+          "#EEF0F5"
+        ]
+      },
+      "pas-bg": {
+        "role": "tertiary",
+        "displayName": "PAS Yellow Bg",
+        "canonical": "#FFE45C",
+        "tonalRamp": [
+          "oklch(15% 0.155 98.0)",
+          "oklch(26% 0.155 98.0)",
+          "oklch(38% 0.155 98.0)",
+          "oklch(49% 0.155 98.0)",
+          "oklch(61% 0.155 98.0)",
+          "oklch(72% 0.155 98.0)",
+          "oklch(84% 0.155 98.0)",
+          "oklch(95% 0.155 98.0)"
+        ]
+      },
+      "pas-fg": {
+        "role": "tertiary",
+        "displayName": "PAS Yellow Fg",
+        "canonical": "#1C1700",
+        "tonalRamp": [
+          "oklch(15% 0.042 98.7)",
+          "oklch(26% 0.042 98.7)",
+          "oklch(38% 0.042 98.7)",
+          "oklch(49% 0.042 98.7)",
+          "oklch(61% 0.042 98.7)",
+          "oklch(72% 0.042 98.7)",
+          "oklch(84% 0.042 98.7)",
+          "oklch(95% 0.042 98.7)"
+        ]
+      },
+      "pas-border": {
+        "role": "tertiary",
+        "displayName": "PAS Yellow Border",
+        "canonical": "#8A7300",
+        "tonalRamp": [
+          "oklch(15% 0.115 95.0)",
+          "oklch(26% 0.115 95.0)",
+          "oklch(38% 0.115 95.0)",
+          "oklch(49% 0.115 95.0)",
+          "oklch(61% 0.115 95.0)",
+          "oklch(72% 0.115 95.0)",
+          "oklch(84% 0.115 95.0)",
+          "oklch(95% 0.115 95.0)"
+        ]
+      },
+      "pas-row": {
+        "role": "tertiary",
+        "displayName": "PAS Yellow Row",
+        "canonical": "#FFF8D6",
+        "tonalRamp": [
+          "oklch(15% 0.045 97.5)",
+          "oklch(26% 0.045 97.5)",
+          "oklch(38% 0.045 97.5)",
+          "oklch(49% 0.045 97.5)",
+          "oklch(61% 0.045 97.5)",
+          "oklch(72% 0.045 97.5)",
+          "oklch(84% 0.045 97.5)",
+          "oklch(95% 0.045 97.5)"
+        ]
+      },
+      "sim-fg": {
+        "role": "neutral",
+        "displayName": "Simulation Ink",
+        "canonical": "#4A5070",
+        "tonalRamp": [
+          "oklch(15% 0.053 275.8)",
+          "oklch(26% 0.053 275.8)",
+          "oklch(38% 0.053 275.8)",
+          "oklch(49% 0.053 275.8)",
+          "oklch(61% 0.053 275.8)",
+          "oklch(72% 0.053 275.8)",
+          "oklch(84% 0.053 275.8)",
+          "oklch(95% 0.053 275.8)"
+        ]
+      },
+      "sim-bg": {
+        "role": "neutral",
+        "displayName": "Simulation Gray",
+        "canonical": "#F1F2F7",
+        "tonalRamp": [
+          "oklch(15% 0.007 277.2)",
+          "oklch(26% 0.007 277.2)",
+          "oklch(38% 0.007 277.2)",
+          "oklch(49% 0.007 277.2)",
+          "oklch(61% 0.007 277.2)",
+          "oklch(72% 0.007 277.2)",
+          "oklch(84% 0.007 277.2)",
+          "oklch(95% 0.007 277.2)"
+        ]
+      },
+      "dr-teal": {
+        "role": "tertiary",
+        "displayName": "Doctor Teal",
+        "canonical": "#0F9485",
+        "tonalRamp": [
+          "oklch(15% 0.105 182.3)",
+          "oklch(26% 0.105 182.3)",
+          "oklch(38% 0.105 182.3)",
+          "oklch(49% 0.105 182.3)",
+          "oklch(61% 0.105 182.3)",
+          "oklch(72% 0.105 182.3)",
+          "oklch(84% 0.105 182.3)",
+          "oklch(95% 0.105 182.3)"
+        ]
+      },
+      "dr-teal-tint": {
+        "role": "tertiary",
+        "displayName": "Doctor Teal Tint",
+        "canonical": "#E3F4F1",
+        "tonalRamp": [
+          "oklch(15% 0.018 184.3)",
+          "oklch(26% 0.018 184.3)",
+          "oklch(38% 0.018 184.3)",
+          "oklch(49% 0.018 184.3)",
+          "oklch(61% 0.018 184.3)",
+          "oklch(72% 0.018 184.3)",
+          "oklch(84% 0.018 184.3)",
+          "oklch(95% 0.018 184.3)"
+        ]
+      },
+      "dr-violet": {
+        "role": "tertiary",
+        "displayName": "Doctor Violet",
+        "canonical": "#9A4BD0",
+        "tonalRamp": [
+          "oklch(15% 0.201 308.7)",
+          "oklch(26% 0.201 308.7)",
+          "oklch(38% 0.201 308.7)",
+          "oklch(49% 0.201 308.7)",
+          "oklch(61% 0.201 308.7)",
+          "oklch(72% 0.201 308.7)",
+          "oklch(84% 0.201 308.7)",
+          "oklch(95% 0.201 308.7)"
+        ]
+      },
+      "dr-violet-tint": {
+        "role": "tertiary",
+        "displayName": "Doctor Violet Tint",
+        "canonical": "#F3ECFB",
+        "tonalRamp": [
+          "oklch(15% 0.021 306.8)",
+          "oklch(26% 0.021 306.8)",
+          "oklch(38% 0.021 306.8)",
+          "oklch(49% 0.021 306.8)",
+          "oklch(61% 0.021 306.8)",
+          "oklch(72% 0.021 306.8)",
+          "oklch(84% 0.021 306.8)",
+          "oklch(95% 0.021 306.8)"
+        ]
+      },
+      "dr-amber": {
+        "role": "tertiary",
+        "displayName": "Doctor Amber",
+        "canonical": "#916A0B",
+        "tonalRamp": [
+          "oklch(15% 0.110 82.2)",
+          "oklch(26% 0.110 82.2)",
+          "oklch(38% 0.110 82.2)",
+          "oklch(49% 0.110 82.2)",
+          "oklch(61% 0.110 82.2)",
+          "oklch(72% 0.110 82.2)",
+          "oklch(84% 0.110 82.2)",
+          "oklch(95% 0.110 82.2)"
+        ]
+      },
+      "dr-amber-tint": {
+        "role": "tertiary",
+        "displayName": "Doctor Amber Tint",
+        "canonical": "#F1EEE9",
+        "tonalRamp": [
+          "oklch(15% 0.007 80.7)",
+          "oklch(26% 0.007 80.7)",
+          "oklch(38% 0.007 80.7)",
+          "oklch(49% 0.007 80.7)",
+          "oklch(61% 0.007 80.7)",
+          "oklch(72% 0.007 80.7)",
+          "oklch(84% 0.007 80.7)",
+          "oklch(95% 0.007 80.7)"
+        ]
+      },
+      "age-1": {
+        "role": "tertiary",
+        "displayName": "Age Band 1",
+        "canonical": "#8F94D6",
+        "tonalRamp": [
+          "#1B1F47",
+          "#3A3F9E",
+          "#5D63BC",
+          "#8F94D6"
+        ]
+      },
+      "age-2": {
+        "role": "tertiary",
+        "displayName": "Age Band 2",
+        "canonical": "#5D63BC",
+        "tonalRamp": [
+          "#1B1F47",
+          "#3A3F9E",
+          "#5D63BC",
+          "#8F94D6"
+        ]
+      },
+      "age-3": {
+        "role": "tertiary",
+        "displayName": "Age Band 3",
+        "canonical": "#3A3F9E",
+        "tonalRamp": [
+          "#1B1F47",
+          "#3A3F9E",
+          "#5D63BC",
+          "#8F94D6"
+        ]
+      },
+      "age-4": {
+        "role": "tertiary",
+        "displayName": "Age Band 4",
+        "canonical": "#1B1F47",
+        "tonalRamp": [
+          "#1B1F47",
+          "#3A3F9E",
+          "#5D63BC",
+          "#8F94D6"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "specimen-letter": {
+        "displayName": "Specimen letter",
+        "purpose": "Part letter on the specimen label only."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Page title in the page header."
+      },
+      "title-focal": {
+        "displayName": "Title focal",
+        "purpose": "The one focal statement per screen: what is blocked or being decided."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Section and card headings."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Document base and long-form fields."
+      },
+      "body-sm": {
+        "displayName": "Body small",
+        "purpose": "The working size: table cells, facts, buttons, panel text."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Pills, hints, field errors, captions; the 13px floor."
+      },
+      "identifier": {
+        "displayName": "Identifier",
+        "purpose": "Every accession, intake, block, slide, request and order id; never wrapped or truncated."
+      }
+    },
+    "shadows": [
+      {
+        "name": "shadow-1",
+        "value": "0 1px 2px rgb(21 26 48 / 0.07)",
+        "purpose": "Rest: small floating controls and dropdown triggers."
+      },
+      {
+        "name": "shadow-2",
+        "value": "0 6px 16px -4px rgb(21 26 48 / 0.16), 0 1px 3px rgb(21 26 48 / 0.08)",
+        "purpose": "Raised: the raised card variant, popovers and menus."
+      },
+      {
+        "name": "shadow-3",
+        "value": "0 18px 40px -8px rgb(21 26 48 / 0.28), 0 2px 8px rgb(21 26 48 / 0.10)",
+        "purpose": "Overlay: dialogs, toasts, the side panel as an overlay."
+      },
+      {
+        "name": "focus-ring",
+        "value": "outline: 2px solid #C2336F; outline-offset: 2px",
+        "purpose": "Keyboard focus everywhere; #F07AAA on the dark bar."
+      },
+      {
+        "name": "hold-hatch",
+        "value": "repeating-linear-gradient(135deg, rgb(47 52 80 / 0.13) 0 2px, transparent 2px 7px)",
+        "purpose": "Hold texture on the hold ground; the only pattern in the system."
+      }
+    ],
+    "motion": [
+      {
+        "name": "duration-fast",
+        "value": "120ms",
+        "purpose": "Hover, press and color changes; overlay fade-in."
+      },
+      {
+        "name": "duration-base",
+        "value": "200ms",
+        "purpose": "Row arrival (rise 4px + fade) and content swap (fade from 35%)."
+      },
+      {
+        "name": "duration-slow",
+        "value": "320ms",
+        "purpose": "Larger state changes."
+      },
+      {
+        "name": "ease",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Decelerating arrivals; the default easing."
+      },
+      {
+        "name": "ease-exit",
+        "value": "cubic-bezier(0.4, 0, 1, 1)",
+        "purpose": "Exits, faster than arrivals."
+      },
+      {
+        "name": "scan-ping",
+        "value": "700ms x2, eosin ring expanding 2px to 12px",
+        "purpose": "A scan locating a row."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "stacked",
+        "value": "max-width: 1023.98px or max-height: 560px",
+        "purpose": "Fixed-frame workstations become one page-scrolling column; top bar wraps to 102px."
+      },
+      {
+        "name": "comfortable-density",
+        "value": "below 1280px or touch",
+        "purpose": "48px rows, 15px cells, 44px targets."
+      },
+      {
+        "name": "nav-icons",
+        "value": "below 1366px",
+        "purpose": "Job links become 44px icon targets."
+      },
+      {
+        "name": "bench",
+        "value": "1366-1440px",
+        "purpose": "Primary bench workstation width."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one next step on a screen; hematoxylin fill.",
+      "html": "<button class=\"ds-btn-primary\">Request accession</button>",
+      "css": ".ds-btn-primary { display:inline-flex; align-items:center; justify-content:center; gap:8px; height:40px; padding:0 16px; border-radius:5px; font-family: var(--font-sans, \"Atkinson Hyperlegible Next\", system-ui, sans-serif); font-size:0.84375rem; line-height:1.25rem; font-weight:600; white-space:nowrap; cursor:pointer; border:1px solid transparent; transition: background-color 120ms cubic-bezier(0.16,1,0.3,1), color 120ms cubic-bezier(0.16,1,0.3,1), border-color 120ms cubic-bezier(0.16,1,0.3,1), transform 120ms cubic-bezier(0.16,1,0.3,1); background: var(--hlo-brand, #3A3F9E); color: #FFFFFF; } .ds-btn-primary:hover { background: var(--hlo-brand-hover, #2E3384); } .ds-btn-primary:active { transform: translateY(1px); } .ds-btn-primary:focus-visible { outline: 2px solid var(--hlo-focus, #C2336F); outline-offset: 2px; } .ds-btn-primary:disabled { background: var(--hlo-surface-subtle, #F4F5F8); color: var(--hlo-text-muted, #565C78); border-color: var(--hlo-border, #D8DBE5); cursor: not-allowed; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Default action; white with a strong hairline.",
+      "html": "<button class=\"ds-btn-secondary\">Send clarification</button>",
+      "css": ".ds-btn-secondary { display:inline-flex; align-items:center; justify-content:center; gap:8px; height:40px; padding:0 16px; border-radius:5px; font-family: var(--font-sans, \"Atkinson Hyperlegible Next\", system-ui, sans-serif); font-size:0.84375rem; line-height:1.25rem; font-weight:600; white-space:nowrap; cursor:pointer; border:1px solid transparent; transition: background-color 120ms cubic-bezier(0.16,1,0.3,1), color 120ms cubic-bezier(0.16,1,0.3,1), border-color 120ms cubic-bezier(0.16,1,0.3,1), transform 120ms cubic-bezier(0.16,1,0.3,1); background: var(--hlo-surface, #FFFFFF); color: var(--hlo-text, #151A30); border-color: var(--hlo-border-strong, #878DA8); } .ds-btn-secondary:hover { background: var(--hlo-surface-subtle, #F4F5F8); } .ds-btn-secondary:active { background: var(--hlo-surface-sunken, #E3E6EE); transform: translateY(1px); } .ds-btn-secondary:focus-visible { outline: 2px solid var(--hlo-focus, #C2336F); outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Low-emphasis action in hematoxylin text.",
+      "html": "<button class=\"ds-btn-ghost\">Show all 2</button>",
+      "css": ".ds-btn-ghost { display:inline-flex; align-items:center; justify-content:center; gap:8px; height:40px; padding:0 16px; border-radius:5px; font-family: var(--font-sans, \"Atkinson Hyperlegible Next\", system-ui, sans-serif); font-size:0.84375rem; line-height:1.25rem; font-weight:600; white-space:nowrap; cursor:pointer; border:1px solid transparent; transition: background-color 120ms cubic-bezier(0.16,1,0.3,1), color 120ms cubic-bezier(0.16,1,0.3,1), border-color 120ms cubic-bezier(0.16,1,0.3,1), transform 120ms cubic-bezier(0.16,1,0.3,1); background: transparent; color: var(--hlo-brand, #3A3F9E); } .ds-btn-ghost:hover { background: var(--hlo-brand-50, #EEEFFA); } .ds-btn-ghost:active { background: var(--hlo-brand-100, #DCDEF4); } .ds-btn-ghost:focus-visible { outline: 2px solid var(--hlo-focus, #C2336F); outline-offset: 2px; }"
+    },
+    {
+      "name": "Destructive Button",
+      "kind": "button",
+      "refersTo": "button-destructive",
+      "description": "Only for confirming an action that discards data.",
+      "html": "<button class=\"ds-btn-destructive\">Reset demo data</button>",
+      "css": ".ds-btn-destructive { display:inline-flex; align-items:center; justify-content:center; gap:8px; height:40px; padding:0 16px; border-radius:5px; font-family: var(--font-sans, \"Atkinson Hyperlegible Next\", system-ui, sans-serif); font-size:0.84375rem; line-height:1.25rem; font-weight:600; white-space:nowrap; cursor:pointer; border:1px solid transparent; transition: background-color 120ms cubic-bezier(0.16,1,0.3,1), color 120ms cubic-bezier(0.16,1,0.3,1), border-color 120ms cubic-bezier(0.16,1,0.3,1), transform 120ms cubic-bezier(0.16,1,0.3,1); background: var(--hlo-danger-solid, #B42318); color: #FFFFFF; } .ds-btn-destructive:hover { background: var(--hlo-danger-fg, #A3221B); } .ds-btn-destructive:active { transform: translateY(1px); } .ds-btn-destructive:focus-visible { outline: 2px solid var(--hlo-focus, #C2336F); outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Labeled field; invalid is amber, never red.",
+      "html": "<label class=\"ds-field\"><span class=\"ds-field-label\">MRN <span class=\"ds-field-req\">(required)</span></span><input class=\"ds-input\" value=\"MRN-0042817\"></label>",
+      "css": ".ds-field { display:flex; flex-direction:column; gap:4px; font-family: var(--font-sans, \"Atkinson Hyperlegible Next\", system-ui, sans-serif); } .ds-field-label { font-size:0.84375rem; line-height:1.25rem; font-weight:500; color: var(--hlo-text-secondary, #383E5C); } .ds-field-req { font-weight:400; color: var(--hlo-text-muted, #565C78); } .ds-input { height:40px; padding:0 10px; border:1px solid var(--hlo-border-strong, #878DA8); border-radius:3px; background: var(--hlo-surface, #FFFFFF); color: var(--hlo-text, #151A30); font-family: var(--font-mono, \"Atkinson Hyperlegible Mono\", ui-monospace, monospace); font-variant-numeric: tabular-nums slashed-zero; font-size:0.9375rem; caret-color: var(--hlo-eosin, #C2336F); transition: border-color 120ms; } .ds-input:hover { border-color: var(--hlo-text-secondary, #383E5C); } .ds-input:focus-visible { outline: 2px solid var(--hlo-focus, #C2336F); outline-offset: 2px; } .ds-input[aria-invalid=true] { border-color: var(--hlo-warning-solid, #D9650F); background: var(--hlo-warning-bg, #FFF2E5); }"
+    },
+    {
+      "name": "Top Bar Navigation",
+      "kind": "nav",
+      "refersTo": "top-bar",
+      "description": "Hematoxylin bar; the current job is the one light chip.",
+      "html": "<nav class=\"ds-topbar\"><span class=\"ds-topbar-brand\">Histology Lab OS</span><a class=\"ds-nav-link ds-nav-active\" href=\"#\">Intake <span class=\"ds-nav-count\">4</span></a><a class=\"ds-nav-link\" href=\"#\">Clarifications</a><span class=\"ds-nav-sep\"></span><a class=\"ds-nav-link\" href=\"#\">Grossing</a><a class=\"ds-nav-link\" href=\"#\">Worklist</a></nav>",
+      "css": ".ds-topbar { display:flex; align-items:center; gap:2px; height:52px; padding:0 12px; background: var(--hlo-shell, #1B1F47); color:#FFFFFF; font-family: var(--font-sans, \"Atkinson Hyperlegible Next\", system-ui, sans-serif); } .ds-topbar-brand { font-weight:700; font-size:0.9375rem; letter-spacing:-0.01em; margin-right:12px; } .ds-nav-link { display:inline-flex; align-items:center; gap:4px; height:36px; padding:0 6px; border-radius:5px; font-size:0.84375rem; font-weight:500; color: var(--hlo-shell-muted, #B9BCE0); text-decoration:none; transition: background-color 120ms, color 120ms; } .ds-nav-link:hover { background: var(--hlo-shell-2, #272C5E); color:#FFFFFF; } .ds-nav-link:focus-visible { outline:2px solid var(--hlo-eosin-light, #F07AAA); outline-offset:2px; } .ds-nav-active, .ds-nav-active:hover { background:#FFFFFF; color: var(--hlo-shell, #1B1F47); font-weight:600; } .ds-nav-count { display:inline-flex; align-items:center; justify-content:center; min-width:18px; height:18px; padding:0 4px; border-radius:999px; font-size:0.8125rem; font-weight:600; background: var(--hlo-shell, #1B1F47); color:#FFFFFF; font-variant-numeric: tabular-nums; } .ds-nav-sep { width:1px; height:24px; margin:0 4px; background: var(--hlo-shell-line, #3A4078); }"
+    },
+    {
+      "name": "Severity Pills",
+      "kind": "chip",
+      "refersTo": "status-pill",
+      "description": "Tone tint, tone border, icon and words; the ladder in one row.",
+      "html": "<div class=\"ds-row\"><span class=\"ds-pill ds-danger\"><svg viewBox=\"0 0 24 24\"><polygon points=\"7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86\"/><path d=\"m15 9-6 6M9 9l6 6\"/></svg>Identity differs</span><span class=\"ds-pill ds-warning\"><svg viewBox=\"0 0 24 24\"><path d=\"m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3\"/><path d=\"M12 9v4M12 17h.01\"/></svg>Laterality differs</span><span class=\"ds-pill ds-hold\"><svg viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M10 15V9M14 15V9\"/></svg>On hold: Part B</span><span class=\"ds-pill ds-neutral\"><svg viewBox=\"0 0 24 24\"><circle cx=\"12\" cy=\"12\" r=\"10\"/></svg>Waiting on Dr. Okafor</span><span class=\"ds-pas\"><svg viewBox=\"0 0 24 24\"><path d=\"M10 2v7.53a2 2 0 0 1-.21.9L4.72 20.55A1 1 0 0 0 5.62 22h12.76a1 1 0 0 0 .9-1.45l-5.07-10.12a2 2 0 0 1-.21-.9V2M8.5 2h7M7 16h10\"/></svg>PAS</span></div>",
+      "css": ".ds-row { display:flex; flex-wrap:wrap; gap:8px; font-family: var(--font-sans, \"Atkinson Hyperlegible Next\", system-ui, sans-serif); } .ds-pill { display:inline-flex; align-items:center; gap:4px; height:24px; padding:0 8px; border:1px solid; border-radius:999px; font-size:0.8125rem; font-weight:500; white-space:nowrap; } .ds-pill svg, .ds-pas svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; } .ds-danger { background: var(--hlo-danger-bg, #FCEBEA); color: var(--hlo-danger-fg, #A3221B); border-color: var(--hlo-danger-border, #EBA19C); } .ds-danger svg polygon { fill: var(--hlo-danger-solid, #B42318); stroke: var(--hlo-danger-solid, #B42318); } .ds-danger svg path { stroke:#FFFFFF; } .ds-warning { background: var(--hlo-warning-bg, #FFF2E5); color: var(--hlo-warning-fg, #9A4304); border-color: var(--hlo-warning-border, #F0B47F); } .ds-warning svg { color: var(--hlo-warning-solid, #D9650F); } .ds-hold { background-color: var(--hlo-hold-bg, #EEF0F5); background-image: repeating-linear-gradient(135deg, rgb(47 52 80 / 0.13) 0 2px, transparent 2px 7px); color: var(--hlo-hold-fg, #2F3450); border-color: var(--hlo-hold-border, #9EA3BC); } .ds-neutral { background: var(--hlo-surface-subtle, #F4F5F8); color: var(--hlo-text-secondary, #383E5C); border-color: var(--hlo-border-strong, #878DA8); } .ds-neutral svg { color: var(--hlo-text-muted, #565C78); } .ds-pas { display:inline-flex; align-items:center; gap:4px; height:24px; padding:0 6px; border:1px solid var(--hlo-pas-border, #8A7300); border-radius:3px; background: var(--hlo-pas-bg, #FFE45C); color: var(--hlo-pas-fg, #1C1700); font-size:0.8125rem; font-weight:600; }"
+    },
+    {
+      "name": "Evidence Sheet",
+      "kind": "card",
+      "refersTo": "card-sheet",
+      "description": "White sheet with a hairline; sections inside are hairline-separated.",
+      "html": "<section class=\"ds-sheet\"><header class=\"ds-sheet-head\"><h3>Evidence</h3><p>Differences first</p></header><dl class=\"ds-facts\"><dt>Order</dt><dd>Left forearm</dd><dt>Bottle</dt><dd>Right forearm</dd><dt>Requisition</dt><dd>Left forearm</dd></dl></section>",
+      "css": ".ds-sheet { border:1px solid var(--hlo-border, #D8DBE5); border-radius:8px; background: var(--hlo-surface, #FFFFFF); font-family: var(--font-sans, \"Atkinson Hyperlegible Next\", system-ui, sans-serif); color: var(--hlo-text, #151A30); max-width:420px; } .ds-sheet-head { padding:10px 16px; border-bottom:1px solid var(--hlo-border, #D8DBE5); } .ds-sheet-head h3 { margin:0; font-size:1.0625rem; line-height:1.5rem; font-weight:700; letter-spacing:-0.01em; } .ds-sheet-head p { margin:2px 0 0; font-size:0.84375rem; color: var(--hlo-text-muted, #565C78); } .ds-facts { display:grid; grid-template-columns:minmax(8rem,auto) 1fr; gap:6px 16px; margin:0; padding:16px; font-size:0.84375rem; line-height:1.25rem; } .ds-facts dt { color: var(--hlo-text-muted, #565C78); } .ds-facts dd { margin:0; }"
+    },
+    {
+      "name": "Specimen Label",
+      "kind": "custom",
+      "refersTo": "specimen-label",
+      "description": "The part in hand as its label: dashed while provisional, solid once official.",
+      "html": "<div class=\"ds-row2\"><div class=\"ds-label ds-prov\"><span class=\"ds-letter\">B</span><div class=\"ds-label-text\"><p><span class=\"ds-prov-word\">Provisional</span> <span class=\"ds-id\">INT-0412</span></p><p class=\"ds-l1\">ORD-88213</p></div></div><div class=\"ds-label\"><span class=\"ds-letter\">A</span><div class=\"ds-label-text\"><p><span class=\"ds-id\">D26-01873</span></p><p class=\"ds-l1\">EMA-SIM DERM</p></div></div></div>",
+      "css": ".ds-row2 { display:flex; gap:16px; flex-wrap:wrap; font-family: var(--font-sans, \"Atkinson Hyperlegible Next\", system-ui, sans-serif); } .ds-label { display:inline-flex; align-items:stretch; gap:10px; padding:6px 12px 6px 10px; border:1.5px solid var(--hlo-text, #151A30); border-radius:5px; background: var(--hlo-surface, #FFFFFF); color: var(--hlo-text, #151A30); } .ds-prov { border-style:dashed; border-color: var(--hlo-text-muted, #565C78); } .ds-letter { display:flex; align-items:center; font-size:2.5rem; line-height:1; font-weight:700; letter-spacing:-0.03em; } .ds-label-text { display:flex; flex-direction:column; justify-content:center; padding-left:10px; border-left:1px solid var(--hlo-border, #D8DBE5); line-height:1.25rem; } .ds-label-text p { margin:0; white-space:nowrap; } .ds-prov-word { font-size:0.84375rem; font-weight:500; color: var(--hlo-text-muted, #565C78); } .ds-id { font-family: var(--font-mono, \"Atkinson Hyperlegible Mono\", ui-monospace, monospace); font-variant-numeric: tabular-nums slashed-zero; letter-spacing:0.01em; font-size:1.0625rem; font-weight:600; } .ds-l1 { font-size:0.84375rem; color: var(--hlo-text-secondary, #383E5C); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Stained Bench",
+    "overview": "**Creative North Star: \"The Stained Bench\"**\n\nThe product is a histology bench seen through its own stain. Hematoxylin, the blue-black nuclear dye, is the structure: the top bar, the primary action, the ink. Eosin, the magenta counterstain, appears only where the eye must land on the keyboard's position and in the brand mark. The ground is a cool bench gray; every record sits on a white evidence sheet with a hairline edge. Nothing on screen is decorative: color is a severity signal or a material, never a mood.\n\nDensity is a working density. The default reading size is 13.5px with 13px as the floor, chosen for bench reading distance; the type family is Atkinson Hyperlegible, drawn so look-alike characters (0/O, 1/l/I, B/8) stay distinct, because comparing identifiers across a bottle, a requisition and an order is the core task. Each bench screen is one fixed composition for its job (queue, identity, evidence, decision) rather than a stack of equal cards, and collapses to one page-scrolling column under the `stacked` condition.\n\nThe signature is the specimen label: the part in hand is drawn as its own label, dashed while provisional and solid with its DataMatrix once official. The same dashed/solid grammar runs through the whole system: a dashed edge means \"not yet real\".",
+    "keyCharacteristics": [
+      "Hematoxylin shell and ink on a cool gray ground; white sheets with hairlines.",
+      "Eosin magenta reserved for focus rings, the caret and the brand mark.",
+      "A fixed severity ladder: red for patient identity, amber for disagreement, hatched ink for holds, neutral ink with a name for waiting, yellow for PAS only.",
+      "Atkinson Hyperlegible Next for words, Atkinson Hyperlegible Mono for every identifier, never wrapped or truncated.",
+      "Flat sheets; shadows only on things that float above the bench.",
+      "Motion only for state changes a person caused or must notice."
+    ],
+    "rules": [
+      {
+        "name": "The Eosin Rule",
+        "body": "Eosin marks where the keyboard is and whose product this is. It is never a fill, a status or a highlight.",
+        "section": "colors"
+      },
+      {
+        "name": "The Ladder Rule",
+        "body": "Red means patient identity; amber means sources disagree or data may be wrong; hatched ink means a hold; neutral ink with a person's name means waiting. One orange for every problem is the failure this system exists to prevent. The only other red is a button that discards data.",
+        "section": "colors"
+      },
+      {
+        "name": "The Yellow Is PAS Rule",
+        "body": "Yellow appears only for PAS, and always with the word \"PAS\".",
+        "section": "colors"
+      },
+      {
+        "name": "The Never Color Alone Rule",
+        "body": "Every rung carries an icon and words; hold carries a hatch. Forced-colors mode draws borders on every pill, chip and banner.",
+        "section": "colors"
+      },
+      {
+        "name": "The Identifier Rule",
+        "body": "Every identifier is set in the mono and never wraps or truncates. The mono is for identifiers only, never for decoration or numbers in prose.",
+        "section": "typography"
+      },
+      {
+        "name": "The One Focal Point Rule",
+        "body": "One thing per screen sits at 21-26px: the identity in hand or the one thing that is blocked. Everything else stays at 13-17px.",
+        "section": "typography"
+      },
+      {
+        "name": "The Sentence Case Rule",
+        "body": "Sentence case everywhere. No all-caps labels, no small labels above headings.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Bench Rule",
+        "body": "If it does not float over other content, it has no shadow. All shadows are tinted with hematoxylin ink, never pure black.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Hatch Rule",
+        "body": "A hold is a 135-degree hatch of ink at 13% (2px line, 7px period) on the hold ground. No other surface uses a pattern.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Dashed Means Not Yet Real Rule",
+        "body": "A dashed edge marks something that does not yet exist officially: a provisional intake id, an unsent drafted question, an empty tray position, an unassigned doctor swatch, a simulated timeline event. Real things have solid edges.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "**Do** draw every color from the tokens; the default Tailwind palette does not exist here.",
+      "**Do** keep the case or part in hand visible during any edit through the identity band and its specimen label.",
+      "**Do** keep the next action and its owner visible, and put the reason for a disabled action beside it.",
+      "**Do** separate sections inside a sheet with hairlines.",
+      "**Do** use dashed edges only for things not yet real, and solid edges for everything official.",
+      "**Do** animate only state changes: a row arriving (rise 4px and fade, 200ms), content swapping (fade from 35%, 200ms), a scan locating a row (eosin ping, 700ms twice); overlays fade in over 120ms. Ease out with cubic-bezier(0.16, 1, 0.3, 1). Reduced motion removes all of it.",
+      "**Do** label anything simulated or synthetic once, where it matters, with the honesty tag."
+    ],
+    "donts": [
+      "**Don't** use eosin for anything other than focus, the caret and the brand mark.",
+      "**Don't** use red for anything except patient identity disagreement and a destructive confirmation button.",
+      "**Don't** use yellow for anything except PAS.",
+      "**Don't** put a card inside a card, or build a screen as a stack of equal cards or equal KPI tiles.",
+      "**Don't** put colored side stripes on cards, rows or banners; use tint, icon and words.",
+      "**Don't** use all-caps labels or small labels above headings.",
+      "**Don't** wrap or truncate an identifier, or set non-identifiers in the mono.",
+      "**Don't** add shadows to sheets resting on the bench, or ambient animation of any kind.",
+      "**Don't** restyle shared parts with one-off classes on a screen; change the shared part."
+    ]
+  }
+}

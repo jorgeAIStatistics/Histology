@@ -5,7 +5,7 @@ import { cn } from "@/lib/cn";
 import { fmtFull, fmtSmart } from "@/lib/time";
 
 /**
- * Hold (spec §7): hold tint, 4px hold stripe, pause icon. The scope is always
+ * Hold (spec §7): hold tint, hatched hold ground and border, pause icon. The scope is always
  * named. A hold banner cannot be dismissed; it is released only by resolving
  * the linked clarification.
  */
@@ -48,7 +48,7 @@ export function HoldBanner({
   return (
     <section
       role="status"
-      className={cn("hlo-banner hlo-hold-stripe flex items-start gap-3 rounded-md border border-l-4 border-hold-border border-l-hold-solid bg-hold-bg px-3 py-2.5", className)}
+      className={cn("hlo-banner hatch flex items-start gap-3 rounded-md border border-hold-border px-3 py-2.5", className)}
     >
       <CirclePause className="mt-0.5 size-4 shrink-0 text-hold-solid" aria-hidden />
       <div className="min-w-0 flex-1 text-sm">
@@ -94,17 +94,28 @@ export function HoldBanner({
   );
 }
 
-/** Pill for tables and the identity bar: "Hold: Part B" in hold colors with a pause icon. */
-export function HoldPill({ scope, className }: { scope?: string; className?: string }) {
+/** Hatched hold chip for tables, queues and the identity bar: "Hold: Part B" with a pause icon (the hold rung). */
+export function HoldPill({ scope, holdId, size = "md", className }: { scope?: string; holdId?: string; size?: "md" | "sm"; className?: string }) {
   return (
     <span
+      title={size === "sm" && scope ? `Hold${holdId ? ` ${holdId}` : ""}: ${scope}` : undefined}
       className={cn(
-        "hlo-pill inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-pill border border-hold-border bg-hold-bg px-2 text-xs font-medium text-hold-fg",
+        "hlo-pill hatch inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-sm border border-hold-border font-medium text-hold-fg",
+        size === "sm" ? "h-5 max-w-full px-1 text-xs" : "h-6 px-1.5 text-sm",
         className,
       )}
     >
       <CirclePause className="size-3.5 shrink-0 text-hold-solid" aria-hidden />
-      {scope ? `Hold: ${scope}` : "Hold"}
+      <span className={size === "sm" ? "truncate" : undefined}>
+        Hold
+        {holdId ? (
+          <>
+            {" "}
+            <span className="id-mono">{holdId}</span>
+          </>
+        ) : null}
+        {scope ? `: ${scope}` : ""}
+      </span>
     </span>
   );
 }

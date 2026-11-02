@@ -30,12 +30,28 @@ export const SLIDE_DISPOSITION_LABEL: Record<string, string> = {
   kept_active: "Kept active (per review)",
 };
 
+/**
+ * Authorization recorded when someone other than a dermatopathologist enters the order (for example a
+ * histotech relaying a verbal request). There is no CHECK constraint on work_order.authorization_source
+ * (schema.sql documents source_order | standing_protocol | pathologist_request), and none of those fits:
+ * this is not the source order, not a protocol, and the app cannot verify it is a pathologist's own
+ * order. So the work order records the person who entered it as the requester, this value, and their
+ * reference to who asked and how. It is never stored as "pathologist_request".
+ */
+export const STAFF_ENTERED_REQUEST = "staff_entered_request";
+
 export function orderAdditionalSlide(
   ctx: Ctx,
-  input: { blockId: string; stain: string; level?: string | null; reason: string },
-): { workOrderId: string; workOrderDisplayId: string; slideId: string; slideLabel: string; message: string } {
+  input: { blockId: string; stain: string; level?: string | null; reason: string; requestReference?: string | null },
+): { workOrderId: string; workOrderDisplayId: string; slideId: string; slideLabel: string; authorizationSource: string; message: string } {
   const reason = requireText(input.reason, "Say why the additional slide is needed");
   const stain = requireText(input.stain, "Choose the stain for the additional slide");
+  const byPathologist = ctx.actor.role === "pathologist";
+  // Someone other than the dermatopathologist must say who asked and how; nothing is attributed to a pathologist on their behalf.
+  const requestReference = byPathologist ? (input.requestReference?.trim() || null) : requireText(input.requestReference, "Say who asked for this slide and how (for example: Dr. Marsh, by phone at 10:40)");
+  if (!byPathologist && requestReference!.length < 3) {
+    throw new DomainError("VALIDATION", "Say who asked for this slide and how (for example: Dr. Marsh, by phone at 10:40)");
+  }
   const block = mustBlock(ctx.db, input.blockId);
   if (block.status !== "active") throw new DomainError("BLOCKED", `${block.accession_number} ${block.label_text} is void`);
   if (block.custody_state === "sent_out") {
@@ -48,9 +64,12 @@ export function orderAdditionalSlide(
   const isHE = stain.toUpperCase() === "H&E" || stain.toUpperCase() === "HE";
   const kind = isHE ? (level ? "levels" : "recut") : "stain";
   const pathologistId = pathologistOf(ctx.db, block.accession_id);
-  const pathologistName = staffName(ctx.db, pathologistId) ?? "assigned dermatopathologist";
-  const byPathologist = ctx.actor.role === "pathologist";
-  const requestedByLabel = byPathologist ? ctx.actor.name : `${pathologistName} (entered by ${ctx.actor.name})`;
+  const authorizationSource = byPathologist ? "pathologist_request" : STAFF_ENTERED_REQUEST;
+  // The requester of record is the person who entered the order; the reference says who asked and how.
+  const requestedByLabel = byPathologist ? ctx.actor.name : `${ctx.actor.name}, on request: ${requestReference}`;
+  const sourceReference = byPathologist
+    ? `Additional slide on ${block.label_text}: ${reason}`
+    : `Additional slide on ${block.label_text}: ${reason}. Entered by ${ctx.actor.name} on request (${requestReference}); not recorded as the dermatopathologist's own order`;
 
   const woId = newId(ctx.db, "wo");
   const woDisplay = displayId(ctx.db, "WO", 4);
@@ -58,11 +77,11 @@ export function orderAdditionalSlide(
     .prepare(
       `INSERT INTO work_order (id, display_id, accession_id, kind, stain, authorization_source, source_reference, requested_by_label, requested_by_staff_id,
         source_order_id, source_version, target_part_id, target_block_id, quantity, status, status_reason, requested_at, version)
-       VALUES (?, ?, ?, ?, ?, 'pathologist_request', ?, ?, ?, NULL, NULL, ?, ?, 1, 'requested', NULL, ?, 1)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, 1, 'requested', NULL, ?, 1)`,
     )
     .run(
-      woId, woDisplay, block.accession_id, kind, isHE ? "H&E" : stain, `Additional slide on ${block.label_text}: ${reason}`, requestedByLabel,
-      byPathologist ? ctx.actor.id : (pathologistId ?? null), block.part_id, block.id, ctx.now,
+      woId, woDisplay, block.accession_id, kind, isHE ? "H&E" : stain, authorizationSource, sourceReference, requestedByLabel,
+      ctx.actor.id, block.part_id, block.id, ctx.now,
     );
   const seq = (ctx.db.prepare("SELECT COALESCE(MAX(slide_seq), 0) + 1 n FROM slide WHERE block_id = ?").get(block.id) as { n: number }).n;
   const slideId = newId(ctx.db, "sld");
@@ -84,6 +103,15 @@ export function orderAdditionalSlide(
     accessionId: block.accession_id,
     summary: `${woDisplay}: additional slide ${slideLabel} ordered on ${block.accession_number} ${block.label_text} (${requestedByLabel}). New work order and new planned slide — not a reprint.`,
     reason,
+    after: {
+      workOrder: { id: woId, displayId: woDisplay, kind, stain: isHE ? "H&E" : stain, status: "requested" },
+      slide: { id: slideId, identifier, physicalState: "planned" },
+      authorizationSource,
+      requestedByStaffId: ctx.actor.id,
+      requestReference,
+      blockId: block.id,
+      assignedPathologistId: pathologistId,
+    },
   });
   recordWorklistChange(ctx, {
     accessionId: block.accession_id,
@@ -91,7 +119,12 @@ export function orderAdditionalSlide(
     type: "changed",
     summary: `${woDisplay}: additional ${isHE ? "H&E" : stain} slide planned on ${block.accession_number} ${block.label_text}`,
   });
-  return { workOrderId: woId, workOrderDisplayId: woDisplay, slideId, slideLabel, message: `${woDisplay} created: ${slideLabel} planned. Print its label when ready.` };
+  return {
+    workOrderId: woId, workOrderDisplayId: woDisplay, slideId, slideLabel, authorizationSource,
+    message: byPathologist
+      ? `${woDisplay} created: ${slideLabel} planned. Print its label when ready.`
+      : `${woDisplay} created: ${slideLabel} planned, recorded as entered by ${ctx.actor.name} on request (${requestReference}). Print its label when ready.`,
+  };
 }
 
 interface WoRow {

@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import type { ItemDetail, BenchPermissions } from "@/server/queries/intake";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CommandError } from "@/components/ui/command-button";
 import { Dialog } from "@/components/ui/dialog";
@@ -12,6 +11,7 @@ import { AccessionChip, IdChip } from "@/components/domain/chips";
 import { Timestamp } from "@/components/domain/timestamp";
 import { useCommand } from "@/lib/client/command";
 import { useUnsavedChanges } from "@/lib/client/unsaved";
+import { RecordSection } from "./bits";
 
 const KINDS = [
   { value: "site_discrepancy", label: "Site or laterality discrepancy" },
@@ -32,14 +32,13 @@ const OUTCOMES = [
  * reference. The app never renumbers, merges or relabels; any correction is
  * made in the authoritative system through its own authorized process.
  */
-export function CorrectionCard({ item, permissions, now }: { item: ItemDetail; permissions: BenchPermissions; now: string }) {
+export function CorrectionSection({ item, permissions, now }: { item: ItemDetail; permissions: BenchPermissions; now: string }) {
   const [opening, setOpening] = useState(false);
   const [closing, setClosing] = useState<ItemDetail["corrections"][number] | null>(null);
   if (!item.accession) return null;
   return (
-    <Card
+    <RecordSection
       id="corrections"
-      headingLevel={3}
       title="Discrepancy after accessioning"
       description="Opens a correction review with a snapshot of the original references. Nothing is renumbered, merged or relabeled here."
       actions={
@@ -49,17 +48,16 @@ export function CorrectionCard({ item, permissions, now }: { item: ItemDetail; p
           </Button>
         ) : null
       }
-      bodyClassName="space-y-2"
     >
       {item.corrections.length ? (
         <ul className="space-y-2 text-sm">
           {item.corrections.map((c) => (
             <li key={c.id} className="flex flex-wrap items-center gap-2">
               <IdChip kind="OTHER" id={c.displayId} />
-              <StatusPill tone={c.status === "open" ? "warning" : c.status === "referred_to_source_process" ? "info" : "success"}>{c.statusLabel}</StatusPill>
+              <StatusPill tone={c.status === "open" ? "warning" : c.status === "referred_to_source_process" ? "info" : "success"} className="text-sm">{c.statusLabel}</StatusPill>
               <span className="text-ink-secondary">{c.kindLabel}</span>
               <span className="min-w-0 flex-1 text-ink">{c.description}</span>
-              <span className="text-xs text-ink-muted">
+              <span className="text-sm text-ink-muted">
                 <Timestamp iso={c.requestedAt} now={now} />
               </span>
               {permissions.closeCorrection && (c.status === "open" || c.status === "referred_to_source_process") ? (
@@ -75,7 +73,7 @@ export function CorrectionCard({ item, permissions, now }: { item: ItemDetail; p
       )}
       {opening ? <OpenDialog item={item} onClose={() => setOpening(false)} /> : null}
       {closing ? <CloseDialog item={item} correction={closing} onClose={() => setClosing(null)} /> : null}
-    </Card>
+    </RecordSection>
   );
 }
 

@@ -258,6 +258,22 @@ function slideIndex(s: SlideState): number {
   return SLIDE_STATE_ORDER.indexOf(s);
 }
 
+/**
+ * Bench progress moves ONE stage at a time (BLOCK_STATE_ORDER / SLIDE_STATE_ORDER). Each stage is a
+ * separate physical event with its own audit row, and a stage can carry its own hold check
+ * (processing, sectioning), so a jump that skips a stage is refused. No current workflow needs a skip:
+ * nothing in the app, the guided demo or the seed advances material more than one stage per command;
+ * a screen that wants several stages chains single steps.
+ */
+function nextStageOnly(label: string, fromLabel: string, nextLabel: string | undefined, toLabel: string): never {
+  throw new DomainError(
+    "VALIDATION",
+    nextLabel
+      ? `${label} is ${fromLabel}; the next stage is ${nextLabel}, not ${toLabel}. Record each stage in order.`
+      : `${label} is ${fromLabel}; there is no later stage to record here.`,
+  );
+}
+
 /** Advance blocks forward. Re-checks holds and gross approval on the server for each block. */
 export function advanceBlocks(ctx: Ctx, blockIds: string[], toState: BlockState): { advanced: { blockId: string; label: string; from: string; to: string }[] } {
   const target = blockIndex(toState);
@@ -272,6 +288,10 @@ export function advanceBlocks(ctx: Ctx, blockIds: string[], toState: BlockState)
     const from = blockIndex(b.physical_state);
     if (from >= target) {
       throw new DomainError("VALIDATION", `${label} is already ${BLOCK_STATE[b.physical_state]}; blocks only move forward here`);
+    }
+    if (target !== from + 1) {
+      const next = BLOCK_STATE_ORDER[from + 1];
+      nextStageOnly(label, BLOCK_STATE[b.physical_state], next ? BLOCK_STATE[next] : undefined, BLOCK_STATE[toState]);
     }
     if (b.custody_state === "sent_out" || b.custody_state === "missing_investigation") {
       throw new DomainError("BLOCKED", `${label} is not in the lab workflow (${b.custody_state === "sent_out" ? "sent outside the lab" : "missing — investigation open"})`);
@@ -361,6 +381,10 @@ export function advanceSlides(ctx: Ctx, slideIds: string[], toState: SlideState)
     }
     const from = slideIndex(s.physical_state);
     if (from >= target) throw new DomainError("VALIDATION", `${label} is already ${SLIDE_STATE[s.physical_state]}; slides only move forward here`);
+    if (target !== from + 1) {
+      const next = SLIDE_STATE_ORDER[from + 1];
+      nextStageOnly(label, SLIDE_STATE[s.physical_state], next ? SLIDE_STATE[next] : undefined, SLIDE_STATE[toState]);
+    }
     if (from < slideIndex("sectioned") && target >= slideIndex("sectioned")) {
       if (s.block_state === "stored") {
         // An archived block can be cut again (deeper levels, recuts) once it is out of storage and on the bench.

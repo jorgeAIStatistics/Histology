@@ -4,8 +4,49 @@
     {
       "name": "histology-lab-os",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 3100
+    },
+    {
+      "name": "dermpath-api",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "E2E_API_PORT=8000",
+        "E2E_WEB_PORT=3600",
+        "node",
+        "workbench/web/tests/e2e/start-backend.mjs"
+      ],
+      "port": 8000
+    },
+    {
+      "name": "dermpath-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "workbench/web",
+        "run",
+        "dev"
+      ],
+      "port": 3600
+    },
+    {
+      "name": "dermpath-api-shared",
+      "runtimeExecutable": "workbench/api/.venv/bin/python",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "dermpath.main:app",
+        "--app-dir",
+        "workbench/api",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8000"
+      ],
+      "port": 8000
     }
   ]
 }

@@ -430,7 +430,11 @@ export interface LoadTranscriptResult {
 }
 
 /** gross.loadTranscript — attach a synthetic dictation fixture and run the deterministic extractor (proposals only). */
-export function loadTranscript(ctx: Ctx, partId: string, transcriptKey: string, expectedVersion?: number): LoadTranscriptResult {
+/**
+ * `expectedVersion`: the gross record version the user saw, or null when the part had no gross record
+ * when they opened it. A record started (or changed) by someone else since then is a CONFLICT.
+ */
+export function loadTranscript(ctx: Ctx, partId: string, transcriptKey: string, expectedVersion: number | null): LoadTranscriptResult {
   if ((getSetting(ctx.db, "assistant_mode") ?? "deterministic") === "unavailable") {
     throw new DomainError(
       "ASSISTANT_UNAVAILABLE",
@@ -442,12 +446,24 @@ export function loadTranscript(ctx: Ctx, partId: string, transcriptKey: string, 
   const rendered = renderTranscript(transcriptKey, part.designation);
   if (!rendered) throw new DomainError("VALIDATION", `Unknown synthetic transcript "${transcriptKey}"`);
   let rec = currentRecordForPart(ctx.db, partId);
+  if (rec && expectedVersion === null) {
+    throw new DomainError(
+      "CONFLICT",
+      `A gross record for this part was started by someone else after you opened it (v${rec.record_version}, ${rec.state.replace(/_/g, " ")}). Review it before attaching a transcript.`,
+      { table: "gross_record", id: rec.id, expectedVersion: null, currentVersion: rec.version, current: rec },
+    );
+  }
   if (!rec) {
+    if (expectedVersion !== null) {
+      throw new DomainError("CONFLICT", "The gross record you had open is no longer the current one for this part. Reload it before attaching a transcript.", {
+        table: "gross_record", id: null, expectedVersion, currentVersion: null,
+      });
+    }
     startDraft(ctx, partId);
     rec = currentRecordForPart(ctx.db, partId)!;
   }
   assertEditable(rec, "Cannot attach a transcript");
-  if (expectedVersion !== undefined && rec.version !== expectedVersion) {
+  if (expectedVersion !== null && rec.version !== expectedVersion) {
     throw new DomainError("CONFLICT", `This gross record was changed by someone else (you had version ${expectedVersion}, current is ${rec.version}). Review the latest version first.`, {
       table: "gross_record", id: rec.id, expectedVersion, currentVersion: rec.version, current: rec,
     });
@@ -750,6 +766,8 @@ export function markReviewed(ctx: Ctx, recordId: string, expectedVersion: number
   audit(ctx, {
     action: "gross.reviewed", entityType: "gross_record", entityId: rec.id, accessionId: part.accession_id,
     summary: `${ctx.actor.name} marked ${partLabel(part)} v${rec.record_version} operator reviewed`,
+    before: { state: rec.state, version: rec.version },
+    after: { state: "operator_reviewed", version: updated.version, recordVersion: rec.record_version, specimenPartId: part.id, transcriptId: rec.transcript_id ?? null },
   });
   return summarize(ctx.db, updated, part);
 }
@@ -942,6 +960,19 @@ export function approve(ctx: Ctx, recordId: string, expectedVersion: number): Ap
   audit(ctx, {
     action: "gross.approved", entityType: "gross_record", entityId: rec.id, accessionId: part.accession_id,
     summary: `${ctx.actor.name} approved ${partLabel(part)} v${rec.record_version} for downstream use. Source-system entry is pending (not entered, not acknowledged). ${worklistSummary}.`,
+    before: { state: rec.state, version: rec.version, sourceUpdateState: rec.source_update_state },
+    after: {
+      state: "approved_for_downstream",
+      version: updated.version,
+      sourceUpdateState: "pending_entry",
+      recordVersion: rec.record_version,
+      specimenPartId: part.id,
+      blockIds: blocksOut.map((b) => b.id),
+      blocksCreated,
+      eligibleBlockIds: blocksOut.filter((b) => b.eligibleForProcessing).map((b) => b.id),
+      taskIds: tasks.map((t) => t.id),
+      worklistSeq,
+    },
   });
   return { record: summarize(db, updated, part), blocksCreated, blocks: blocksOut, tasks, otherParts, worklistSummary, worklistSeq };
 }
@@ -966,6 +997,8 @@ export function recordSourceEntry(ctx: Ctx, recordId: string, expectedVersion: n
   audit(ctx, {
     action: "gross.source_entry_attested", entityType: "gross_record", entityId: rec.id, accessionId: part.accession_id,
     summary: `${ctx.actor.name} attested that ${partLabel(part)} v${rec.record_version} was entered manually in ${part.tenant_name ?? "the source system"}. Staff attestation only; the source system has not acknowledged it.`,
+    before: { sourceUpdateState: rec.source_update_state, version: rec.version },
+    after: { sourceUpdateState: "entered_attested", version: updated.version, recordVersion: rec.record_version, specimenPartId: part.id, attestedBy: ctx.actor.id },
   });
   recordWorklistChange(ctx, {
     accessionId: part.accession_id, pathologistId: part.assigned_pathologist_id, type: "changed",
@@ -977,7 +1010,8 @@ export function recordSourceEntry(ctx: Ctx, recordId: string, expectedVersion: n
 /** gross.simulateSourceAck — demo simulator: the (simulated) source system acknowledges an attested entry. */
 export function simulateSourceAck(ctx: Ctx, recordId: string): GrossRecordSummary & { replayed: boolean } {
   // Demo control open to any working role, but the read-only demo roles never change state (server-side, not just a disabled button).
-  if (ctx.origin === "user" && READ_ONLY_ROLES.includes(ctx.actor.role)) {
+  // Presenter controls arrive with origin "demo" (registry.ts); a person pressing one is checked either way.
+  if ((ctx.origin === "user" || ctx.origin === "demo") && READ_ONLY_ROLES.includes(ctx.actor.role)) {
     throw new DomainError("FORBIDDEN", `${ctx.actor.name} has a read-only demo role and cannot change records, including demo simulator actions.`, { role: ctx.actor.role });
   }
   const rec = loadRecord(ctx.db, recordId);
@@ -1112,6 +1146,16 @@ export function amend(ctx: Ctx, recordId: string, reason: string): { record: Gro
     action: "gross.amended", entityType: "gross_record", entityId: next.id, accessionId: part.accession_id,
     summary: `${ctx.actor.name} amended ${partLabel(part)}: v${rec.record_version} superseded (content unchanged), v${next.record_version} created as a draft${notes.length ? `; ${notes.join("; ")}` : ""}`,
     reason: why,
+    before: { recordId: rec.id, recordVersion: rec.record_version, state: rec.state, sourceUpdateState: rec.source_update_state },
+    after: {
+      supersededRecordId: rec.id,
+      supersededState: "superseded",
+      recordId: next.id,
+      recordVersion: next.record_version,
+      state: "draft",
+      specimenPartId: part.id,
+      processingEligibilityWithdrawn: withdrawn,
+    },
   });
   recordWorklistChange(ctx, {
     accessionId: part.accession_id, pathologistId: part.assigned_pathologist_id, type: "changed",

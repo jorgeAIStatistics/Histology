@@ -1,5 +1,5 @@
 import { getDb } from "@/server/db/db";
-import { getActor } from "@/server/session";
+import { requireView } from "@/server/auth/guard";
 import { getWorklist, listSavedFilters } from "@/server/queries/worklist";
 import { WorklistScreen } from "@/components/worklist/worklist-screen";
 import { filtersFromSearchParams, isWorklistView, type WorklistFilters, type WorklistView } from "@/components/worklist/views";
@@ -26,8 +26,9 @@ function defaultView(role: Role): { view: WorklistView; filters: WorklistFilters
 }
 
 export default async function WorklistPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  // The one guard: signed in (or the demo role), with this screen's view permission, before any data is read.
+  const actor = await requireView("view.worklist");
   const sp = await searchParams;
-  const actor = await getActor();
   const rawView = Array.isArray(sp.view) ? sp.view[0] : sp.view;
   const fallback = defaultView(actor.role);
   const view = isWorklistView(rawView) ? rawView : fallback.view;

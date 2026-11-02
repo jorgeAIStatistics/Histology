@@ -1,7 +1,7 @@
 "use client";
 
 import type { ItemDetail } from "@/server/queries/intake";
-import { Card } from "@/components/ui/card";
+import { RecordSection } from "./bits";
 import { Timeline, sourceFromOrigin, type TimelineEvent, type TimelineDetail } from "@/components/ui/timeline";
 
 function detailRows(before: string | null, after: string | null): TimelineDetail[] | undefined {
@@ -23,7 +23,7 @@ function detailRows(before: string | null, after: string | null): TimelineDetail
 }
 
 /** Local audit trail for the item (newest first). */
-export function HistoryCard({ item, now }: { item: ItemDetail; now: string }) {
+export function HistorySection({ item, now }: { item: ItemDetail; now: string }) {
   const events: TimelineEvent[] = item.audit.map((a) => ({
     id: a.id,
     at: a.at,
@@ -36,10 +36,8 @@ export function HistoryCard({ item, now }: { item: ItemDetail; now: string }) {
     reason: a.reason,
   }));
   return (
-    <Card id="history" headingLevel={3} title="History" flush>
-      <div className="px-4 py-3">
-        <Timeline events={events} now={now} emptyText="No recorded events for this item yet." />
-      </div>
-    </Card>
+    <RecordSection id="history" title="History">
+      <Timeline events={events} now={now} emptyText="No recorded events for this item yet." />
+    </RecordSection>
   );
 }

@@ -4,12 +4,13 @@
 // named demo role; only world events (courier arrival, the simulated source
 // sync) use the guided demo's "Run simulator events for this step" button.
 // Every step checks visible text or state, not just "no error".
-import { expect, test, type BrowserContext } from "@playwright/test";
+import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import {
   STAFF,
   actAs,
   loose,
   looseNumber,
+  openConsoleTab,
   openGuideStep,
   openRoleContext,
   postCommandFromPage,
@@ -18,6 +19,7 @@ import {
   resetDemo,
   runSimulatorEvents,
   toasts,
+  worldEvent,
 } from "./support";
 
 const HERO_ACCESSION = "D26-04817";
@@ -29,6 +31,24 @@ const SCRIPT_IDS = { clarification: "CLR-0457", hold: "H-0090", reprint: "PJ-884
 
 // Filled in as the journey creates them (shown on screen; read back from the screen).
 const ids = { clarification: "", hold: "" };
+
+/**
+ * The intake decision column, with its "Also yours now" tasks in reach. In a short column that list folds to
+ * its heading, a count and the task titles that fit whole (a disclosure, never a half-shown task or button);
+ * when folded it says so and opens on request.
+ */
+async function decisionWithAlsoYours(page: Page) {
+  const decision = page.getByRole("complementary", { name: "Decision" });
+  const also = decision.getByRole("region", { name: /^Also yours now/ });
+  await expect(also).toBeVisible();
+  const fold = also.getByRole("button", { name: /^Show (it|all \d+)$/ });
+  if (await fold.isVisible()) {
+    await expect(fold).toHaveAttribute("aria-expanded", "false");
+    await fold.click();
+    await expect(also.getByRole("button", { name: "Hide" })).toHaveAttribute("aria-expanded", "true");
+  }
+  return decision;
+}
 
 test.describe.configure({ mode: "serial" });
 
@@ -53,7 +73,7 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     // World event: the 11:00 courier arrives and is unpacked (simulated scan, received by Maya Torres).
     const { actions: step1Actions } = await runSimulatorEvents(page, 1);
     await expect(step1Actions.filter({ hasText: loose("Done: Courier arrives: record arrival of CR-1014-11 (received by Maya Torres)") })).toHaveCount(1);
-    await expect(page.getByText(loose("Demo clock 11:00 AM ET · paused"))).toBeVisible();
+    await expect(page.getByText(loose("Demo clock 11:00 AM ET, paused"))).toBeVisible();
 
     // Intake bench: the manifest strip reconciles expected vs received per office.
     await page.goto("/intake");
@@ -75,7 +95,9 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     const routingA = page.getByRole("region", { name: /^Routing to an assigned dermatopathologist/ });
     await expect(routingA).toContainText(loose("Suggested dermatopathologist Dr. Elena Marsh"));
     await expect(routingA).toContainText(loose("From rule: Harbor Point Dermatology → Dr. Elena Marsh (rule set v3, effective Sep 1)."));
-    await routingA.getByRole("button", { name: "Accept routing" }).click();
+    // Accepting the suggestion is an action of the person at the bench: it lives in the decision column, never next to the rule.
+    await expect(routingA.getByRole("button", { name: /^Accept routing/ })).toHaveCount(0);
+    await (await decisionWithAlsoYours(page)).getByRole("button", { name: "Accept routing to Dr. Elena Marsh" }).click();
     await expect(page.getByRole("heading", { level: 3, name: /Rule applied · confirmed/ })).toBeVisible();
     await expect(routingA).toContainText(loose("Decided by Maya Torres"));
 
@@ -83,23 +105,30 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     await page.goto(`/intake?item=${INTAKE_B}`);
     const routingB = page.getByRole("region", { name: /^Routing to an assigned dermatopathologist/ });
     await expect(routingB).toContainText(loose("rule set v3"));
-    await routingB.getByRole("button", { name: "Accept routing" }).click();
+    await (await decisionWithAlsoYours(page)).getByRole("button", { name: "Accept routing to Dr. Elena Marsh" }).click();
     await expect(page.getByRole("heading", { level: 3, name: /Rule applied · confirmed/ })).toBeVisible();
 
     // Unknown office: routing exception lane, no doctor guessed.
     await page.goto(`/intake?item=${UNKNOWN_OFFICE_ITEM}`);
-    await expect(page.getByRole("tab", { name: /^Exceptions/ })).toHaveAttribute("aria-selected", "true");
-    await expect(page.getByRole("note").filter({ hasText: loose("Exceptions lane") })).toContainText(loose("Routing exception"));
+    // The item sits in the Exceptions lane of the queue, selected, with its reason.
+    const unknownRow = page.getByRole("region", { name: /^Exceptions/ }).getByRole("link", { name: new RegExp(`^Provisional intake item ${UNKNOWN_OFFICE_ITEM}`) });
+    await expect(unknownRow).toHaveAttribute("aria-current", "true");
+    // A routing exception waits for a named person (neutral rung), it is not shown as a source disagreement.
+    await expect(unknownRow).toContainText(loose("Needs routing · Kim Nguyen"));
+    await expect(page.getByRole("region", { name: "Current finding" })).toContainText(loose("Seagrape Skin Studio has no routing rule, so no dermatopathologist is suggested."));
     const routingX = page.getByRole("region", { name: /^Routing to an assigned dermatopathologist/ });
     await expect(routingX).toContainText(loose("Routing exception: no approved rule applies"));
     await expect(routingX).toContainText(loose("No dermatopathologist is suggested"));
     await expect(routingX).toContainText(loose("Assigned dermatopathologist Unassigned: routing exception"));
     await expect(routingX).not.toContainText(loose("Dr. "));
     await expect(routingX.getByRole("button", { name: "Accept routing" })).toHaveCount(0);
+    await expect(page.getByRole("complementary", { name: "Decision" }).getByRole("button", { name: /^Accept routing/ })).toHaveCount(0);
     const identity = page.getByRole("region", { name: "Current case" });
     await expect(identity).toContainText(loose("Seagrape Skin Studio"));
-    await expect(identity).toContainText(loose("Unassigned: routing exception"));
-    await expect(identity).not.toContainText(loose("Dr. "));
+    // No dermatopathologist is guessed: "Routed to" names nobody (the ordering clinician is a different person and is shown as such).
+    await expect(identity).toContainText(loose("Routed to Unassigned: routing exception"));
+    await expect(identity).not.toContainText(/Routed to\s*Dr\./);
+    await expect(identity).toContainText(loose("Ordered by Dr. Felix Moon"));
   });
 
   test("2. related orders: verify A, verify B shows the laterality discrepancy, the lead decides (one accession, nothing merged)", async ({ page, context }) => {
@@ -107,10 +136,10 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
 
     // Container A: staff verified against the physical container; every compared field agrees.
     await page.goto(`/intake?item=${INTAKE_A}`);
-    const containerA = page.getByRole("region", { name: /^Container 1 · Part A Order ORD-77120/ });
+    const containerA = page.getByRole("region", { name: /^Container 1 of Part A Order ORD-77120/ });
     await expect(containerA).toContainText(loose("Not yet verified"));
-    await containerA.getByRole("button", { name: "Staff verified against physical container" }).click();
-    await expect(page.getByRole("heading", { level: 3, name: /^Container 1 · Part A Order ORD-77120 .* Staff verified$/ })).toBeVisible();
+    await page.getByRole("complementary", { name: "Decision" }).getByRole("button", { name: "Record: I checked this bottle against the order" }).click();
+    await expect(page.getByRole("heading", { level: 3, name: /^Container 1 of Part A Order ORD-77120 Staff verified$/ })).toBeVisible();
     await expect(containerA).toContainText(loose("Last check by Maya Torres"));
     await expect(containerA).toContainText(loose("against ORD-77120 v1: all compared fields agree"));
 
@@ -139,24 +168,56 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
 
     // Container B: the laterality differs; both values are kept and shown.
     await page.goto(`/intake?item=${INTAKE_B}`);
-    const containerB = page.getByRole("region", { name: /^Container 1 · Part B Order ORD-77121/ });
-    await containerB.getByRole("button", { name: "Staff verified against physical container" }).click();
-    await expect(page.getByRole("heading", { level: 3, name: /^Container 1 · Part B Order ORD-77121 .* Discrepancy recorded$/ })).toBeVisible();
-    await expect(containerB).toContainText(looseNumber("1 field differs: Laterality (order “Right”, bottle “L”). Both values are kept; nothing is corrected automatically."));
+    const containerB = page.getByRole("region", { name: /^Container 1 of Part B Order ORD-77121/ });
+    await page.getByRole("complementary", { name: "Decision" }).getByRole("button", { name: "Record: I checked this bottle against the order" }).click();
+    await expect(page.getByRole("heading", { level: 3, name: /^Container 1 of Part B Order ORD-77121 Discrepancy recorded$/ })).toBeVisible();
+    // The finding says it once, in words; the differing row comes first and keeps both values.
+    await expect(page.getByRole("region", { name: "Current finding" })).toContainText(loose("Laterality differs: the bottle says left; the order and the requisition say right."));
+    await expect(containerB.getByRole("row").nth(1)).toHaveAccessibleName(/^Laterality /);
+    await expect(containerB).toContainText(loose("Both values are kept; nothing is corrected automatically."));
     const lateralityRow = containerB.getByRole("row", { name: /^Laterality / });
     await expect(lateralityRow.getByRole("cell").nth(0)).toHaveText("Right");
     await expect(lateralityRow.getByRole("cell").nth(1)).toContainText(loose('L from site text "L dorsal forearm"'));
     await expect(lateralityRow).toContainText(loose("Differs"));
-    await expect(page.getByRole("region", { name: "Current case" })).toContainText(loose("Order says Right, bottle says L."));
+    // The identity band names the side in question only; who says what is said once, in the finding.
+    const identityB = page.getByRole("region", { name: "Current case" });
+    await expect(identityB).toContainText(loose("Side: right or left?"));
+    await expect(identityB).not.toContainText(loose("bottle says"));
 
     // The accessioning lead decides the candidate, with a reason.
     await actAs(context, STAFF.kim);
     await page.goto(`/intake?item=${INTAKE_A}`);
+    // Her decision leads the centre: both submissions side by side, read from both records in aligned columns,
+    // differences first (what keeps them apart, then each reason they share), then the four choices, the chosen
+    // one's effect and the reason. The choices never appear without that evidence above them. "Record decision"
+    // stays pinned in the decision column, under the step heading and the review-not-merge rule.
+    const workspace = page.getByRole("region", { name: "REL-0112 side by side" });
+    await expect(workspace.getByRole("columnheader", { name: new RegExp(`^Part A\\s*Provisional intake item ${INTAKE_A}`) })).toBeVisible();
+    await expect(workspace.getByRole("columnheader", { name: new RegExp(`^Part B\\s*Provisional intake item ${INTAKE_B}`) })).toBeVisible();
+    await expect(workspace.locator("tbody tr").first()).toHaveAccessibleName(/^Separate source orders/);
+    await expect(workspace.getByRole("row", { name: /^Same encounter / })).toContainText(loose("ENC-55031 ENC-55031"));
+    await expect(workspace.getByRole("row", { name: /^Same submitting office / })).toContainText(loose("Harbor Point Dermatology Harbor Point Dermatology"));
+    await expect(workspace.getByRole("row", { name: /^Separate source orders / })).toContainText(loose("ORD-77120 ORD-77121"));
+    const kimDecision = page.getByRole("complementary", { name: "Decision" });
+    await expect(kimDecision.getByRole("heading", { level: 3, name: "Decide REL-0112: one case or two?" })).toBeVisible();
+    await expect(kimDecision).toContainText(loose("Review, not merge. Both orders and both provisional ids are kept."));
+    // Everything the decision needs is in view at 1366x768, without scrolling: the four choices, the reason and the action.
+    for (const name of [/^Link as related/, /^Keep separate/, /^Not related/, /^Ask the office first/]) {
+      await expect(workspace.getByRole("radio", { name })).toBeInViewport({ ratio: 1 });
+    }
+    await expect(workspace.getByLabel(/^Reason/)).toBeInViewport({ ratio: 1 });
+    await expect(kimDecision.getByRole("button", { name: "Record decision" })).toBeInViewport({ ratio: 1 });
+    // Choosing shows its effect beside the choices before anything is recorded.
+    await workspace.getByRole("radio", { name: /^Link as related: one accession, parts kept with their original orders/ }).check();
+    const effect = workspace.getByRole("status").filter({ hasText: "If recorded" });
+    await expect(effect).toContainText(
+      loose(`If recorded: ${INTAKE_A} and ${INTAKE_B} are requested together as one accession. Parts keep their original orders (ORD-77120 and ORD-77121) and both provisional ids stay on record. Nothing is merged.`),
+    );
+    await expect(effect).toBeInViewport({ ratio: 1 });
+    await workspace.getByLabel(/^Reason/).fill("Same patient reference, encounter ENC-55031, office and collection day. Parts A and B keep ORD-77120 and ORD-77121.");
+    await kimDecision.getByRole("button", { name: "Record decision" }).click();
     const related = page.getByRole("region", { name: "Related orders" });
     await expect(related).toContainText(loose("REL-0112"));
-    await related.getByRole("radio", { name: /^Link as related: one accession, parts kept with their original orders/ }).check();
-    await related.getByLabel("Reason").fill("Same patient reference, encounter ENC-55031, office and collection day. Parts A and B keep ORD-77120 and ORD-77121.");
-    await related.getByRole("button", { name: "Record decision" }).click();
     await expect(related).toContainText(loose("Decision by Kim Nguyen"));
     await expect(related).toContainText(loose("Approved: one accession, parts kept with original orders"));
     await expect(related).toContainText(loose("Reason: Same patient reference, encounter ENC-55031"));
@@ -188,18 +249,31 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     await raise.getByRole("button", { name: "Done" }).click();
 
     // The hold is visible and names its scope; Part A is not held.
-    const holds = page.getByRole("region", { name: "Holds, questions and next steps" });
+    const holds = page.getByRole("region", { name: "Holds, questions and tasks" });
     await expect(holds).toContainText(loose("Hold: Part B (ORD-77121 · B)"));
     await expect(holds).toContainText(loose("Accession is not blocked"));
     ids.hold = (await holds.innerText()).match(/\bH-\d{4}\b/)![0];
     expect(ids.hold, "the hold id the demo script names").toBe(SCRIPT_IDS.hold);
-    await expect(page.getByRole("region", { name: "Current case" })).toContainText(loose("Hold: Part B (ORD-77121 · B)"));
+    // The hold leads the hold line as the hatched chip naming its scope (Part B), then its id and what it stops; Part A is free.
+    const finding = page.getByRole("region", { name: "Current finding" });
+    // Said once: the step rail names the question and its state; the differing row keeps both values without repeating it.
+    await expect(finding.getByRole("button", { name: /^Step 2, Differences/ })).toContainText(loose(`${ids.clarification} · not sent`));
+    const evidenceB = page.getByRole("region", { name: /^Container 1 of Part B Order ORD-77121/ });
+    await expect(evidenceB).toContainText(loose("Both values are kept; nothing is corrected automatically."));
+    await expect(evidenceB).not.toContainText(loose("drafted, not sent"));
+    await expect(finding).toContainText(loose(`Hold: Part B ${ids.hold} stops gross approval`));
+    await expect(finding).toContainText(loose("stops gross approval, processing, label printing and tray delivery. Accession is not held. Part A can continue."));
 
     // Clarifications screen, as the accessioning lead.
     await actAs(context, STAFF.kim);
     await page.goto(`/clarifications?selected=${ids.clarification}`);
-    const panel = page.getByRole("complementary", { name: /^Laterality question: INT-1014-032 · ORD-77121 Part B/ });
+    // The open question is one region: the material as its label, the conversation, and the docked decision.
+    const panel = page.getByRole("region", { name: /^Laterality question: INT-1014-032 · ORD-77121 Part B/ });
+    const decision = panel.getByRole("complementary", { name: "Decision" });
     await expect(panel).toContainText(loose("Drafted"));
+    // The material in hand is its provisional label (dashed), never an accession number; drafted never reads as sent.
+    await expect(panel).toContainText(loose("Provisional intake item INT-1014-032, not an accession number"));
+    await expect(panel).toContainText(loose("Drafted, not sent."));
     await expect(panel).toContainText(loose("Hold applies to Part B only. Part A (ORD-77120) can continue."));
     const release = panel.getByRole("button", { name: `Release ${ids.hold}` });
     await expect(release).toBeDisabled();
@@ -210,28 +284,54 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     const notice = panel.getByLabel("Notification text (generic)");
     await expect(notice).toHaveValue(new RegExp(`has a specimen question \\(${ids.clarification}\\)\\. Please open the secure case view to respond`));
     await expect(notice).not.toHaveValue(NOT_IN_NOTICE);
-    await panel.getByRole("button", { name: "Send (simulated)" }).click();
-    await expect(panel.getByRole("heading", { level: 3, name: "Next step: Record office answer" })).toBeVisible();
+    await expect(decision.getByRole("heading", { level: 3, name: `Send ${ids.clarification} to Harbor Point Dermatology` })).toBeVisible();
+    await decision.getByRole("button", { name: "Send (simulated)" }).click();
+    await expect(decision.getByRole("heading", { level: 3, name: "Record the answer from Harbor Point Dermatology" })).toBeVisible();
     await expect(panel).toContainText(loose("Delivered"));
     // The message that went out (simulated) is the generic notice, nothing more.
-    const sent = panel.getByRole("region", { name: "Messages" }).getByRole("listitem").filter({ hasText: loose("Initial notice") });
+    const sent = panel.getByRole("list", { name: /^Conversation with Harbor Point Dermatology/ }).getByRole("listitem").filter({ hasText: loose("Initial notice") });
     await expect(sent).toHaveCount(1);
     await expect(sent).toContainText(loose(`has a specimen question (${ids.clarification}). Please open the secure case view to respond. [SIMULATED — not sent]`));
     await expect(sent).toContainText(loose("Delivered (simulated)"));
     await expect(sent).not.toContainText(NOT_IN_NOTICE);
 
-    // Simulated office answer: it does not resolve anything by itself.
-    await panel.getByRole("button", { name: "Simulate office answer (demo)" }).click();
-    await expect(panel.getByRole("heading", { level: 3, name: "Next step: Review answer" })).toBeVisible();
+    // Simulated office answer: a presenter control, never on the Clarify bench. The presenter runs it from the presenter
+    // console (World events), picking this question; it does not resolve anything by itself.
+    await expect(panel.getByText(/Presenter controls/i)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /Simulate office answer/ })).toHaveCount(0);
+    await openConsoleTab(page, "world");
+    const officeEvent = worldEvent(page, "The office answers a clarification");
+    await officeEvent.getByRole("combobox", { name: "Clarification" }).selectOption(ids.clarification);
+    await expect(officeEvent).toContainText(loose(`${ids.clarification} asks Harbor Point Dermatology about`));
+    await officeEvent.getByRole("button", { name: "Simulate office answer" }).click();
+    await expect(officeEvent).toContainText(loose(`Simulated office reply recorded for ${ids.clarification}. It is not resolved: a lead or supervisor must review it.`));
+    await officeEvent.getByRole("link", { name: `Open ${ids.clarification} on Clarify` }).click();
+    await expect(decision.getByRole("heading", { level: 3, name: "Review the answer from Harbor Point Dermatology" })).toBeVisible();
     await expect(panel).toContainText(loose("Simulated office reply: The container is correct. Part B was taken from the LEFT dorsal forearm."));
     await expect(panel).toContainText(loose("Not resolved: a lead or supervisor must review this answer."));
     await expect(release).toBeDisabled();
 
-    // Review, then resolve, keeping the hold.
-    await panel.getByLabel("Review note").fill("Office says the bottle (left dorsal forearm) is correct and will amend ORD-77121.");
-    await panel.getByRole("button", { name: "Mark answer reviewed" }).click();
-    await expect(panel.getByRole("heading", { level: 3, name: "Next step: Resolve" })).toBeVisible();
-    await panel.getByRole("button", { name: "Resolve", exact: true }).click();
+    // Review, then resolve, keeping the hold. The review note is written where the review belongs (the conversation's
+    // review slot, under the office answer); its commit is docked. An empty note never marks the answer reviewed:
+    // until a note exists the dock's primary is "Write review note" (it takes you to the slot), never the commit.
+    const conversation = panel.getByRole("list", { name: /^Conversation with Harbor Point Dermatology/ });
+    const reviewSlot = conversation.getByRole("listitem").filter({ hasText: loose("Review by Kim Nguyen") });
+    const reviewNote = reviewSlot.getByLabel("Review note");
+    await expect(decision.getByLabel("Review note")).toHaveCount(0);
+    await expect(decision.getByRole("button", { name: "Mark answer reviewed" })).toHaveCount(0);
+    await decision.getByRole("button", { name: "Write review note" }).click();
+    await expect(reviewNote).toBeFocused();
+    // Ctrl+Enter on an empty note records nothing; sending the answer back with an empty note says what is missing.
+    await reviewNote.press("Control+Enter");
+    await expect(reviewNote).toBeFocused();
+    await decision.getByRole("button", { name: "Answer is insufficient" }).click();
+    await expect(reviewSlot).toContainText(loose("Say what is missing from the answer before sending it back."));
+    await expect(decision.getByRole("heading", { level: 3, name: "Review the answer from Harbor Point Dermatology" })).toBeVisible();
+    await reviewNote.fill("Office says the bottle (left dorsal forearm) is correct and will amend ORD-77121.");
+    await expect(decision.getByRole("button", { name: "Write review note" })).toHaveCount(0);
+    await decision.getByRole("button", { name: "Mark answer reviewed" }).click();
+    await expect(decision.getByRole("heading", { level: 3, name: `Resolve ${ids.clarification}` })).toBeVisible();
+    await decision.getByRole("button", { name: "Resolve", exact: true }).click();
     const resolve = page.getByRole("dialog", { name: `Resolve ${ids.clarification}?` });
     await expect(resolve).toContainText(loose("It does not release any hold by itself."));
     await expect(resolve.getByRole("combobox", { name: /^Resolution/ })).toHaveValue("confirmed_observed");
@@ -246,7 +346,7 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     await expect(panel).toContainText(loose(`${ids.hold}. Not released by sending, an answer, or resolution alone`));
     await expect(panel).not.toContainText(loose("The source order was amended"));
     await page.goto(`/intake?item=${INTAKE_B}`);
-    await expect(page.getByRole("region", { name: "Holds, questions and next steps" })).toContainText(loose(`Hold ${ids.hold}`));
+    await expect(page.getByRole("region", { name: "Holds, questions and tasks" })).toContainText(loose(`Hold ${ids.hold}`));
     await expect(page.getByRole("region", { name: /^Source order/ })).toContainText(loose("v1 · active"));
 
     // World event: the guided demo's step 3 simulator. The office answer is already in (and reviewed), so it only
@@ -267,7 +367,7 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     const source = page.getByRole("region", { name: /^Source order/ });
     await expect(source).toContainText(loose("v2 · amended"));
     await expect(source.getByRole("row", { name: /^B Left dorsal forearm Left Punch/ })).toBeVisible();
-    const holdsB = page.getByRole("region", { name: "Holds, questions and next steps" });
+    const holdsB = page.getByRole("region", { name: "Holds, questions and tasks" });
     await expect(holdsB).toContainText(loose(`Hold ${ids.hold}`));
     await expect(holdsB).toContainText(loose(`Amended order received — review and release ${ids.hold}`));
 
@@ -283,13 +383,17 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     await page.reload();
     await expect(panel.getByRole("heading", { level: 3, name: /^Part B on hold:/ })).toBeVisible();
     await expect(panel).not.toContainText(loose(`${ids.hold} on Part B (ORD-77121 · B) released`));
+    // On screen the accessioner sees the release as the next step, disabled with the reason in words.
+    await expect(decision.getByRole("button", { name: `Release ${ids.hold}` })).toBeDisabled();
+    await expect(decision).toContainText(loose("Not allowed for Accessioner. Allowed: Accessioning lead, Operations supervisor."));
 
     // The lead releases the hold with a reason.
     await actAs(context, STAFF.kim);
     await page.goto(`/clarifications?selected=${ids.clarification}`);
     await expect(panel).toContainText(loose("The source order was amended: ORD-77121 v2 received from the simulated source"));
     await expect(panel).toContainText(loose("Superseded by ORD-77121 v2"));
-    await panel.getByRole("button", { name: `Release ${ids.hold}` }).click();
+    await expect(decision.getByRole("heading", { level: 3, name: `Release ${ids.hold} on Part B` })).toBeVisible();
+    await decision.getByRole("button", { name: `Release ${ids.hold}` }).click();
     const releaseDialog = page.getByRole("alertdialog", { name: `Release ${ids.hold} on Part B?` });
     await releaseDialog.getByLabel("Release reason").fill("Amended order ORD-77121 v2 received (laterality left), matching the bottle.");
     await releaseDialog.getByRole("button", { name: "Release hold" }).click();
@@ -304,7 +408,7 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
   test("4. accession: the simulated source issues D26-04817; the case keeps parts A and B on their original orders", async ({ page, context }) => {
     await actAs(context, STAFF.maya);
     await page.goto(`/intake?item=${INTAKE_A}`);
-    await expect(page.getByRole("region", { name: "Current case" })).toContainText(loose(`Provisional intake item ${INTAKE_A}, Provisional, not an accession number`));
+    await expect(page.getByRole("region", { name: "Current case" })).toContainText(loose(`Provisional intake item ${INTAKE_A}, not an accession number`));
     await expect(page.getByText(loose("Ready: every check passed. The number is issued by the simulated source, never typed here."))).toBeVisible();
     // A double click (the demo script's "a double click creates nothing extra") still yields one accession.
     await page.getByRole("button", { name: new RegExp(`^Request accession for (${INTAKE_A} \\+ ${INTAKE_B}|${INTAKE_B} \\+ ${INTAKE_A}) together \\(simulated source\\)$`) }).dblclick();
@@ -318,10 +422,11 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     await expect(page.getByRole("link", { name: `Open case ${HERO_ACCESSION}` })).toBeVisible();
     await expect(page.getByText(loose("Issued by EMA-SIM (simulated)"))).toBeVisible();
     await expect(page.getByText(loose(`provisional ${INTAKE_A} stays on record`))).toBeVisible();
-    const done = page.getByRole("tabpanel", { name: /^Done/ });
-    await page.getByRole("tab", { name: /^Done/ }).click();
-    await expect(done.getByRole("link", { name: new RegExp(`^Accession ${HERO_ACCESSION} , namespace EMA-SIM DERM Accessioned Avery Quinlan .* From provisional ${INTAKE_A}`) })).toBeVisible();
-    await expect(done.getByRole("link", { name: new RegExp(`^Accession ${HERO_ACCESSION} , namespace EMA-SIM DERM Accessioned Avery Quinlan .* From provisional ${INTAKE_B}`) })).toBeVisible();
+    // The item now in hand is done, so the Done lane is open on it.
+    await expect(page.getByRole("button", { name: /^Done today/ })).toHaveAttribute("aria-expanded", "true");
+    const done = page.getByRole("region", { name: "Done today" });
+    await expect(done.getByRole("link", { name: new RegExp(`^Accession ${HERO_ACCESSION} , namespace EMA-SIM DERM Accessioned .*Avery Quinlan .* From provisional ${INTAKE_A}`) })).toBeVisible();
+    await expect(done.getByRole("link", { name: new RegExp(`^Accession ${HERO_ACCESSION} , namespace EMA-SIM DERM Accessioned .*Avery Quinlan .* From provisional ${INTAKE_B}`) })).toBeVisible();
     // Nothing extra from the double click: exactly the two Quinlan items, both on D26-04817, and no further number issued.
     await expect(done.getByRole("link", { name: new RegExp(`^Accession ${HERO_ACCESSION} `) })).toHaveCount(2);
     await expect(done.getByRole("link", { name: /^Accession D26-04818 / })).toHaveCount(0);
@@ -333,10 +438,10 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     const partA = page.getByRole("region", { name: "Part A", exact: true });
     const partB = page.getByRole("region", { name: "Part B", exact: true });
     await expect(partA.getByRole("link", { name: /^Order ORD-77120/ })).toBeVisible();
-    await expect(partA).toContainText(loose("Left upper back · Shave"));
+    await expect(partA).toContainText(loose("Left upper back, shave"));
     await expect(partB.getByRole("link", { name: /^Order ORD-77121/ })).toBeVisible();
-    await expect(partB).toContainText(loose("Left dorsal forearm · Punch"));
-    await expect(page.getByText(loose("Not complete: 0 of 2 parts delivered."))).toBeVisible();
+    await expect(partB).toContainText(loose("Left dorsal forearm, punch"));
+    await expect(page.getByText(loose("Not complete: 0 of 2 parts sent on trays."))).toBeVisible();
     await expect(page.getByRole("navigation", { name: "Case sections" }).getByRole("link", { name: /^Source documents \(2\)/ })).toBeVisible();
     await expect(page.getByRole("region", { name: "Operational summary" })).toContainText(loose("Not merged: ORD-77120 and ORD-77121 both stay attached to their parts."));
 
@@ -370,7 +475,8 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     extraContexts.push(watcherContext);
     const watcher = await watcherContext.newPage();
     await watcher.goto("/worklist");
-    const marsh = watcher.getByRole("rowgroup").filter({ has: watcher.getByRole("button", { name: /^Dr\. Elena Marsh\(teal\)/ }) });
+    // The doctor band's toggle names the doctor and the colour in words ("Dr. Elena Marsh (teal)"), never the colour alone.
+    const marsh = watcher.getByRole("rowgroup").filter({ has: watcher.getByRole("button", { name: /^Dr\. Elena Marsh \(teal\)$/ }) });
     const row = marsh.getByRole("row", { name: new RegExp(`^${HERO_ACCESSION},`) });
     await expect(row).toBeVisible();
     await expect(row).not.toContainText(loose("A ready for processing"));
@@ -382,12 +488,14 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
 
     await page.goto(`/grossing?part=${HERO_ACCESSION}-A`);
     await expect(page.getByRole("heading", { level: 1, name: `Gross record for ${HERO_ACCESSION} Part A` })).toBeVisible();
+    // The case action in the identity bar is named in words with the accession (icon only below 1280px).
+    await expect(page.getByRole("region", { name: "Current case" }).getByRole("link", { name: `Open case ${HERO_ACCESSION}` })).toBeVisible();
 
     // Load the synthetic dictation: values are proposed, never confirmed by the extractor.
     await expect(page.getByLabel("Synthetic dictation")).toHaveValue("quinlan-A");
     await page.getByRole("button", { name: "Attach transcript and extract" }).click();
-    await expect(page.getByText(loose("Proposed from transcript · not confirmed"))).toHaveCount(9);
-    await expect(page.getByText(loose("Confirmed by operator · Dana Whitfield"))).toHaveCount(0);
+    await expect(page.getByText(loose("Proposed from transcript, not confirmed"))).toHaveCount(9);
+    await expect(page.getByText(loose("Confirmed by Dana Whitfield"))).toHaveCount(0);
     const next = page.getByRole("region", { name: `Next step for ${HERO_ACCESSION} Part A` });
     await expect(next.getByRole("button", { name: "Mark operator reviewed" })).toBeDisabled();
     await expect(next.getByRole("button", { name: "Approve for downstream use" })).toBeDisabled();
@@ -407,11 +515,11 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     // Each number, unit and count is confirmed explicitly, as dictated.
     await expect(page.getByRole("group", { name: "Dimensions (required)" }).getByLabel("Unit (required)")).toHaveValue("cm");
     for (const field of ["Piece count", "Dimensions", "Cassette allocation"]) await confirm(field);
-    await expect(page.getByText(loose("Confirmed by operator · Dana Whitfield"))).toHaveCount(9);
-    await expect(page.getByText(loose("Proposed from transcript · not confirmed"))).toHaveCount(0);
+    await expect(page.getByText(loose("Confirmed by Dana Whitfield"))).toHaveCount(9);
+    await expect(page.getByText(loose("Proposed from transcript, not confirmed"))).toHaveCount(0);
 
     // Narrative from confirmed values only; approval is refused while it is empty.
-    await expect(next).toContainText(loose("narrative is empty"));
+    await expect(next).toContainText(loose("Narrative is empty. Compose it from the confirmed values or type it, then save."));
     await page.getByRole("button", { name: "Compose from confirmed values" }).click();
     await expect(page.getByLabel(`Narrative for ${HERO_ACCESSION} Part A`)).toHaveValue(/one tan-pink shave specimen measuring 0\.8 x 0\.6 x 0\.1 cm/);
     await next.getByRole("button", { name: "Save draft" }).click();
@@ -423,12 +531,15 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     // Downstream: A1 eligible for processing and a source-entry task for Sam; part B still awaiting grossing.
     const approved = page.getByRole("status").filter({ has: page.getByRole("heading", { name: `${HERO_ACCESSION} Part A approved for downstream use` }) });
     await expect(approved).toBeVisible();
-    await expect(approved).toContainText(loose(`Enter approved gross description in source system — ${HERO_ACCESSION} part A · Owner: Sam Ortiz`));
+    await expect(approved).toContainText(loose(`Enter approved gross description in source system — ${HERO_ACCESSION} part A Owner: Sam Ortiz`));
     await expect(approved).toContainText(loose(`${HERO_ACCESSION} A1 eligible for the next processing run`));
     await expect(approved).toContainText(loose("part B still awaiting grossing"));
     await expect(approved).toContainText(loose("The case is not complete. Source-system entry is pending; nothing was written to the source system."));
     await expect(page.getByRole("link", { name: /^Part B: Awaiting grossing/ })).toBeVisible();
-    await expect(page.getByRole("navigation", { name: "Gross record status" }).getByRole("listitem").filter({ hasText: loose("Source update pending") })).toHaveText("Source update pending (current step)");
+    // The rail step says it is the current step (in words and aria-current) and who it waits on.
+    const pendingStep = page.getByRole("navigation", { name: "Gross record status" }).getByRole("listitem").filter({ hasText: loose("Source update pending") });
+    await expect(pendingStep).toHaveAttribute("aria-current", "step");
+    await expect(pendingStep).toContainText(loose("Source update pending (current step) Waiting on Sam Ortiz"));
 
     // Worklist, still open in the other window: without a reload, the hero case under Dr. Elena Marsh now shows
     // part A moving on and part B still awaiting grossing (live refresh polls every 2.5 s).
@@ -442,14 +553,18 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
 
     // Case page: the case is not complete; part A now has block A1 and Sam Ortiz owns the source entry.
     await page.goto(`/cases/${HERO_ACCESSION}`);
-    await expect(page.getByText(loose("Not complete: 0 of 2 parts delivered."))).toBeVisible();
+    await expect(page.getByText(loose("Not complete: 0 of 2 parts sent on trays."))).toBeVisible();
     await expect(page.getByRole("region", { name: "Part B", exact: true })).toContainText(loose("Awaiting grossing"));
+    // Part A's own row names its next step and who it waits on, headed by the step it belongs to (not the physical stage).
+    await expect(page.getByRole("region", { name: "Part A", exact: true })).toContainText(loose("Source-system entry"));
+    await expect(page.getByRole("region", { name: "Part A", exact: true })).toContainText(loose("Enter approved gross description in source system"));
+    await expect(page.getByRole("region", { name: "Part A", exact: true })).toContainText(loose("Sam Ortiz"));
     await page.goto(`/cases/${HERO_ACCESSION}?tab=material`);
-    // The material cards are unnamed sections; find each by its heading.
-    const materialCard = (part: string) => page.locator("section").filter({ has: page.getByRole("heading", { level: 2, name: part, exact: true }) });
-    await expect(materialCard("Part A")).toContainText(loose("Blocks: 1 expected, 1 prepared"));
-    await expect(materialCard("Part A").getByRole("listitem")).toContainText(loose(`${HERO_ACCESSION} A1 Cassette loaded (grossed)`));
-    await expect(materialCard("Part B")).toContainText(loose("No cassettes yet."));
+    // Each part's material is a region named by the part; its counts are one aligned row (expected, prepared, labels scanned).
+    const material = (part: string) => page.getByRole("region", { name: part, exact: true });
+    await expect(material("Part A").getByRole("row", { name: /^Blocks 1 1( |$)/ })).toBeVisible();
+    await expect(material("Part A").getByRole("row", { name: new RegExp(`^${HERO_ACCESSION} A1 Cassette loaded \\(grossed\\)`) })).toBeVisible();
+    await expect(material("Part B")).toContainText(loose("No cassettes yet."));
     await page.goto(`/cases/${HERO_ACCESSION}?tab=tasks`);
     const entryTask = page.getByRole("row", { name: new RegExp(`^Enter approved gross description in source system — ${HERO_ACCESSION} part A`) });
     await expect(entryTask).toHaveCount(1);
@@ -469,28 +584,39 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     // The 9th expected slide matches.
     await page.getByRole("button", { name: "Scan D26-04747 A1-1 H&E L1", exact: true }).click();
     await expect(tray).toContainText(looseNumber("9 of 10 expected slides scanned"));
+    // The tray is drawn as its positions; each slot reads as one sentence (position, slide label, state).
     const expected = page.getByRole("region", { name: "Expected slides" });
-    await expect(expected.getByRole("row", { name: /^9 D26-04747 A1-1 H&E L1 Scanned, matches/ })).toBeVisible();
+    await expect(expected.getByRole("listitem").filter({ hasText: loose("Position 9: D26-04747 A1-1 H&E L1. Scanned, matches") })).toBeVisible();
 
     // A Dr. Okafor slide mixed into the stack is flagged and not accepted.
     await page.getByRole("button", { name: "Scan D26-04745 A1-1 H&E L1", exact: true }).click();
     const unexpected = page.getByRole("region", { name: "Scanned material that does not belong (1)" });
     await expect(unexpected).toContainText(loose("Unexpected D26-04745 A1-1 H&E L1 scanned"));
     await expect(unexpected).toContainText(loose("it belongs to Dr. Samuel Okafor's case). Not accepted."));
-    await expect(tray).toContainText(looseNumber("9 of 10 expected slides scanned · 1 to resolve"));
-    await expect(expected.getByRole("row", { name: /^10 D26-04747 A1-2 H&E L2 Expected Not scanned yet/ })).toBeVisible();
+    await expect(tray).toContainText(looseNumber("9 of 10 expected slides scanned"));
+    // The header separates progress from exceptions: 1 left to scan (neutral), 1 exception (amber).
+    await expect(tray.getByText(/\d+ left to scan$/)).toHaveText("1 left to scan");
+    await expect(tray.getByText(/\d+ exceptions?$/)).toHaveText("1 exception");
+    await expect(expected.getByRole("listitem").filter({ hasText: loose("Position 10: D26-04747 A1-2 H&E L2. Expected, not scanned yet.") })).toBeVisible();
+    // The unexpected slide is drawn on the tray, off its list, in words.
+    await expect(expected.getByRole("listitem").filter({ hasText: loose("Not on this tray's list: D26-04745 A1-1 H&E L1. Unexpected, Dr. Samuel Okafor's case") })).toBeVisible();
 
-    // "Mark tray complete" is blocked, and says why.
+    // "Mark tray complete" is blocked, and says why: the count in the column's heading, the slides in its lists, the server's full reason on the button.
     const reason = "Cannot complete: 1 not scanned (D26-04747 A1-2), 1 unexpected (D26-04745 A1-1).";
-    await expect(page.getByRole("button", { name: "Mark tray complete" })).toBeDisabled();
-    await expect(page.getByRole("heading", { level: 2, name: reason })).toBeVisible();
-    await expect(page.getByRole("paragraph").filter({ hasText: reason })).toBeVisible();
+    const complete = page.getByRole("button", { name: "Mark tray complete" });
+    await expect(complete).toBeDisabled();
+    await expect(page.getByRole("heading", { level: 2, name: "Cannot complete: 1 not scanned, 1 unexpected.", exact: true })).toBeVisible();
+    await expect(complete).toHaveAccessibleDescription(reason);
+    await expect(page.getByRole("region", { name: "Not on the tray yet (1)" })).toContainText(loose("D26-04747 A1-2 H&E L2 Position 10: expected, not scanned yet."));
     await expect(tray).not.toContainText(loose("Verified complete"));
 
     // PJ-8841: the printer never confirmed. A reprint is refused until the outcome is reconciled.
     await page.goto("/materials?tab=print&selected=PJ-8841");
+    // The queue says the outcome in words, with the next step.
+    await expect(page.getByRole("row", { name: /^PJ-8841 / }).getByRole("cell").nth(3)).toHaveText(/^Unknown outcome\s*Reconcile before reprint$/);
     const job = page.getByRole("complementary", { name: "D26-04783 A1-5 H&E deeper L1" });
     await expect(job).toContainText(loose("Print job PJ-8841 Unknown outcome"));
+    await expect(job.getByRole("img", { name: /^DataMatrix label encoding D26-04783 A1-5 H&E deeper L1/ })).toBeVisible();
     await expect(job).toContainText(loose("PJ-8841: printer did not confirm after 30 s (simulated timeout). Outcome unknown."));
     await expect(job.getByRole("button", { name: "Reprint with reason" })).toBeDisabled();
     await expect(job).toContainText(loose("Reprint: Reconcile the unknown outcome first (check the printer)."));
@@ -498,7 +624,7 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     await job.getByLabel(/^What you checked/).fill("Output tray empty; no label for D26-04783 A1-5.");
     await job.getByRole("button", { name: "Not printed" }).click();
     await expect(job).toContainText(loose("Recorded as not printed. A reprint with a reason is now allowed."));
-    await expect(job).toContainText(loose("Checked at the printer: not printed · Priya Shah"));
+    await expect(job).toContainText(loose("Checked at the printer: not printed, by Priya Shah at"));
     await job.getByRole("button", { name: "Reprint with reason" }).click();
     const reprint = page.getByRole("dialog", { name: "Reprint label D26-04783 A1-5 H&E deeper L1" });
     await expect(reprint).toContainText(loose("Creates a new print job linked to PJ-8841 for the same record. No new slide, block or specimen is created."));
@@ -515,7 +641,7 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     await expect(original.getByRole("cell").nth(3)).toHaveText(new RegExp(`^Failed\\s*Replaced by ${SCRIPT_IDS.reprint}$`));
     await page.goto("/materials?tab=print&selected=PJ-8841");
     await expect(job).toContainText(loose(`Replaced by ${SCRIPT_IDS.reprint}`));
-    await expect(job).toContainText(loose("Checked at the printer: not printed · Priya Shah"));
+    await expect(job).toContainText(loose("Checked at the printer: not printed, by Priya Shah at"));
     await expect(job.getByRole("link", { name: `Open ${SCRIPT_IDS.reprint}` })).toBeVisible();
   });
 
@@ -528,10 +654,14 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     const pickedCount = request.getByText(/^\d+ of \d+ picked/);
     await expect(pickedCount).toHaveText("0 of 3 picked");
     const requested = page.getByRole("region", { name: "Requested blocks" });
-    const blockA1 = requested.getByRole("listitem").filter({ hasText: loose("Pick 2 of 3 D26-03990 A1") });
-    await expect(blockA1).toContainText(loose("Last confirmed: CAB-2/DR-4/BX-11/S-14 · confirmed"));
-    await expect(blockA1).toContainText(loose("by Marcus Lee"));
-    await expect(blockA1).toContainText(loose("Last confirmed location, not live tracking. The block may have moved since."));
+    // The location reads as the walk to it: cabinet, drawer, box, then the slot, and who last confirmed it when.
+    await expect(requested).toContainText(loose("Cabinet 2 Drawer 4 Box 11"));
+    // Each stop on the walk is its own region named by the box; the block sits in it, in its slot (CAB-2/DR-4/BX-11/S-14), and the stop says once that locations are last confirmed.
+    const box11 = requested.getByRole("region", { name: "Cabinet 2, Drawer 4, Box 11", exact: true });
+    await expect(box11).toContainText(loose("Last confirmed location, not live tracking. The block may have moved since."));
+    const blockA1 = box11.getByRole("listitem").filter({ hasText: loose("Pick 2 of 3 D26-03990 A1") });
+    await expect(blockA1).toContainText(loose("Slot 14"));
+    await expect(blockA1).toContainText(loose("Last confirmed by Marcus Lee at Oct 9, 3:20 PM ET"));
     await expect(blockA1).toContainText(loose("Custody now In storage (last confirmed)"));
     const overdue = requested.getByRole("listitem").filter({ hasText: loose("Pick 3 of 3 D26-03912 A1") });
     await expect(overdue).toContainText(loose("Overdue return"));
@@ -539,19 +669,33 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
 
     // Wrong block: a mismatch, not accepted, nothing changes.
     await page.getByRole("button", { name: "Scan D26-03909 A1" }).click();
-    const mismatch = page.getByRole("status").filter({ hasText: loose("Mismatch: not accepted") });
-    await expect(mismatch).toContainText(loose("Scanned D26-03909 A1. RR-0192 needs D26-03990 B1, D26-03990 A1, D26-03912 A1. Not accepted."));
-    await expect(mismatch).toContainText(loose("The request and the block records were not changed"));
-    await expect(pickedCount).toHaveText("0 of 3 picked · 1 wrong scan rejected");
-    await expect(page.getByText(loose("Still to pick: D26-03990 B1, D26-03990 A1, D26-03912 A1."))).toBeVisible();
+    // The scan field's result line carries the server's full sentence, with what the request still needs.
+    await expect(page.locator("#scan-field")).toHaveAccessibleDescription(
+      new RegExp(`^${loose("Mismatch. Scanned D26-03909 A1. RR-0192 needs D26-03990 B1, D26-03990 A1, D26-03912 A1. Not accepted.").source}`),
+    );
+    // The scan check names the wrong block in words (amber: rejected, nothing changes) without repeating that sentence.
+    const mismatch = page.getByRole("status").filter({ hasText: loose("Wrong block: not accepted") });
+    await expect(mismatch).toContainText(loose("D26-03909 A1 is not on RR-0192. Nothing was changed."));
+    await expect(pickedCount).toHaveText("0 of 3 picked");
+    const rejected = request.getByText(/^\d+ wrong scans? rejected$/);
+    await expect(rejected).toHaveText("1 wrong scan rejected");
+    // The scan check lists what is still to pick, in walking order with the next block first: the wrong scan changed nothing.
+    await expect(page.getByRole("heading", { level: 2, name: "Next: D26-03990 A1", exact: true })).toBeVisible();
+    const toPick = page.getByRole("list", { name: /^Still to pick \(\d+\)$/ });
+    await expect(toPick).toBeVisible();
+    await expect(page.getByRole("heading", { level: 3, name: "Still to pick (3)", exact: true })).toBeVisible();
+    await expect(toPick.getByRole("listitem")).toHaveText([/^D26-03990 A1\s*Scan\b/, /^D26-03990 B1\s*Scan\b/, /^D26-03912 A1\s*Scan\b/]);
     await expect(page.getByRole("button", { name: "Deliver to Microtomy bench 2" })).toBeDisabled();
     await expect(page.getByRole("listitem").filter({ hasText: loose("Wrong block scanned (not accepted): D26-03909 A1 (Priya Shah)") })).toBeVisible();
-    await expect(blockA1).toContainText(loose("Last confirmed: CAB-2/DR-4/BX-11/S-14 · confirmed"));
+    await expect(blockA1).toContainText(loose("Last confirmed by Marcus Lee at Oct 9, 3:20 PM ET"));
+    await expect(blockA1).toContainText(loose("Slot 14"));
 
     // The requested block matches (pick 1 of 3).
     await page.getByRole("button", { name: "Scan D26-03990 B1" }).click();
-    await expect(pickedCount).toHaveText("1 of 3 picked · 1 wrong scan rejected");
-    await expect(page.getByText(loose("Still to pick: D26-03990 A1, D26-03912 A1."))).toBeVisible();
+    await expect(pickedCount).toHaveText("1 of 3 picked");
+    await expect(rejected).toHaveText("1 wrong scan rejected");
+    await expect(page.getByRole("heading", { level: 3, name: "Still to pick (2)", exact: true })).toBeVisible();
+    await expect(toPick.getByRole("listitem")).toHaveText([/^D26-03990 A1\s*Scan\b/, /^D26-03912 A1\s*Scan\b/]);
   });
 
   test("8. operations: what is still blocked, with owners and evidence; every guide step reads as done from the records", async ({ page, context }) => {
@@ -563,26 +707,39 @@ test.describe("director journey: one synthetic multipart case, eight steps on th
     await page.goto("/operations");
     await expect(page.getByRole("heading", { level: 1, name: "Operations" })).toBeVisible();
     await expect(page.getByRole("note").filter({ hasText: loose("Computed from synthetic demo data") })).toContainText(loose("Not observed lab performance."));
-    const blocked = page.getByRole("table", { name: /^Blocked and waiting work/ });
-    const sourceEntry = blocked.getByRole("row", { name: new RegExp(`^Source-system entry ${HERO_ACCESSION} part A`) });
+    // Exceptions ("Blocked now") and routine source-system entry are two tables; together they list every blocked item.
+    const blocked = page.getByRole("table", { name: /^Blocked now/ });
+    const routine = page.getByRole("table", { name: /^Source-system entry/ });
+    const sourceEntry = routine.getByRole("row", { name: new RegExp(`^${HERO_ACCESSION} part A`) });
     await expect(sourceEntry).toBeVisible();
-    await expect(sourceEntry.getByRole("cell").nth(1)).toHaveText("Approved; not yet entered in the source system (manual entry)");
-    await expect(sourceEntry.getByRole("cell").nth(3)).toHaveText("Sam Ortiz");
+    // One line per record: the owner and the shared status are said once, in the heading of the record's group.
+    // (`has` is evaluated inside each row group, so the inner locator is not scoped to the table again.)
+    const entryGroup = routine.getByRole("rowgroup").filter({ has: page.getByRole("row", { name: new RegExp(`^${HERO_ACCESSION} part A`) }) });
+    await expect(entryGroup).toHaveCount(1);
+    await expect(entryGroup.getByRole("row").first()).toContainText(loose("Sam Ortiz holds the entry task"));
+    await expect(entryGroup.getByRole("row").first()).toContainText("Approved; not yet entered in the source system (manual entry)");
+    await expect(sourceEntry).not.toContainText("Sam Ortiz");
+    await expect(sourceEntry.getByRole("cell")).toHaveCount(3);
     // Waiting since the approval (11:08 on the paused demo clock, set by the step 3 simulator) and its age at 11:50.
-    await expect(sourceEntry.getByRole("cell").nth(4)).toHaveText(/^11:08 AM ET\s*42 min$/);
+    await expect(sourceEntry.getByRole("cell").nth(1)).toHaveText(/^42 min\s*since 11:08 AM ET$/);
     await expect(sourceEntry.getByRole("link", { name: new RegExp(`^${HERO_ACCESSION} part A`) })).toBeVisible();
-    const trayRow = blocked.getByRole("row", { name: /^Trays TRY-M-03/ });
+    // Routine entry is not mixed into the exceptions.
+    await expect(blocked.getByRole("row", { name: new RegExp(`^Source-system entry`) })).toHaveCount(0);
+    const trayRow = blocked.getByRole("row", { name: /^Tray exception TRY-M-03/ });
     await expect(trayRow).toContainText(loose("Cannot be verified complete."));
-    await expect(trayRow.getByRole("cell").nth(3)).toHaveText("Priya Shah");
-    const exceptionRow = blocked.getByRole("row", { name: new RegExp(`^Routing exceptions ${UNKNOWN_OFFICE_ITEM}`) });
-    await expect(exceptionRow.getByRole("cell").nth(3)).toHaveText("Kim Nguyen");
-    // The released Part B hold is no longer listed as blocking anything.
-    await expect(blocked.getByRole("row", { name: new RegExp(re(ids.hold)) })).toHaveCount(0);
-    // The reconciled print job no longer counts as an unknown outcome.
-    await expect(page.getByRole("region", { name: "Status counts" }).getByRole("link", { name: /^Print jobs with unknown outcome 0(?!\d)/ })).toBeVisible();
+    await expect(trayRow.getByRole("cell").nth(2)).toHaveText("Priya Shah");
+    // The provisional intake id is announced as provisional (dashed label reference), never as an official number.
+    const exceptionRow = blocked.getByRole("row", { name: new RegExp(`^Routing exception Provisional intake item ${UNKNOWN_OFFICE_ITEM}`) });
+    await expect(exceptionRow.getByRole("cell").nth(2)).toHaveText("Kim Nguyen");
+    // The released Part B hold is no longer listed as blocking anything, nor hatched on the bench path.
+    await expect(page.getByRole("row", { name: new RegExp(re(ids.hold)) })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Bench path" }).getByRole("link", { name: new RegExp(re(ids.hold)) })).toHaveCount(0);
+    // The reconciled print job no longer counts as an unknown outcome: no row, and the zero is said in the "Clear now" line.
+    await expect(blocked.getByRole("row", { name: /^Print outcome unknown/ })).toHaveCount(0);
+    await expect(page.getByRole("list", { name: /^Clear now/ }).getByRole("listitem").filter({ hasText: "no print jobs with unknown outcome" })).toBeVisible();
 
     // The evidence link opens the record that shows it: the case's tasks, with Sam Ortiz's open source-entry task.
-    await sourceEntry.getByRole("cell").nth(5).getByRole("link", { name: `${HERO_ACCESSION} tasks` }).click();
+    await sourceEntry.getByRole("cell").nth(2).getByRole("link", { name: `Entry task for ${HERO_ACCESSION} part A`, exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/cases/${HERO_ACCESSION}\\?tab=tasks$`));
     await expect(page.getByRole("heading", { level: 1, name: `Case ${HERO_ACCESSION}` })).toBeVisible();
     const entryTask = page.getByRole("row", { name: new RegExp(`^Enter approved gross description in source system — ${HERO_ACCESSION} part A`) });

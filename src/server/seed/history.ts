@@ -450,7 +450,7 @@ export function seedHistory(db: DB): HistoryResult {
         ins(db, "custody_event", { id: `ce_${blockId}_co`, material_type: "block", material_id: blockId, event: "checked_out", location_id: locId, holder_id: "stf_marcus", destination: "Microtomy bench 2 (recut)", actor_id: "stf_marcus", at: at("11:00", "2026-10-10"), note: "Return expected same day — overdue", request_id: null });
       }
       if (custody === "sent_out") {
-        ins(db, "custody_event", { id: `ce_${blockId}_so`, material_type: "block", material_id: blockId, event: "sent_out", location_id: "loc_outside", holder_id: null, destination: "Outside consultation — Northgate Reference Lab (fictional)", actor_id: "stf_tanya", at: at("11:00", "2026-10-10"), note: "Expected return by 2026-10-24", request_id: null });
+        ins(db, "custody_event", { id: `ce_${blockId}_so`, material_type: "block", material_id: blockId, event: "sent_out", location_id: "loc_outside", holder_id: null, destination: "Outside consultation — Northgate Reference Lab (fictional)", actor_id: "stf_tanya", at: at("11:00", "2026-10-10"), note: "Expected return by Oct 24", request_id: null });
       }
     });
   }

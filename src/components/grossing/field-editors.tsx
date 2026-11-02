@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState, type KeyboardEvent, type ReactNode } from "react";
-import { CircleCheck, CircleDashed, Plus, Quote, TriangleAlert, X } from "lucide-react";
+import { Check, CircleDashed, Minus, Plus, Quote, TriangleAlert, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { CassetteAllocation, Dimensions } from "@/lib/gross";
 import { Button, DisabledReason } from "@/components/ui/button";
@@ -87,56 +87,72 @@ export function sameModel(a: EditorModel, b: EditorModel): boolean {
 }
 
 /* ------------------------------------------------------------------ */
-/* Status line                                                         */
+/* Status in words and icon, on the severity ladder                    */
 /* ------------------------------------------------------------------ */
 
-function FieldStatusLine({ f, required, now }: { f: StoredField; required: boolean; now: string }) {
+/** Where a field sits on the ladder: amber when data may be wrong or is missing, neutral while it waits on the grosser, quiet when done. */
+export type FieldTone = "amber" | "waiting" | "quiet";
+
+export function fieldTone(f: StoredField, required: boolean): FieldTone {
+  if (f.status === "confirmed") return "quiet";
+  if (f.status === "needs_review" || (f.status === "missing" && required)) return "amber";
+  if (f.status === "missing") return "quiet";
+  return "waiting";
+}
+
+function FieldStatus({ f, required, now }: { f: StoredField; required: boolean; now: string }) {
   if (f.status === "confirmed") {
     return (
-      <span className="inline-flex flex-wrap items-center gap-1 text-xs text-success-fg">
-        <CircleCheck className="size-3.5 text-success-solid" aria-hidden />
-        <span className="font-medium">Confirmed by operator</span>
+      <span className="inline-flex flex-wrap items-center justify-end gap-x-1 text-sm text-ink-muted">
+        <Check className="size-4 shrink-0" aria-hidden />
         {f.confirmedByName ? (
-          <span className="text-ink-secondary">· {f.confirmedByName}</span>
-        ) : (
-          <span className="text-ink-secondary">· who and when not recorded (seeded record)</span>
-        )}
-        {f.confirmedAt ? (
-          <span className="text-ink-secondary">
-            · <Timestamp iso={f.confirmedAt} now={now} />
+          <span>
+            Confirmed by {f.confirmedByName}
+            {f.confirmedAt ? (
+              <>
+                , <Timestamp iso={f.confirmedAt} now={now} />
+              </>
+            ) : null}
           </span>
-        ) : null}
+        ) : (
+          <span>
+            Confirmed (seeded)<span className="sr-only">: who and when were not recorded</span>
+          </span>
+        )}
       </span>
     );
   }
   if (f.status === "proposed") {
     return (
-      <span className="inline-flex items-center gap-1 text-xs text-info-fg">
-        <CircleDashed className="size-3.5 text-info-solid" aria-hidden />
-        <span className="font-medium">{f.origin === "typed" ? "Typed" : "Proposed from transcript"}</span>
-        <span className="text-ink-secondary">· not confirmed</span>
+      <span className="inline-flex items-center gap-1 text-sm text-ink-secondary">
+        <CircleDashed className="size-4 shrink-0 text-ink-muted" aria-hidden />
+        <span>{f.origin === "typed" ? "Typed, not confirmed" : "Proposed from transcript, not confirmed"}</span>
       </span>
     );
   }
   if (f.status === "needs_review") {
     return (
-      <span className="inline-flex items-center gap-1 text-xs text-warning-fg">
-        <TriangleAlert className="size-3.5 text-warning-solid" aria-hidden />
-        <span className="font-medium">Needs review</span>
+      <span className="inline-flex items-center gap-1 text-sm font-semibold text-warning-fg">
+        <TriangleAlert className="size-4 shrink-0 text-warning-solid" aria-hidden />
+        <span>Needs review</span>
       </span>
     );
   }
-  return (
-    <span className={cn("inline-flex items-center gap-1 text-xs", required ? "text-warning-fg" : "text-ink-muted")}>
-      {required ? <TriangleAlert className="size-3.5 text-warning-solid" aria-hidden /> : null}
-      <span className="font-medium">{required ? "Missing" : "Not stated"}</span>
-      {required ? <span className="text-ink-secondary">· required before approval</span> : null}
+  return required ? (
+    <span className="inline-flex items-center gap-1 text-sm font-semibold text-warning-fg">
+      <TriangleAlert className="size-4 shrink-0 text-warning-solid" aria-hidden />
+      <span>Missing, required before approval</span>
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1 text-sm text-ink-muted">
+      <Minus className="size-4 shrink-0" aria-hidden />
+      <span>Not stated, optional</span>
     </span>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* One field row                                                       */
+/* One field row of the form sheet                                     */
 /* ------------------------------------------------------------------ */
 
 export interface FieldRowProps {
@@ -164,6 +180,11 @@ export interface FieldRowProps {
   now: string;
 }
 
+/**
+ * One row of the structured-fields sheet: label and status in words on the first line, the editor and its
+ * action on the second, the dictated evidence and any review note below. Rows are separated by hairlines;
+ * the row is tinted amber only when its value is missing or may be wrong.
+ */
 export function FieldRow(p: FieldRowProps) {
   const uid = useId();
   const baseId = `gf-${p.fieldKey}`;
@@ -173,6 +194,7 @@ export function FieldRow(p: FieldRowProps) {
   const errorId = `${uid}-error`;
   const required = isRequired(p.fieldKey);
   const f = p.stored;
+  const tone = fieldTone(f, required);
   const disabledEdit = p.frozen || Boolean(p.editBlockedReason);
   const needsReview = f.status === "needs_review";
   const canKeep = needsReview && f.value !== null && f.value !== undefined && Boolean(p.onKeepAsDictated);
@@ -195,15 +217,6 @@ export function FieldRow(p: FieldRowProps) {
   // A needs-review value is never confirmed as shown: it needs an edit, or the separate "Checked: keep as dictated" step.
   const canConfirmNow = !p.frozen && !p.confirmBlockedReason && (p.dirty || (f.status !== "confirmed" && !needsReview));
 
-  const tone =
-    f.status === "confirmed"
-      ? "border-success-border border-solid"
-      : f.status === "proposed"
-        ? "border-info-border border-dashed"
-        : f.status === "needs_review" || required
-          ? "border-warning-border border-solid bg-warning-bg"
-          : "border-line border-solid";
-
   let editor: ReactNode;
   const native = {
     disabled: disabledEdit,
@@ -215,11 +228,15 @@ export function FieldRow(p: FieldRowProps) {
 
   switch (p.frozen ? "__frozen" : p.fieldKey) {
     case "__frozen":
-      editor = <p className="text-base text-ink">{f.value === null || f.value === undefined ? <span className="text-ink-muted">Not stated</span> : fmtFieldValue(p.fieldKey, f.value)}</p>;
+      editor = (
+        <p className="text-base text-ink">
+          {f.value === null || f.value === undefined ? <span className="text-ink-muted">Not stated</span> : fmtFieldValue(p.fieldKey, f.value)}
+        </p>
+      );
       break;
     case "specimen_type":
       editor = (
-        <Select id={baseId} size="sm" value={p.model as string} onChange={(e) => p.onModel(e.target.value)} {...common}>
+        <Select id={baseId} size="sm" className="w-full max-w-sm" value={p.model as string} onChange={(e) => p.onModel(e.target.value)} {...common}>
           <option value="">Choose the observed type…</option>
           {SPECIMEN_TYPES.map((s) => (
             <option key={s.value} value={s.value}>
@@ -232,12 +249,12 @@ export function FieldRow(p: FieldRowProps) {
     case "container_label_matches": {
       const v = p.model as string;
       editor = (
-        <div role="radiogroup" aria-labelledby={`${baseId}-label`} aria-describedby={describedBy} className="flex flex-wrap gap-3">
+        <div role="radiogroup" aria-labelledby={`${baseId}-label`} aria-describedby={describedBy} className="flex flex-wrap gap-x-5 gap-y-1">
           {[
             ["yes", "Yes, matches the part"],
             ["no", "No, does not match"],
           ].map(([val, text], i) => (
-            <label key={val} className="flex items-center gap-1.5 text-sm text-ink">
+            <label key={val} className="flex min-h-[var(--hlo-target-min)] items-center gap-2 text-base text-ink">
               <input
                 id={i === 0 ? baseId : undefined}
                 type="radio"
@@ -245,7 +262,7 @@ export function FieldRow(p: FieldRowProps) {
                 value={val}
                 checked={v === val}
                 onChange={() => p.onModel(val)}
-                className="size-4 accent-brand"
+                className="size-4 accent-[var(--hlo-shell)]"
                 aria-invalid={p.error ? true : undefined}
                 {...native}
               />
@@ -305,7 +322,9 @@ export function FieldRow(p: FieldRowProps) {
           {list.map((c, i) => (
             <div key={i} className="flex flex-wrap items-end gap-2">
               <div className="flex flex-col gap-0.5">
-                <label htmlFor={i === 0 ? baseId : `${baseId}-${i}-label`} className="text-xs text-ink-muted">Cassette</label>
+                <label htmlFor={i === 0 ? baseId : `${baseId}-${i}-label`} className="text-xs text-ink-muted">
+                  Cassette
+                </label>
                 <Input id={i === 0 ? baseId : `${baseId}-${i}-label`} size="sm" mono className="w-16" value={c.label} onChange={(e) => setRow(i, { label: e.target.value.toUpperCase() })} {...common} />
               </div>
               <div className="flex flex-col gap-0.5">
@@ -314,8 +333,10 @@ export function FieldRow(p: FieldRowProps) {
                 </label>
                 <Input id={`${baseId}-${i}-pieces`} size="sm" inputMode="numeric" className="w-20 num-tabular" value={c.pieces} onChange={(e) => setRow(i, { pieces: e.target.value })} {...common} />
               </div>
-              <div className="flex min-w-40 flex-1 flex-col gap-0.5">
-                <label htmlFor={`${baseId}-${i}-desc`} className="text-xs text-ink-muted">Contents</label>
+              <div className="flex min-w-60 flex-1 flex-col gap-0.5">
+                <label htmlFor={`${baseId}-${i}-desc`} className="text-xs text-ink-muted">
+                  Contents
+                </label>
                 <Input id={`${baseId}-${i}-desc`} size="sm" value={c.description} onChange={(e) => setRow(i, { description: e.target.value })} {...common} />
               </div>
               <Button variant="quiet" size="sm" icon={<X />} disabled={disabledEdit} onClick={() => p.onModel(list.filter((_, j) => j !== i))} aria-label={`Remove cassette ${c.label || i + 1}`}>
@@ -339,62 +360,49 @@ export function FieldRow(p: FieldRowProps) {
       break;
     }
     default:
-      editor = <Input id={baseId} size="sm" value={p.model as string} onChange={(e) => p.onModel(e.target.value)} {...common} />;
+      editor = <Input id={baseId} size="sm" className="w-full max-w-sm" value={p.model as string} onChange={(e) => p.onModel(e.target.value)} {...common} />;
   }
 
   const showHint = p.active || p.dirty;
+  const proposedDiffers =
+    f.status === "confirmed" && f.proposedValue !== undefined && f.proposedValue !== null && fmtFieldValue(p.fieldKey, f.proposedValue) !== fmtFieldValue(p.fieldKey, f.value);
   return (
     <div
       data-field={p.fieldKey}
-      className={cn("rounded-md border bg-surface px-3 py-2", tone, p.active && "ring-2 ring-focus ring-offset-1")}
+      className={cn(
+        "scroll-mt-4 border-t border-line px-4 py-3 first:border-t-0 max-xl:px-3",
+        tone === "amber" ? "bg-warning-bg" : p.active && !p.frozen ? "bg-surface-subtle" : "bg-surface",
+      )}
       onMouseEnter={p.onFocusField}
     >
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-        <Label htmlFor={p.fieldKey === "container_label_matches" ? undefined : baseId} id={`${baseId}-label`} required={required}>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+        <Label htmlFor={p.fieldKey === "container_label_matches" ? undefined : baseId} id={`${baseId}-label`} required={required} className="text-base font-semibold text-ink">
           {FIELD_LABEL[p.fieldKey]}
         </Label>
-        {f.evidence?.text ? (
-          <button
-            type="button"
-            onClick={p.onShowEvidence}
-            className="inline-flex min-w-0 max-w-full items-start gap-1 rounded-sm text-left text-xs text-brand hover:underline"
-            aria-label={`Show where ${FIELD_LABEL[p.fieldKey].toLowerCase()} was heard in the transcript: ${f.evidence.text}`}
-          >
-            <Quote className="mt-px size-3 shrink-0" aria-hidden />
-            <span className="italic">“{f.evidence.text}”</span>
-          </button>
-        ) : null}
-        <span id={statusId} className="ml-auto">
-          <FieldStatusLine f={f} required={required} now={p.now} />
+        <span id={statusId} className="ml-auto text-right">
+          <FieldStatus f={f} required={required} now={p.now} />
         </span>
       </div>
-      {f.note ? (
-        <p id={noteId} className={cn("mt-0.5 text-xs", f.status === "needs_review" || (f.status === "missing" && required) ? "text-warning-fg" : "text-ink-secondary")}>
-          {f.note}
-        </p>
-      ) : null}
-      {f.status === "confirmed" && f.proposedValue !== undefined && f.proposedValue !== null && fmtFieldValue(p.fieldKey, f.proposedValue) !== fmtFieldValue(p.fieldKey, f.value) ? (
-        <p className="mt-0.5 text-xs text-ink-muted">Transcript proposed: {fmtFieldValue(p.fieldKey, f.proposedValue)}</p>
-      ) : null}
-      <div className="mt-1.5 flex flex-wrap items-end gap-2">
+
+      <div className="mt-1.5 flex flex-wrap items-start gap-x-3 gap-y-2">
         <div className="min-w-0 flex-1">{editor}</div>
         {!p.frozen ? (
-          <div className="flex items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-1.5">
             {p.dirty ? (
               <Button variant="quiet" size="sm" onClick={p.onRevert}>
                 Undo edit
               </Button>
             ) : null}
             {f.status === "confirmed" && !p.dirty ? (
-              p.editBlockedReason || p.confirmBlockedReason ? null : <span className="px-1 text-xs text-ink-muted">Edit to change</span>
+              p.editBlockedReason || p.confirmBlockedReason ? null : <span className="px-1 text-sm text-ink-muted">Edit to change</span>
             ) : (
               <Button
-                variant={canConfirmNow ? "primary" : "secondary"}
+                variant={canConfirmNow && p.dirty ? "primary" : "secondary"}
                 size="sm"
                 loading={p.pending}
                 loadingLabel="Confirming..."
                 disabled={!canConfirmNow}
-                reasonId={p.confirmBlockedReason ? p.sharedReasonId ?? reasonId : undefined}
+                reasonId={p.confirmBlockedReason ? (p.sharedReasonId ?? reasonId) : undefined}
                 onClick={p.onConfirm}
                 aria-label={`${confirmLabel}: ${FIELD_LABEL[p.fieldKey]}`}
               >
@@ -409,10 +417,35 @@ export function FieldRow(p: FieldRowProps) {
           </div>
         ) : null}
       </div>
+
+      {f.evidence?.text || f.note || proposedDiffers ? (
+        <div className="mt-1.5 flex flex-col gap-0.5">
+          {f.evidence?.text ? (
+            <button
+              type="button"
+              onClick={p.onShowEvidence}
+              className="inline-flex min-w-0 max-w-full items-start gap-1.5 self-start rounded-sm text-left text-sm text-ink-secondary hover:text-ink"
+              aria-label={`Show where ${FIELD_LABEL[p.fieldKey].toLowerCase()} was heard in the transcript: ${f.evidence.text}`}
+            >
+              <Quote className="mt-0.5 size-3.5 shrink-0 text-ink-muted" aria-hidden />
+              <span>
+                Dictated: <span className="italic underline decoration-line-strong underline-offset-2">“{f.evidence.text}”</span>
+              </span>
+            </button>
+          ) : null}
+          {f.note ? (
+            <p id={noteId} className={cn("text-sm", tone === "amber" ? "font-medium text-warning-fg" : "text-ink-secondary")}>
+              {f.note}
+            </p>
+          ) : null}
+          {proposedDiffers ? <p className="text-sm text-ink-muted">Transcript proposed: {fmtFieldValue(p.fieldKey, f.proposedValue)}</p> : null}
+        </div>
+      ) : null}
+
       {keepOpen && canKeep && !p.frozen && !p.confirmBlockedReason ? (
-        <div role="group" aria-label={`Keep ${FIELD_LABEL[p.fieldKey]} as dictated`} className="mt-1.5 flex flex-wrap items-center gap-2 rounded-sm border border-warning-border bg-surface px-2 py-1.5 text-sm">
-          <span className="text-ink">
-            Keep <span className="font-medium">{fmtFieldValue(p.fieldKey, f.value)}</span>
+        <div role="group" aria-label={`Keep ${FIELD_LABEL[p.fieldKey]} as dictated`} className="mt-2 flex flex-wrap items-center gap-2 border-t border-warning-border pt-2 text-sm">
+          <span className="min-w-0 flex-1 text-ink">
+            Keep <span className="font-semibold">{fmtFieldValue(p.fieldKey, f.value)}</span>
             {p.fieldKey === "dimensions" && p.dirty ? " (with the unit you chose)" : ""} after checking the specimen? Review note: {f.note ?? "uncertain value"}
           </span>
           <Button
@@ -432,22 +465,27 @@ export function FieldRow(p: FieldRowProps) {
           </Button>
         </div>
       ) : null}
+
       {p.dirty && !p.frozen ? (
-        <p className="mt-1 text-xs text-ink-muted">
+        <p className="mt-1.5 text-sm text-ink-muted">
           Edited, not saved. <Kbd>Enter</Kbd> confirms your value; <Kbd>Esc</Kbd> undoes.
         </p>
       ) : !p.frozen && needsReview && !p.confirmBlockedReason ? (
-        <p className="mt-1 text-xs text-ink-muted">
+        <p className="mt-1.5 text-sm text-ink-secondary">
           Enter the value you observed, or check the specimen and keep the dictated value. <Kbd>Enter</Kbd> does not accept it as shown.
         </p>
       ) : showHint && !p.frozen && f.status === "proposed" && !p.confirmBlockedReason ? (
-        <p className="mt-1 text-xs text-ink-muted">
+        <p className="mt-1.5 text-sm text-ink-muted">
           <Kbd>Enter</Kbd> in the field confirms the proposed value as shown.
         </p>
       ) : null}
-      {p.confirmBlockedReason && !p.frozen && !p.sharedReasonId ? <DisabledReason id={reasonId} className="mt-1 text-xs">{p.confirmBlockedReason}</DisabledReason> : null}
+      {p.confirmBlockedReason && !p.frozen && !p.sharedReasonId ? (
+        <DisabledReason id={reasonId} className="mt-1.5">
+          {p.confirmBlockedReason}
+        </DisabledReason>
+      ) : null}
       {p.error ? (
-        <p id={errorId} role="alert" className="mt-1 text-xs font-medium text-danger-fg">
+        <p id={errorId} role="alert" className="mt-1.5 text-sm font-semibold text-danger-fg">
           {p.error}
         </p>
       ) : null}

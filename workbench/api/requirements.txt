@@ -1,0 +1,42 @@
+# Pinned; each release at least two weeks old on 2026-10-26 (see docs/license-ledger.md).
+# The venv is ISOLATED (no --system-site-packages), so nothing from the system interpreter
+# (for example a GPL-licensed package) can be imported by accident. Scientific stack pinned below.
+fastapi==0.143.0
+uvicorn==0.54.0
+sqlalchemy==2.1.4
+pydantic==2.14.1
+python-multipart==0.0.32
+pillow==12.3.0
+openslide-python==1.4.6
+openslide-bin==4.0.1.2
+pytest==9.1.1
+httpx==0.28.1
+numpy==2.4.2
+scipy==1.17.0
+scikit-learn==1.9.0
+joblib==1.5.3
+threadpoolctl==3.6.0
+torch==2.14.1
+# Encoder libraries: CODE ONLY. No model weights are ever downloaded (dermpath/ml/encoders.py builds
+# models from local files, offline). Newest releases uploaded before 2026-10-12 (14 days before
+# 2026-10-26) that support torch 2.14.1 and Python 3.14; resolved with
+# `pip install --uploaded-prior-to 2026-10-12T00:00:00Z`. Pre-releases (safetensors 0.9.0rc*) excluded.
+timm==1.0.30
+safetensors==0.8.0
+transformers==5.19.0
+# Their required dependencies, pinned exactly for a reproducible environment.
+torchvision==0.29.1
+huggingface_hub==2.2.0
+hf-xet==1.7.0
+tokenizers==0.23.3
+httpx2==2.13.1
+httpcore2==2.13.1
+pyyaml==6.0.3
+regex==2026.9.29
+tqdm==4.70.1
+truststore==0.10.4
+typer==0.27.3
+rich==15.0.0
+markdown-it-py==4.2.0
+mdurl==0.1.2
+shellingham==1.5.4

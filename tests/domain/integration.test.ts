@@ -9,6 +9,9 @@ import { labLocalToIso } from "@/lib/time";
 import type { DB } from "@/server/db/db";
 
 const at = (hhmm: string) => labLocalToIso("2026-10-14", hhmm);
+/** The contact-directory version the settings editor opens with (office_contact_revision; 1 before any edit). */
+const contactVersionOf = (db: DB, contactId: string) =>
+  one<{ version: number } | undefined>(db, "SELECT version FROM office_contact_revision WHERE contact_id = ?", contactId)?.version ?? 1;
 const importCtx = (db: DB) => makeCtx(db, SYSTEM_ACTOR, "import", "test");
 
 function counts(db: DB) {
@@ -335,7 +338,7 @@ describe("acceptance 13: a source outage marks data stale; restored events recon
 
     const draft = must<{ ruleSetId: string }>(db, STAFF.tanya, "routing.draftRuleSet", { reason: "Seagrape reviewed", changes: [{ officeId: "off_sss", pathologistId: STAFF.ferreira }] });
     must(db, STAFF.md, "routing.approveRuleSet", { ruleSetId: draft.ruleSetId });
-    must(db, STAFF.tanya, "office.updateContact", { contactId: "oc_cld_1", patch: { out_until: null } });
+    must(db, STAFF.tanya, "office.updateContact", { contactId: "oc_cld_1", expectedVersion: contactVersionOf(db, "oc_cld_1"), patch: { out_until: null } });
 
     const registered = new Set(listCommands().map((c) => c.name));
     if (registered.has("gross.recordSourceEntry")) {
@@ -785,7 +788,7 @@ describe("demo controls and the contact directory", () => {
 
   it("a stale contact-directory edit is rejected instead of overwriting a colleague's change", () => {
     const db = testDb();
-    const denied = run(db, STAFF.maya, "office.updateContact", { contactId: "oc_cld_1", patch: { out_until: null } });
+    const denied = run(db, STAFF.maya, "office.updateContact", { contactId: "oc_cld_1", expectedVersion: contactVersionOf(db, "oc_cld_1"), patch: { out_until: null } });
     expect(denied.ok).toBe(false);
     const first = must<{ version: number }>(db, STAFF.tanya, "office.updateContact", { contactId: "oc_cld_1", expectedVersion: 1, patch: { out_until: null } });
     expect(first.version).toBe(2);
@@ -793,7 +796,7 @@ describe("demo controls and the contact directory", () => {
     expect(stale.ok).toBe(false);
     if (!stale.ok) expect(stale.error.code).toBe("CONFLICT");
     // Promoting a new primary demotes the previous one (one primary per office).
-    must(db, STAFF.tanya, "office.updateContact", { contactId: "oc_cld_3", patch: { is_primary: true } });
+    must(db, STAFF.tanya, "office.updateContact", { contactId: "oc_cld_3", expectedVersion: contactVersionOf(db, "oc_cld_3"), patch: { is_primary: true } });
     expect(all<{ id: string }>(db, "SELECT id FROM office_contact WHERE office_id = 'off_cld' AND is_primary = 1").map((r) => r.id)).toEqual(["oc_cld_3"]);
   });
 
@@ -846,11 +849,11 @@ describe("demo controls and the contact directory", () => {
 
   it("one contact cannot be both primary and escalation contact (routing and the directory would disagree)", () => {
     const db = testDb();
-    const both = run(db, STAFF.tanya, "office.updateContact", { contactId: "oc_hpd_1", patch: { is_escalation: true } });
+    const both = run(db, STAFF.tanya, "office.updateContact", { contactId: "oc_hpd_1", expectedVersion: contactVersionOf(db, "oc_hpd_1"), patch: { is_escalation: true } });
     expect(both.ok ? null : both.error.code).toBe("VALIDATION");
-    const promote = run(db, STAFF.tanya, "office.updateContact", { contactId: "oc_hpd_2", patch: { is_primary: true } });
+    const promote = run(db, STAFF.tanya, "office.updateContact", { contactId: "oc_hpd_2", expectedVersion: contactVersionOf(db, "oc_hpd_2"), patch: { is_primary: true } });
     expect(promote.ok ? null : promote.error.code).toBe("VALIDATION");
-    must(db, STAFF.tanya, "office.updateContact", { contactId: "oc_hpd_2", patch: { is_primary: true, is_escalation: false } });
+    must(db, STAFF.tanya, "office.updateContact", { contactId: "oc_hpd_2", expectedVersion: contactVersionOf(db, "oc_hpd_2"), patch: { is_primary: true, is_escalation: false } });
     expect(all<{ id: string }>(db, "SELECT id FROM office_contact WHERE office_id = 'off_hpd' AND is_primary = 1").map((x) => x.id)).toEqual(["oc_hpd_2"]);
   });
 

@@ -10,6 +10,7 @@ import { recordWorklistChange } from "@/server/core/feed";
 import { openTask } from "@/server/core/tasks";
 import { computeReadiness } from "@/server/domain/readiness";
 import { labLocalToIso } from "@/lib/time";
+import { decodeLabel } from "@/lib/identifiers";
 import { getWorklist, findWorklistRow, buildWorklistCsv, listSavedFilters, caseIsComplete, type WorklistRow, type WorklistData } from "@/server/queries/worklist";
 import { getCase, safeDecode } from "@/server/queries/case";
 import { getOperations } from "@/server/queries/operations";
@@ -244,6 +245,32 @@ describe("worklist: printed / downloaded snapshots", () => {
     expect(one<{ n: number }>(db, "SELECT COUNT(*) n FROM worklist_snapshot").n).toBe(1);
   });
 
+  it("remembers each user's last snapshot of a view and counts the rows in scope that changed after it, without changing anything", () => {
+    const db = testDb();
+    clockAt(db, "11:05");
+    const before = getWorklist(db, { staffId: STAFF.priya, view: "histotech" });
+    expect(before.lastSnapshot).toBeNull();
+    const snap = must<{ displayId: string; seq: number }>(db, STAFF.priya, "worklist.snapshot", { view: "histotech", filters: {}, format: "print", expectedSeq: before.seq });
+
+    const after = getWorklist(db, { staffId: STAFF.priya, view: "histotech" });
+    expect(after.lastSnapshot).toMatchObject({ displayId: snap.displayId, seq: snap.seq, generatedAt: at("11:05"), format: "print", changedRows: 0 });
+    // Another person or view has no snapshot of its own.
+    expect(getWorklist(db, { staffId: STAFF.priya, view: "operations" }).lastSnapshot).toBeNull();
+    expect(getWorklist(db, { staffId: STAFF.maya, view: "histotech" }).lastSnapshot).toBeNull();
+
+    // Two changes to one in-scope row count once; a change to a row outside the view's scope does not count.
+    const inScope = rowsOf(after)[0];
+    recordWorklistChange(sysCtx(db), { accessionId: inScope.id, type: "changed", summary: "Level requested" });
+    recordWorklistChange(sysCtx(db), { accessionId: inScope.id, type: "changed", summary: "Level printed" });
+    const outside = rowsOf(getWorklist(db, { staffId: STAFF.priya, view: "operations" })).find((r) => r.kind === "case" && !rowsOf(after).some((x) => x.id === r.id));
+    expect(outside, "the seed has a case outside the histotech scope").toBeTruthy();
+    recordWorklistChange(sysCtx(db), { accessionId: outside!.id, type: "changed", summary: "Outside the histotech scope" });
+    const snapshots = one<{ n: number }>(db, "SELECT COUNT(*) n FROM worklist_snapshot").n;
+    const later = getWorklist(db, { staffId: STAFF.priya, view: "histotech", filters: { pasOnly: true } });
+    expect(later.lastSnapshot?.changedRows).toBe(1);
+    expect(one<{ n: number }>(db, "SELECT COUNT(*) n FROM worklist_snapshot").n).toBe(snapshots);
+  });
+
   it("CSV header lines state generation time in ET, version, source data age and synthetic data", () => {
     const db = testDb();
     const data = getWorklist(db, { staffId: STAFF.priya, view: "operations" });
@@ -419,6 +446,16 @@ describe("worklist: routing exceptions", () => {
     for (const g of data.groups.filter((x) => !x.isException)) expect(g.rows.some((r) => r.provisionalId === "INT-1014-090")).toBe(false);
     // Doctor groups always carry a color name next to the doctor's name.
     for (const g of data.groups.filter((x) => !x.isException)) expect(g.colorName).toMatch(/^(teal|violet|amber)$/);
+    // A provisional item never gets a label code: no DataMatrix before an official number exists.
+    expect(row.labelPayload).toBeNull();
+    // Every accessioned row's label code decodes to that row's own accession number, as a case label.
+    const cases = rowsOf(data).filter((x) => x.kind === "case");
+    expect(cases.length).toBeGreaterThan(0);
+    for (const r of cases) {
+      const decoded = decodeLabel(r.labelPayload!);
+      expect(decoded.ok).toBe(true);
+      if (decoded.ok) expect(decoded.identity).toMatchObject({ kind: "C", accession: r.accessionNumber });
+    }
   });
 
   it("an accessioned case without an active assigned doctor gets its own group, never labeled a routing exception", () => {
@@ -474,7 +511,7 @@ describe("tasks: claiming, taking over and releasing the next step", () => {
     expect(one<{ n: number }>(db, "SELECT COUNT(*) n FROM audit_event WHERE action = 'command.denied' AND actor_id = ?", STAFF.director).n).toBe(1);
 
     // The owner releases without a reason; the task goes back to the histotech queue.
-    must(db, STAFF.priya, "task.release", { taskId });
+    must(db, STAFF.priya, "task.release", { taskId, expectedVersion: one<{ version: number }>(db, "SELECT version FROM task WHERE id = ?", taskId).version });
     expect(one<{ owner_id: string | null; owner_role: string; status: string }>(db, "SELECT owner_id, owner_role, status FROM task WHERE id = ?", taskId)).toEqual({
       owner_id: null, owner_role: "histotech", status: "open",
     });
@@ -513,13 +550,13 @@ describe("tasks: claiming, taking over and releasing the next step", () => {
     expect(ev.summary).toMatch(/taken over from Sam Ortiz/);
 
     // Someone else's task: a histotech cannot release it; the lead can, with a reason.
-    const notOwner = run(db, STAFF.priya, "task.release", { taskId: task.id });
+    const notOwner = run(db, STAFF.priya, "task.release", { taskId: task.id, expectedVersion: one<{ version: number }>(db, "SELECT version FROM task WHERE id = ?", task.id).version });
     expect(notOwner.ok).toBe(false);
     if (!notOwner.ok) expect(notOwner.error.code).toBe("FORBIDDEN");
-    const leadNoReason = run(db, STAFF.kim, "task.release", { taskId: task.id });
+    const leadNoReason = run(db, STAFF.kim, "task.release", { taskId: task.id, expectedVersion: one<{ version: number }>(db, "SELECT version FROM task WHERE id = ?", task.id).version });
     expect(leadNoReason.ok).toBe(false);
     if (!leadNoReason.ok) expect(leadNoReason.error.code).toBe("VALIDATION");
-    must(db, STAFF.kim, "task.release", { taskId: task.id, reason: "Back to the source-entry queue" });
+    must(db, STAFF.kim, "task.release", { taskId: task.id, reason: "Back to the source-entry queue", expectedVersion: one<{ version: number }>(db, "SELECT version FROM task WHERE id = ?", task.id).version });
     expect(one<{ owner_id: string | null; owner_role: string; status: string }>(db, "SELECT owner_id, owner_role, status FROM task WHERE id = ?", task.id)).toEqual({
       owner_id: null, owner_role: "histology_assistant", status: "open",
     });
@@ -569,7 +606,7 @@ describe("case detail and operations read models", () => {
     expect(c.summary.isComplete).toBe(false);
     expect(c.summary.text).toMatch(/^Not complete: /);
     // The headline gives the count; the parts line under it names the part that is not done.
-    expect(c.summary.text).toMatch(/^Not complete: 0 of 2 parts delivered/);
+    expect(c.summary.text).toMatch(/^Not complete: 0 of 2 parts sent on trays/);
     expect(c.summary.partsSummary).toContain(`${acc.parts[1].designation} awaiting gross`);
     expect(c.operationalSummary.label).toMatch(/Computed summary \(deterministic demo\) — not AI/);
     expect(c.operationalSummary.items.length).toBeGreaterThan(0);
@@ -632,12 +669,12 @@ describe("case detail and operations read models", () => {
     expect(caseIsComplete(target!)).toBe(false);
     const c = getCase(db, target!.accessionNumber)!;
     expect(c.summary.isComplete).toBe(false);
-    expect(c.summary.text).toMatch(/^Not complete: (all \d+ parts|the only part is) delivered, but additional work is open: WO-\d+/);
+    expect(c.summary.text).toMatch(/^Not complete: (all \d+ parts are|the only part is) sent on trays, but additional work is open: WO-\d+/);
     expect(c.operationalSummary.items[c.operationalSummary.items.length - 1].text).toMatch(/^Case not complete/);
     const row = findWorklistRow(db, STAFF.priya, target!.accessionNumber);
     if (row) {
       expect(row.isComplete).toBe(false);
-      expect(row.readinessText).not.toMatch(/^All parts delivered/);
+      expect(row.readinessText).not.toMatch(/^All parts sent on trays/);
     }
   });
 
