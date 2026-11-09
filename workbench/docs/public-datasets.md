@@ -1,6 +1,6 @@
 # Public datasets for BCC research (research use only)
 
-*This page records which public datasets were considered for the BCC present/absent research task, the one subset actually imported (60 COBRA biopsy slides), how its labels are represented, and what it can and cannot show. The candidate assessment comes from a desk review on 2026-10-26: web pages, papers, dataset landing pages, the GDC API and the public COBRA bucket listing. Counts marked "listing" come from that listing. Facts about the imported subset were measured by importing it into a throwaway database. Nothing here is a model result.*
+*This page records which public datasets were considered for the BCC present/absent research task, the one subset actually imported (60 COBRA biopsy slides), how its labels are represented, and what it can and cannot show. The candidate assessment comes from a desk review on 2026-10-26: web pages, papers, dataset landing pages, the GDC API and the public COBRA bucket listing. Counts marked "listing" come from that listing. Facts about the imported subset were measured by importing it into a throwaway database, then re-checked on 2026-10-28 against the frozen dataset version the experiments used (see "Reconciliation" below). Nothing here is a model result; model results are in `ml-engine-report.md`. The working tree reproduces no COBRA patient code or slide file name: examples and test fixtures use fictitious placeholders in COBRA's format (`P000101`, `COBRA-P000111`), checked absent from COBRA's metadata. Earlier commits on this branch do contain three real COBRA pseudonymous patient codes, in these docs and in two test files (commit `9e74298`, which the local remote-tracking ref shows on the remote branch, and the unpushed `7ba0435` and `8a1a59e`). Rewriting that history (a force-push) is the owner's decision.*
 
 ## 1. The subset in use: COBRA BCC biopsies
 
@@ -41,23 +41,61 @@ These counts come from a full import of the 60 files into a throwaway database, 
 | Slides | 60: 30 labelled BCC and 30 non-BCC (COBRA slide labels) |
 | Patients | 50. Under the `any_positive` rule, 26 count as positive and 24 as negative |
 | Cases (patient × specimen number) | 56. Blocks: 56 |
-| Mixed-label patients | 2. `COBRA-P774819` has specimen 1 BCC and specimen 2 non-BCC. `COBRA-P858284` has two slides of the same specimen and block with different labels |
+| Mixed-label patients | 2. One patient has specimen 1 BCC and specimen 2 non-BCC. The other has two slides of the same specimen and block with different labels. (Their codes are kept out of the repository.) |
 | Scanner and site | One scanner model as reported by COBRA (`3D Histech Panoramic P1000`), one centre (Radboudumc) |
 | Image reading | All 60 opened by OpenSlide 4.0.1 as `generic-tiff`, at 0.4851 µm/px from the TIFF resolution tags. Pyramid levels: 6 levels on 37 slides, 5 on 19, 7 on 3 and 4 on 1. No associated label or macro images |
 | Consistency with COBRA's metadata | For all 60, width, height, level count and µm/px after ingest equal `bcc_images.csv`. All 60 sha256 values equal the checksum list |
 | Automated QC screen | 60 screens ran and raised 0 heuristic issues |
 | Identifier-risk flags | `filename_long_number` on 34 file names. COBRA's file names are 32-character hexadecimal hashes, so these are false positives; they stay visible for human review |
-| Near-duplicate screen | 2 candidate pairs, each between different patients with different image sizes (thumbnail dHash distance ≤ 6). They are candidates for a human decision, not evidence of duplication. With a random split at seed 0, one pair falls across splits and must be decided or acknowledged before freeze |
-| Split at seed 0 (60/20/20, stratified by patient) | Train 16 positive / 14 negative patients; validation 5 / 5; test 5 / 5. No split lacks a class |
+| Near-duplicate screen | 2 candidate pairs, each between different patients with different image sizes (thumbnail dHash distance ≤ 6; the distances are 5 and 6). Within each pair both slides have the same label: one pair is `bcc_absent_not_benign`, the other `bcc_present`. They are candidates for a human decision, not evidence of duplication. With the illustrative split at seed 0 (next row), one pair falls across splits and must be decided or acknowledged before freeze. In the frozen version the experiments used, both pairs are in the development pool, but their members fall in different cross-validation folds, and no human decision has been recorded. The effect is bounded by a sensitivity analysis in `ml-engine-report.md` §3.8 |
+| Split at seed 0 (60/20/20, stratified by patient) | **Illustrative only; not the split used by the experiments.** Train 16 positive / 14 negative patients; validation 5 / 5; test 5 / 5. No split lacks a class |
 
 Timing on the development Mac: about 2 s for the import, which copies and verifies 2.4 GB, and about 10 s for the worker to run 60 ingest and 60 QC jobs.
+
+### Reconciliation with the frozen dataset version used by the experiments (2026-10-28)
+
+The ML experiments (`ml-engine-report.md`) use one frozen dataset version of the shared project `proj-cobra-bcc-subset`:
+- dataset version `1868803e54c045eba4df9c7a9fd53a7b`, v1, frozen 2026-10-28T03:05Z;
+- manifest sha256 `a73bfa56…ca902`;
+- split fingerprint `19676e29…47df2`.
+
+Every structural count above matches that version. The split does **not** match the illustrative seed-0 split.
+
+| | Documented above | Frozen version `1868803e` |
+|---|---|---|
+| Slides / patients | 60 / 50 | 60 / 50 |
+| Cases / blocks | 56 / 56 | 56 / 56 |
+| Slide labels (BCC present / BCC absent) | 30 / 30 | 30 / 30 |
+| Patients under `any_positive` (positive / negative) | 26 / 24 | 26 / 24 |
+| Slides counted by **patient** label (from positive / negative patients) | (not stated before) | 32 / 28. The two mixed-label patients' slides count with the positive patients |
+| Mixed-label patients | 2 | 2, both in the development pool |
+| Site / scanner model / µm/px | one / one / 0.4851 | one / one / 0.4851 |
+| Labels | 60 imported reference labels, review state `imported` | same |
+| Split | seed 0, 60/20/20 (illustrative) | **seed 20261027, train 0.7 / val 0 / test 0.3**, patient-grouped, stratified on `any_positive` (`dermpath.splits/3`) |
+| Development pool (train; no val split) | — | **35 patients** (18 positive / 17 negative); **45 slides** (22 BCC present / 23 BCC absent); 41 cases |
+| Test split | — | **15 patients** (8 / 7); **15 slides** (8 / 7); 15 cases. **Never released** in the real study (0 test releases) |
+
+**Which basis a table uses.**
+- Slide-label counts (30 / 30, and 22 / 23 in the development pool) count each slide by its own label.
+- Patient-label counts (26 / 24 patients; 32 / 28 slides) use the `any_positive` rule.
+- The models' prediction unit is the slide (bag).
+- The independent units are the 35 development patients.
+
+**Dry-run disclosure.** Before this split was frozen, throwaway dry runs processed 6 COBRA slides from 6 patients in separate databases. 4 of those patients are among the 15 test patients. For 2 of them, dry-run test predictions were looked at (dry-run models trained on about 4 slides). The other 2 were dry-run training patients: their labels were read and their slides were used for the dry-run Macenko references. Separately, the real run's feature-set builds extracted all 15 test slides label-free (fixed encoders, no labels read).
+
+None of that informed any real-cohort run, threshold or candidate. These patients are therefore described as "unreleased in the real study and not used for model selection", not as "untouched". The details are in `ml-engine-report.md` §7 and in the evidence package (`experiments/evidence/cobra-bcc-subset-2026-10-28/test_releases.json`).
+
+Sources for this subsection:
+- the driver's s1 report (`experiments/reports/s1.json`, local, gitignored);
+- its sanitized mirror `experiments/evidence/cobra-bcc-subset-2026-10-28/dataset.json` (`cohort_reconciliation`, `split_table`, `identity`);
+- the inventory copy `…/attachments/pre_fix_inventory.md` §3 (cases per split).
 
 ### How it is represented in the workbench
 
 | COBRA field | Workbench record |
 |---|---|
-| `patient_id` (for example `P765850`) | Coded patient `COBRA-P765850`. This is COBRA's published pseudonymous id; patient sex and age are **not** imported |
-| (`patient_id`, `specimennumber`) | One case, accession `COBRA-P765850-S1`, provenance `public_licensed`, site `radboudumc`. The site comes from the dataset documentation (a single centre), not from a per-row field. The case note carries the licence. There is no collection date (COBRA publishes none), so temporal splits are not possible |
+| `patient_id` (format `P` + six digits; `P000101` below is an illustrative placeholder, not a COBRA patient) | Coded patient `COBRA-P000101`. This is COBRA's published pseudonymous id; patient sex and age are **not** imported |
+| (`patient_id`, `specimennumber`) | One case, accession `COBRA-P000101-S1`, provenance `public_licensed`, site `radboudumc`. The site comes from the dataset documentation (a single centre), not from a per-row field. The case note carries the licence. There is no collection date (COBRA publishes none), so temporal splits are not possible |
 | — | Part `A`. COBRA publishes no part or anatomic site |
 | `block` | Block designation (`1` for every selected slide) |
 | file `<filename>.tif` | Slide: level 1, stain `H&E`, scanner `3d-histech-panoramic-p1000`, provenance `public_licensed`, review state `imported`, original file name kept as metadata. COBRA publishes no section level, so level 1 is a placeholder; two slides of one block both carry level 1. COBRA's staining name (`HE  1`, `HE 1-2-3`) is kept in the import record |
@@ -92,7 +130,8 @@ Results on this dataset measure agreement with COBRA's report-derived reference.
 - **Report-derived labels.** Rule-based extraction from reports, not expert reads in this workbench, with the slide-level label noise described above.
 - **Single centre and single scanner model.** No site or scanner shift can be measured. The audit's site and scanner confounding tables have one level each.
 - **Enriched prevalence.** The subset is 50 % BCC by construction (COBRA's package is about 52 %). Sensitivity and specificity do not depend on prevalence, but PPV and NPV do not transfer to a clinical population; declare a target prevalence to adjust them.
-- **Small.** 50 patients, so any test split holds about 10 patients and confidence intervals are wide. This subset exercises the real-image pipeline and its statistics; it cannot support a performance claim.
+- **Small.** 50 patients. The frozen split has 35 development and 15 test patients, so confidence intervals are wide. This subset exercises the real-image pipeline and its statistics; it cannot support a performance claim.
+- **No collection dates.** COBRA publishes none (60 of 60 missing), so a temporal split is impossible on this subset.
 - **Non-commercial licence** (CC BY-NC-SA 4.0); see above.
 - **Not a validation of clinical performance**, and not a substitute for the protocol's own expert-labelled cohort and an independent external test set.
 

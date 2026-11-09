@@ -1,0 +1,4604 @@
+{
+  "candidate_rule_check": {
+    "declared": {
+      "encoder": "midnight-12k",
+      "head": "abmil",
+      "run_id": "ba364f52b97843c18315d8bacbaf9180"
+    },
+    "note": "robustness check only; the pre-declared candidate is not re-selected",
+    "ranking_all": [
+      {
+        "encoder": "midnight-12k",
+        "head": "abmil",
+        "mean_oof_auroc_over_seeds": 0.9393939393939394
+      },
+      {
+        "encoder": "midnight-12k",
+        "head": "meanpool_logreg",
+        "mean_oof_auroc_over_seeds": 0.8438735177865612
+      },
+      {
+        "encoder": "handcrafted-stain-texture-v1",
+        "head": "abmil",
+        "mean_oof_auroc_over_seeds": 0.8181818181818182
+      },
+      {
+        "encoder": "handcrafted-stain-texture-v1",
+        "head": "meanpool_logreg",
+        "mean_oof_auroc_over_seeds": 0.7687747035573121
+      }
+    ],
+    "ranking_excluding": [
+      {
+        "encoder": "midnight-12k",
+        "head": "abmil",
+        "mean_oof_auroc_over_seeds": 0.9484126984126985
+      },
+      {
+        "encoder": "midnight-12k",
+        "head": "meanpool_logreg",
+        "mean_oof_auroc_over_seeds": 0.8261904761904763
+      },
+      {
+        "encoder": "handcrafted-stain-texture-v1",
+        "head": "abmil",
+        "mean_oof_auroc_over_seeds": 0.8214285714285715
+      },
+      {
+        "encoder": "handcrafted-stain-texture-v1",
+        "head": "meanpool_logreg",
+        "mean_oof_auroc_over_seeds": 0.7714285714285715
+      }
+    ],
+    "rule": "the encoder x head combination with the highest mean out-of-fold AUROC point estimate over the pre-declared S3 training seeds; ties resolved toward meanpool_logreg, then handcrafted; the candidate model is that combination's run with the first pre-declared seed",
+    "rule_picks_same_combination_after_exclusion": true,
+    "rule_reproduces_declared_choice_on_all": true
+  },
+  "caveats": [
+    "Development out-of-fold estimates on 35 development patients (45 slide bags); not test results. The test split is not read by this script.",
+    "Nothing is retrained: the exclusion removes the held-out predictions of the candidate patients, whose fold models may have trained on a near-duplicate partner. Fold models, thresholds and calibration are unchanged.",
+    "The candidates are an automated thumbnail-dHash screen with no human decision: they may be distinct material. The exclusion is a sensitivity bound for that question, not a finding that they are duplicates.",
+    "AUROC and AUPRC are threshold-free. Sensitivity / specificity deltas and McNemar use thresholds selected on the full OOF scores (Youden): tuning estimates (optimistic), flagged tuning_set.",
+    "The bootstrap uses the same seeds as s3 but a different patient set after exclusion, so the full and the restricted intervals come from different replicate streams; their difference is not a paired estimate.",
+    "Training-seed repeats measure optimisation variability on the same patients and folds; they are not additional independent patients.",
+    "Removing patients makes the intervals wider and the estimates noisier; with 31 patients CIs remain approximate.",
+    "Per-pair intervals are unadjusted for the several comparisons (4 per seed x 3 seeds, in two analyses): an interval that excludes 0 in one analysis is not a declared difference, and no winner is declared.",
+    "The candidate-rule check re-applies the s3 rule to the restricted numbers for robustness only; it never changes the pre-declared test candidate, which was fixed before any test access."
+  ],
+  "code": {
+    "engine": {
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+      "dirty": false
+    },
+    "functions": [
+      "dermpath.ml.metrics.evaluate_binary (as dermpath.ml.training.development_summary calls it)",
+      "dermpath.ml.evaluation.paired_runs_comparison (full set)",
+      "dermpath.ml.comparison.paired_comparison / restrict_to_common / label_tuning_estimates (restricted set)",
+      "dermpath.datasets._near_duplicates (candidate screen)"
+    ],
+    "script": "workbench/scripts/sensitivity_near_duplicates.py"
+  },
+  "comparisons": [
+    {
+      "all_development_patients": {
+        "counts": {
+          "n_bags": 45,
+          "n_patients": 35,
+          "negatives": 23,
+          "positives": 22,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 45,
+              "patients": 35
+            },
+            "unscorable": {
+              "handcrafted-stain-texture-v1": {
+                "bags": 0,
+                "patients": 0
+              },
+              "midnight-12k": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "handcrafted-stain-texture-v1",
+            "auprc": {
+              "ci": [
+                -0.2360432490505909,
+                0.07635202176341961
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.184,
+                "midnight-12k": 0.816
+              },
+              "value": -0.07201512070196392
+            },
+            "auroc": {
+              "ci": [
+                -0.2222222222222222,
+                0.060503636938646264
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.142,
+                "midnight-12k": 0.8545
+              },
+              "value": -0.07509881422924902
+            },
+            "b": "midnight-12k",
+            "brier": {
+              "ci": [
+                -0.07889334503263122,
+                0.09755014134837912
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.401,
+                "midnight-12k": 0.599
+              },
+              "value": 0.01004110729945143
+            },
+            "delta": "a - b",
+            "mcnemar_p": 0.5810546875,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.25,
+                0.1578947368421053
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.2435,
+                "midnight-12k": 0.593
+              },
+              "tuning_set": true,
+              "value": -0.045454545454545414
+            },
+            "specificity": {
+              "ci": [
+                -0.3636363636363636,
+                0.1364028213166143
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.191,
+                "midnight-12k": 0.7125
+              },
+              "tuning_set": true,
+              "value": -0.08695652173913049
+            }
+          }
+        ]
+      },
+      "bootstrap_seed": 20261026,
+      "excluding_undecided_near_duplicate_patients": {
+        "counts": {
+          "n_bags": 41,
+          "n_patients": 31,
+          "negatives": 21,
+          "positives": 20,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 41,
+              "patients": 31
+            },
+            "unscorable": {
+              "handcrafted-stain-texture-v1": {
+                "bags": 0,
+                "patients": 0
+              },
+              "midnight-12k": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "handcrafted-stain-texture-v1",
+            "auprc": {
+              "ci": [
+                -0.22943438627849985,
+                0.09937252569007896
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.245,
+                "midnight-12k": 0.755
+              },
+              "value": -0.05790302942794878
+            },
+            "auroc": {
+              "ci": [
+                -0.21154761904761907,
+                0.0916898148148147
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.2295,
+                "midnight-12k": 0.758
+              },
+              "value": -0.05476190476190468
+            },
+            "b": "midnight-12k",
+            "brier": {
+              "ci": [
+                -0.09556686808443327,
+                0.09678593053785944
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.4835,
+                "midnight-12k": 0.5165
+              },
+              "value": 0.0019361141541130167
+            },
+            "delta": "a - b",
+            "mcnemar_p": 1.0,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.2777777777777778,
+                0.16666666666666663
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.2595,
+                "midnight-12k": 0.566
+              },
+              "tuning_set": true,
+              "value": -0.050000000000000044
+            },
+            "specificity": {
+              "ci": [
+                -0.2666666666666667,
+                0.19999999999999996
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.4165,
+                "midnight-12k": 0.416
+              },
+              "tuning_set": true,
+              "value": 0.0
+            }
+          }
+        ]
+      },
+      "fixed": {
+        "head": "meanpool_logreg"
+      },
+      "group": "encoder_effects",
+      "min_patients": 10,
+      "models": [
+        "handcrafted-stain-texture-v1",
+        "midnight-12k"
+      ],
+      "n_boot": 2000,
+      "reproduction_check": {
+        "engine_matches_s3_report": true,
+        "exclusion_path_with_no_exclusion_matches_engine": true
+      },
+      "run_ids": {
+        "handcrafted-stain-texture-v1": "da0e15429d254469a88c05aa815a606e",
+        "midnight-12k": "b7abc046747a49e6ac834cccb09b6802"
+      },
+      "seed": 0,
+      "split": "oof",
+      "status": "ok",
+      "tuning_set_note": "tuning estimates (optimistic): at least one model's operating threshold was selected on these same development scores, so the paired sensitivity / specificity deltas and McNemar at the operating points are tuning estimates; threshold-free deltas (AUROC, AUPRC, Brier) are not affected by that selection"
+    },
+    {
+      "all_development_patients": {
+        "counts": {
+          "n_bags": 45,
+          "n_patients": 35,
+          "negatives": 23,
+          "positives": 22,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 45,
+              "patients": 35
+            },
+            "unscorable": {
+              "handcrafted-stain-texture-v1": {
+                "bags": 0,
+                "patients": 0
+              },
+              "midnight-12k": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "handcrafted-stain-texture-v1",
+            "auprc": {
+              "ci": [
+                -0.27202692614687973,
+                0.012142840220451048
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.0395,
+                "midnight-12k": 0.9605
+              },
+              "value": -0.10920031492589988
+            },
+            "auroc": {
+              "ci": [
+                -0.2551362545018008,
+                0.006698105973468238
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.0325,
+                "midnight-12k": 0.965
+              },
+              "value": -0.11264822134387353
+            },
+            "b": "midnight-12k",
+            "brier": {
+              "ci": [
+                -0.006092346461774745,
+                0.16813071108463906
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.035,
+                "midnight-12k": 0.965
+              },
+              "value": 0.08258829136992879
+            },
+            "delta": "a - b",
+            "mcnemar_p": 0.0654296875,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.4117647058823529,
+                -0.05882352941176472
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.0,
+                "midnight-12k": 0.996
+              },
+              "tuning_set": true,
+              "value": -0.2272727272727273
+            },
+            "specificity": {
+              "ci": [
+                -0.33333333333333326,
+                0.14814814814814814
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.1735,
+                "midnight-12k": 0.708
+              },
+              "tuning_set": true,
+              "value": -0.08695652173913038
+            }
+          }
+        ]
+      },
+      "bootstrap_seed": 20261026,
+      "excluding_undecided_near_duplicate_patients": {
+        "counts": {
+          "n_bags": 41,
+          "n_patients": 31,
+          "negatives": 21,
+          "positives": 20,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 41,
+              "patients": 31
+            },
+            "unscorable": {
+              "handcrafted-stain-texture-v1": {
+                "bags": 0,
+                "patients": 0
+              },
+              "midnight-12k": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "handcrafted-stain-texture-v1",
+            "auprc": {
+              "ci": [
+                -0.2997923764419637,
+                0.01075392431432137
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.0415,
+                "midnight-12k": 0.9575
+              },
+              "value": -0.11469461463596742
+            },
+            "auroc": {
+              "ci": [
+                -0.25400862890922954,
+                0.00555952380952377
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.031,
+                "midnight-12k": 0.9615
+              },
+              "value": -0.10952380952380947
+            },
+            "b": "midnight-12k",
+            "brier": {
+              "ci": [
+                0.016083977394445434,
+                0.19018124969501923
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.0085,
+                "midnight-12k": 0.9915
+              },
+              "value": 0.10291638836749452
+            },
+            "delta": "a - b",
+            "mcnemar_p": 0.0654296875,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.4444444444444444,
+                -0.07142857142857151
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.0,
+                "midnight-12k": 0.996
+              },
+              "tuning_set": true,
+              "value": -0.25
+            },
+            "specificity": {
+              "ci": [
+                -0.3685855263157895,
+                0.15384615384615385
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.1805,
+                "midnight-12k": 0.704
+              },
+              "tuning_set": true,
+              "value": -0.09523809523809523
+            }
+          }
+        ]
+      },
+      "fixed": {
+        "head": "abmil"
+      },
+      "group": "encoder_effects",
+      "min_patients": 10,
+      "models": [
+        "handcrafted-stain-texture-v1",
+        "midnight-12k"
+      ],
+      "n_boot": 2000,
+      "reproduction_check": {
+        "engine_matches_s3_report": true,
+        "exclusion_path_with_no_exclusion_matches_engine": true
+      },
+      "run_ids": {
+        "handcrafted-stain-texture-v1": "5d2d00e3232e43e3b74a78c5a9fda417",
+        "midnight-12k": "ba364f52b97843c18315d8bacbaf9180"
+      },
+      "seed": 0,
+      "split": "oof",
+      "status": "ok",
+      "tuning_set_note": "tuning estimates (optimistic): at least one model's operating threshold was selected on these same development scores, so the paired sensitivity / specificity deltas and McNemar at the operating points are tuning estimates; threshold-free deltas (AUROC, AUPRC, Brier) are not affected by that selection"
+    },
+    {
+      "all_development_patients": {
+        "counts": {
+          "n_bags": 45,
+          "n_patients": 35,
+          "negatives": 23,
+          "positives": 22,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 45,
+              "patients": 35
+            },
+            "unscorable": {
+              "abmil": {
+                "bags": 0,
+                "patients": 0
+              },
+              "meanpool_logreg": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "abmil",
+            "auprc": {
+              "ci": [
+                -0.008036756754602411,
+                0.19814534108520798
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.9605,
+                "meanpool_logreg": 0.0395
+              },
+              "value": 0.07791502280402507
+            },
+            "auroc": {
+              "ci": [
+                -0.03681647300068345,
+                0.1942896825396825
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.883,
+                "meanpool_logreg": 0.113
+              },
+              "value": 0.06521739130434778
+            },
+            "b": "meanpool_logreg",
+            "brier": {
+              "ci": [
+                -0.11315227557605571,
+                0.03765043126965562
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.803,
+                "meanpool_logreg": 0.197
+              },
+              "value": -0.03328349626944693
+            },
+            "delta": "a - b",
+            "mcnemar_p": 0.79052734375,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.38095238095238093,
+                0.04171195652173885
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.028,
+                "meanpool_logreg": 0.9355
+              },
+              "tuning_set": true,
+              "value": -0.18181818181818188
+            },
+            "specificity": {
+              "ci": [
+                0.045454545454545414,
+                0.5
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.987,
+                "meanpool_logreg": 0.006
+              },
+              "tuning_set": true,
+              "value": 0.26086956521739135
+            }
+          }
+        ]
+      },
+      "bootstrap_seed": 20261026,
+      "excluding_undecided_near_duplicate_patients": {
+        "counts": {
+          "n_bags": 41,
+          "n_patients": 31,
+          "negatives": 21,
+          "positives": 20,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 41,
+              "patients": 31
+            },
+            "unscorable": {
+              "abmil": {
+                "bags": 0,
+                "patients": 0
+              },
+              "meanpool_logreg": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "abmil",
+            "auprc": {
+              "ci": [
+                0.007708499724076174,
+                0.2011811776656566
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.981,
+                "meanpool_logreg": 0.019
+              },
+              "value": 0.08562394813101992
+            },
+            "auroc": {
+              "ci": [
+                0.0,
+                0.21191017316017305
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.9705,
+                "meanpool_logreg": 0.0245
+              },
+              "value": 0.08809523809523812
+            },
+            "b": "meanpool_logreg",
+            "brier": {
+              "ci": [
+                -0.136840917002272,
+                0.02214604356902006
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.904,
+                "meanpool_logreg": 0.096
+              },
+              "value": -0.052496177818294104
+            },
+            "delta": "a - b",
+            "mcnemar_p": 1.0,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.35,
+                0.0625
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.046,
+                "meanpool_logreg": 0.8865
+              },
+              "tuning_set": true,
+              "value": -0.15000000000000002
+            },
+            "specificity": {
+              "ci": [
+                0.0,
+                0.4285714285714286
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.936,
+                "meanpool_logreg": 0.021
+              },
+              "tuning_set": true,
+              "value": 0.19047619047619047
+            }
+          }
+        ]
+      },
+      "fixed": {
+        "encoder": "handcrafted-stain-texture-v1"
+      },
+      "group": "head_effects",
+      "min_patients": 10,
+      "models": [
+        "abmil",
+        "meanpool_logreg"
+      ],
+      "n_boot": 2000,
+      "reproduction_check": {
+        "engine_matches_s3_report": true,
+        "exclusion_path_with_no_exclusion_matches_engine": true
+      },
+      "run_ids": {
+        "abmil": "5d2d00e3232e43e3b74a78c5a9fda417",
+        "meanpool_logreg": "da0e15429d254469a88c05aa815a606e"
+      },
+      "seed": 0,
+      "split": "oof",
+      "status": "ok",
+      "tuning_set_note": "tuning estimates (optimistic): at least one model's operating threshold was selected on these same development scores, so the paired sensitivity / specificity deltas and McNemar at the operating points are tuning estimates; threshold-free deltas (AUROC, AUPRC, Brier) are not affected by that selection"
+    },
+    {
+      "all_development_patients": {
+        "counts": {
+          "n_bags": 45,
+          "n_patients": 35,
+          "negatives": 23,
+          "positives": 22,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 45,
+              "patients": 35
+            },
+            "unscorable": {
+              "abmil": {
+                "bags": 0,
+                "patients": 0
+              },
+              "meanpool_logreg": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "abmil",
+            "auprc": {
+              "ci": [
+                -0.007695087966976173,
+                0.2808852322892767
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.9615,
+                "meanpool_logreg": 0.0385
+              },
+              "value": 0.11510021702796103
+            },
+            "auroc": {
+              "ci": [
+                -0.01587301587301582,
+                0.21968764302059499
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.951,
+                "meanpool_logreg": 0.0465
+              },
+              "value": 0.1027667984189723
+            },
+            "b": "meanpool_logreg",
+            "brier": {
+              "ci": [
+                -0.2170802625721625,
+                0.010892518200909824
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.962,
+                "meanpool_logreg": 0.038
+              },
+              "value": -0.1058306803399243
+            },
+            "delta": "a - b",
+            "mcnemar_p": 0.14599609375,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.17391304347826086,
+                0.20000000000000007
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.4095,
+                "meanpool_logreg": 0.3985
+              },
+              "tuning_set": true,
+              "value": 0.0
+            },
+            "specificity": {
+              "ci": [
+                0.04761904761904756,
+                0.4285714285714286
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.984,
+                "meanpool_logreg": 0.005
+              },
+              "tuning_set": true,
+              "value": 0.26086956521739124
+            }
+          }
+        ]
+      },
+      "bootstrap_seed": 20261026,
+      "excluding_undecided_near_duplicate_patients": {
+        "counts": {
+          "n_bags": 41,
+          "n_patients": 31,
+          "negatives": 21,
+          "positives": 20,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 41,
+              "patients": 31
+            },
+            "unscorable": {
+              "abmil": {
+                "bags": 0,
+                "patients": 0
+              },
+              "meanpool_logreg": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "abmil",
+            "auprc": {
+              "ci": [
+                0.014565514904751909,
+                0.3335490485391801
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.99,
+                "meanpool_logreg": 0.01
+              },
+              "value": 0.14241553333903856
+            },
+            "auroc": {
+              "ci": [
+                0.03332236842105262,
+                0.2657917956656346
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.9925,
+                "meanpool_logreg": 0.0065
+              },
+              "value": 0.1428571428571429
+            },
+            "b": "meanpool_logreg",
+            "brier": {
+              "ci": [
+                -0.2521653229584518,
+                -0.04633664794330205
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.9975,
+                "meanpool_logreg": 0.0025
+              },
+              "value": -0.1534764520316756
+            },
+            "delta": "a - b",
+            "mcnemar_p": 0.0654296875,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.1112745098039216,
+                0.23839285714285555
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.6275,
+                "meanpool_logreg": 0.183
+              },
+              "tuning_set": true,
+              "value": 0.04999999999999993
+            },
+            "specificity": {
+              "ci": [
+                0.050000000000000044,
+                0.4666666666666667
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.982,
+                "meanpool_logreg": 0.0055
+              },
+              "tuning_set": true,
+              "value": 0.2857142857142857
+            }
+          }
+        ]
+      },
+      "fixed": {
+        "encoder": "midnight-12k"
+      },
+      "group": "head_effects",
+      "min_patients": 10,
+      "models": [
+        "abmil",
+        "meanpool_logreg"
+      ],
+      "n_boot": 2000,
+      "reproduction_check": {
+        "engine_matches_s3_report": true,
+        "exclusion_path_with_no_exclusion_matches_engine": true
+      },
+      "run_ids": {
+        "abmil": "ba364f52b97843c18315d8bacbaf9180",
+        "meanpool_logreg": "b7abc046747a49e6ac834cccb09b6802"
+      },
+      "seed": 0,
+      "split": "oof",
+      "status": "ok",
+      "tuning_set_note": "tuning estimates (optimistic): at least one model's operating threshold was selected on these same development scores, so the paired sensitivity / specificity deltas and McNemar at the operating points are tuning estimates; threshold-free deltas (AUROC, AUPRC, Brier) are not affected by that selection"
+    },
+    {
+      "all_development_patients": {
+        "counts": {
+          "n_bags": 45,
+          "n_patients": 35,
+          "negatives": 23,
+          "positives": 22,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 45,
+              "patients": 35
+            },
+            "unscorable": {
+              "handcrafted-stain-texture-v1": {
+                "bags": 0,
+                "patients": 0
+              },
+              "midnight-12k": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "handcrafted-stain-texture-v1",
+            "auprc": {
+              "ci": [
+                -0.2360432490505909,
+                0.07635202176341961
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.184,
+                "midnight-12k": 0.816
+              },
+              "value": -0.07201512070196392
+            },
+            "auroc": {
+              "ci": [
+                -0.2222222222222222,
+                0.060503636938646264
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.142,
+                "midnight-12k": 0.8545
+              },
+              "value": -0.07509881422924902
+            },
+            "b": "midnight-12k",
+            "brier": {
+              "ci": [
+                -0.07889334503263122,
+                0.09755014134837912
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.401,
+                "midnight-12k": 0.599
+              },
+              "value": 0.01004110729945143
+            },
+            "delta": "a - b",
+            "mcnemar_p": 0.5810546875,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.25,
+                0.1578947368421053
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.2435,
+                "midnight-12k": 0.593
+              },
+              "tuning_set": true,
+              "value": -0.045454545454545414
+            },
+            "specificity": {
+              "ci": [
+                -0.3636363636363636,
+                0.1364028213166143
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.191,
+                "midnight-12k": 0.7125
+              },
+              "tuning_set": true,
+              "value": -0.08695652173913049
+            }
+          }
+        ]
+      },
+      "bootstrap_seed": 20261026,
+      "excluding_undecided_near_duplicate_patients": {
+        "counts": {
+          "n_bags": 41,
+          "n_patients": 31,
+          "negatives": 21,
+          "positives": 20,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 41,
+              "patients": 31
+            },
+            "unscorable": {
+              "handcrafted-stain-texture-v1": {
+                "bags": 0,
+                "patients": 0
+              },
+              "midnight-12k": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "handcrafted-stain-texture-v1",
+            "auprc": {
+              "ci": [
+                -0.22943438627849985,
+                0.09937252569007896
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.245,
+                "midnight-12k": 0.755
+              },
+              "value": -0.05790302942794878
+            },
+            "auroc": {
+              "ci": [
+                -0.21154761904761907,
+                0.0916898148148147
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.2295,
+                "midnight-12k": 0.758
+              },
+              "value": -0.05476190476190468
+            },
+            "b": "midnight-12k",
+            "brier": {
+              "ci": [
+                -0.09556686808443327,
+                0.09678593053785944
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.4835,
+                "midnight-12k": 0.5165
+              },
+              "value": 0.0019361141541130167
+            },
+            "delta": "a - b",
+            "mcnemar_p": 1.0,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.2777777777777778,
+                0.16666666666666663
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.2595,
+                "midnight-12k": 0.566
+              },
+              "tuning_set": true,
+              "value": -0.050000000000000044
+            },
+            "specificity": {
+              "ci": [
+                -0.2666666666666667,
+                0.19999999999999996
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.4165,
+                "midnight-12k": 0.416
+              },
+              "tuning_set": true,
+              "value": 0.0
+            }
+          }
+        ]
+      },
+      "fixed": {
+        "head": "meanpool_logreg"
+      },
+      "group": "encoder_effects",
+      "min_patients": 10,
+      "models": [
+        "handcrafted-stain-texture-v1",
+        "midnight-12k"
+      ],
+      "n_boot": 2000,
+      "reproduction_check": {
+        "engine_matches_s3_report": true,
+        "exclusion_path_with_no_exclusion_matches_engine": true
+      },
+      "run_ids": {
+        "handcrafted-stain-texture-v1": "39aae3d495af4701b655d92aaae1a618",
+        "midnight-12k": "71a27f33c1354a878e23a0f3ae5cc351"
+      },
+      "seed": 1,
+      "split": "oof",
+      "status": "ok",
+      "tuning_set_note": "tuning estimates (optimistic): at least one model's operating threshold was selected on these same development scores, so the paired sensitivity / specificity deltas and McNemar at the operating points are tuning estimates; threshold-free deltas (AUROC, AUPRC, Brier) are not affected by that selection"
+    },
+    {
+      "all_development_patients": {
+        "counts": {
+          "n_bags": 45,
+          "n_patients": 35,
+          "negatives": 23,
+          "positives": 22,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 45,
+              "patients": 35
+            },
+            "unscorable": {
+              "handcrafted-stain-texture-v1": {
+                "bags": 0,
+                "patients": 0
+              },
+              "midnight-12k": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "handcrafted-stain-texture-v1",
+            "auprc": {
+              "ci": [
+                -0.32742141421788656,
+                0.04340714824903257
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.074,
+                "midnight-12k": 0.926
+              },
+              "value": -0.1465187255749174
+            },
+            "auroc": {
+              "ci": [
+                -0.3165734970674487,
+                0.02503289473684195
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.0475,
+                "midnight-12k": 0.9495
+              },
+              "value": -0.13636363636363635
+            },
+            "b": "midnight-12k",
+            "brier": {
+              "ci": [
+                -0.005201380401198422,
+                0.21583614897486103
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.031,
+                "midnight-12k": 0.969
+              },
+              "value": 0.10472659755866678
+            },
+            "delta": "a - b",
+            "mcnemar_p": 0.0390625,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.26086956521739124,
+                0.09090909090909083
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.1065,
+                "midnight-12k": 0.7675
+              },
+              "tuning_set": true,
+              "value": -0.09090909090909083
+            },
+            "specificity": {
+              "ci": [
+                -0.4347826086956521,
+                -0.03703703703703709
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.0,
+                "midnight-12k": 0.98
+              },
+              "tuning_set": true,
+              "value": -0.21739130434782616
+            }
+          }
+        ]
+      },
+      "bootstrap_seed": 20261026,
+      "excluding_undecided_near_duplicate_patients": {
+        "counts": {
+          "n_bags": 41,
+          "n_patients": 31,
+          "negatives": 21,
+          "positives": 20,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 41,
+              "patients": 31
+            },
+            "unscorable": {
+              "handcrafted-stain-texture-v1": {
+                "bags": 0,
+                "patients": 0
+              },
+              "midnight-12k": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "handcrafted-stain-texture-v1",
+            "auprc": {
+              "ci": [
+                -0.3704307794158338,
+                0.040565472965954405
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.0615,
+                "midnight-12k": 0.9385
+              },
+              "value": -0.1704779872677188
+            },
+            "auroc": {
+              "ci": [
+                -0.3393262987012986,
+                0.017551691729323207
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.044,
+                "midnight-12k": 0.9535
+              },
+              "value": -0.14761904761904754
+            },
+            "b": "midnight-12k",
+            "brier": {
+              "ci": [
+                -0.009946063058477865,
+                0.22931626128911173
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.038,
+                "midnight-12k": 0.962
+              },
+              "value": 0.10990339888179383
+            },
+            "delta": "a - b",
+            "mcnemar_p": 0.0390625,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.2727272727272727,
+                0.09999999999999998
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.09,
+                "midnight-12k": 0.782
+              },
+              "tuning_set": true,
+              "value": -0.09999999999999998
+            },
+            "specificity": {
+              "ci": [
+                -0.4736842105263158,
+                -0.04761904761904767
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.0,
+                "midnight-12k": 0.9885
+              },
+              "tuning_set": true,
+              "value": -0.23809523809523803
+            }
+          }
+        ]
+      },
+      "fixed": {
+        "head": "abmil"
+      },
+      "group": "encoder_effects",
+      "min_patients": 10,
+      "models": [
+        "handcrafted-stain-texture-v1",
+        "midnight-12k"
+      ],
+      "n_boot": 2000,
+      "reproduction_check": {
+        "engine_matches_s3_report": true,
+        "exclusion_path_with_no_exclusion_matches_engine": true
+      },
+      "run_ids": {
+        "handcrafted-stain-texture-v1": "e53e958230ac4290885bb13f5b9f1991",
+        "midnight-12k": "3b5b5a14a77841deba019377c3eec0b0"
+      },
+      "seed": 1,
+      "split": "oof",
+      "status": "ok",
+      "tuning_set_note": "tuning estimates (optimistic): at least one model's operating threshold was selected on these same development scores, so the paired sensitivity / specificity deltas and McNemar at the operating points are tuning estimates; threshold-free deltas (AUROC, AUPRC, Brier) are not affected by that selection"
+    },
+    {
+      "all_development_patients": {
+        "counts": {
+          "n_bags": 45,
+          "n_patients": 35,
+          "negatives": 23,
+          "positives": 22,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 45,
+              "patients": 35
+            },
+            "unscorable": {
+              "abmil": {
+                "bags": 0,
+                "patients": 0
+              },
+              "meanpool_logreg": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "abmil",
+            "auprc": {
+              "ci": [
+                -0.15680737441060685,
+                0.19778170252388816
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.564,
+                "meanpool_logreg": 0.436
+              },
+              "value": 0.0075391946621060635
+            },
+            "auroc": {
+              "ci": [
+                -0.12888040101912607,
+                0.1659090909090909
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.6255,
+                "meanpool_logreg": 0.358
+              },
+              "value": 0.021739130434782594
+            },
+            "b": "meanpool_logreg",
+            "brier": {
+              "ci": [
+                -0.08424037936367915,
+                0.08545132790667637
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.533,
+                "meanpool_logreg": 0.467
+              },
+              "value": -0.00018804687867041148
+            },
+            "delta": "a - b",
+            "mcnemar_p": 0.5078125,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.19999999999999996,
+                0.125
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.1855,
+                "meanpool_logreg": 0.6065
+              },
+              "tuning_set": true,
+              "value": -0.045454545454545414
+            },
+            "specificity": {
+              "ci": [
+                0.0,
+                0.39999999999999997
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.9455,
+                "meanpool_logreg": 0.022
+              },
+              "tuning_set": true,
+              "value": 0.17391304347826086
+            }
+          }
+        ]
+      },
+      "bootstrap_seed": 20261026,
+      "excluding_undecided_near_duplicate_patients": {
+        "counts": {
+          "n_bags": 41,
+          "n_patients": 31,
+          "negatives": 21,
+          "positives": 20,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 41,
+              "patients": 31
+            },
+            "unscorable": {
+              "abmil": {
+                "bags": 0,
+                "patients": 0
+              },
+              "meanpool_logreg": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "abmil",
+            "auprc": {
+              "ci": [
+                -0.18599375366770773,
+                0.1735673168426448
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.426,
+                "meanpool_logreg": 0.574
+              },
+              "value": -0.022981257521593745
+            },
+            "auroc": {
+              "ci": [
+                -0.15386710239651416,
+                0.1578947368421052
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.4935,
+                "meanpool_logreg": 0.4895
+              },
+              "value": 0.0023809523809523725
+            },
+            "b": "meanpool_logreg",
+            "brier": {
+              "ci": [
+                -0.09090390492598946,
+                0.08783914634791581
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.5035,
+                "meanpool_logreg": 0.4965
+              },
+              "value": -0.0004966978418735613
+            },
+            "delta": "a - b",
+            "mcnemar_p": 1.0,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.2272727272727273,
+                0.125
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.1885,
+                "meanpool_logreg": 0.6075
+              },
+              "tuning_set": true,
+              "value": -0.04999999999999993
+            },
+            "specificity": {
+              "ci": [
+                -0.07692307692307693,
+                0.30769230769230765
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.7855,
+                "meanpool_logreg": 0.0935
+              },
+              "tuning_set": true,
+              "value": 0.09523809523809523
+            }
+          }
+        ]
+      },
+      "fixed": {
+        "encoder": "handcrafted-stain-texture-v1"
+      },
+      "group": "head_effects",
+      "min_patients": 10,
+      "models": [
+        "abmil",
+        "meanpool_logreg"
+      ],
+      "n_boot": 2000,
+      "reproduction_check": {
+        "engine_matches_s3_report": true,
+        "exclusion_path_with_no_exclusion_matches_engine": true
+      },
+      "run_ids": {
+        "abmil": "e53e958230ac4290885bb13f5b9f1991",
+        "meanpool_logreg": "39aae3d495af4701b655d92aaae1a618"
+      },
+      "seed": 1,
+      "split": "oof",
+      "status": "ok",
+      "tuning_set_note": "tuning estimates (optimistic): at least one model's operating threshold was selected on these same development scores, so the paired sensitivity / specificity deltas and McNemar at the operating points are tuning estimates; threshold-free deltas (AUROC, AUPRC, Brier) are not affected by that selection"
+    },
+    {
+      "all_development_patients": {
+        "counts": {
+          "n_bags": 45,
+          "n_patients": 35,
+          "negatives": 23,
+          "positives": 22,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 45,
+              "patients": 35
+            },
+            "unscorable": {
+              "abmil": {
+                "bags": 0,
+                "patients": 0
+              },
+              "meanpool_logreg": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "abmil",
+            "auprc": {
+              "ci": [
+                -0.061628417285328474,
+                0.24154011263709718
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.8625,
+                "meanpool_logreg": 0.1375
+              },
+              "value": 0.08204279953505955
+            },
+            "auroc": {
+              "ci": [
+                -0.028678143093465613,
+                0.18765624615536022
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.9205,
+                "meanpool_logreg": 0.074
+              },
+              "value": 0.08300395256916993
+            },
+            "b": "meanpool_logreg",
+            "brier": {
+              "ci": [
+                -0.16024577206537857,
+                -0.03275058805807459
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.999,
+                "meanpool_logreg": 0.001
+              },
+              "value": -0.09487353713788577
+            },
+            "delta": "a - b",
+            "mcnemar_p": 0.0390625,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.1428571428571428,
+                0.13333333333333341
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.341,
+                "meanpool_logreg": 0.3625
+              },
+              "tuning_set": true,
+              "value": 0.0
+            },
+            "specificity": {
+              "ci": [
+                0.14801587301587302,
+                0.4444444444444444
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.9995,
+                "meanpool_logreg": 0.0
+              },
+              "tuning_set": true,
+              "value": 0.30434782608695654
+            }
+          }
+        ]
+      },
+      "bootstrap_seed": 20261026,
+      "excluding_undecided_near_duplicate_patients": {
+        "counts": {
+          "n_bags": 41,
+          "n_patients": 31,
+          "negatives": 21,
+          "positives": 20,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 41,
+              "patients": 31
+            },
+            "unscorable": {
+              "abmil": {
+                "bags": 0,
+                "patients": 0
+              },
+              "meanpool_logreg": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "abmil",
+            "auprc": {
+              "ci": [
+                -0.053573123918481,
+                0.25743349268541993
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.8865,
+                "meanpool_logreg": 0.1135
+              },
+              "value": 0.08959370031817626
+            },
+            "auroc": {
+              "ci": [
+                -0.02456473214285711,
+                0.21297743055555543
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.9345,
+                "meanpool_logreg": 0.0605
+              },
+              "value": 0.09523809523809523
+            },
+            "b": "meanpool_logreg",
+            "brier": {
+              "ci": [
+                -0.1813828625465596,
+                -0.04142797073670179
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.9995,
+                "meanpool_logreg": 0.0005
+              },
+              "value": -0.10846398256955438
+            },
+            "delta": "a - b",
+            "mcnemar_p": 0.0390625,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.1578947368421052,
+                0.1428571428571428
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.3525,
+                "meanpool_logreg": 0.3495
+              },
+              "tuning_set": true,
+              "value": 0.0
+            },
+            "specificity": {
+              "ci": [
+                0.15779352226720642,
+                0.4762422360248444
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 1.0,
+                "meanpool_logreg": 0.0
+              },
+              "tuning_set": true,
+              "value": 0.33333333333333326
+            }
+          }
+        ]
+      },
+      "fixed": {
+        "encoder": "midnight-12k"
+      },
+      "group": "head_effects",
+      "min_patients": 10,
+      "models": [
+        "abmil",
+        "meanpool_logreg"
+      ],
+      "n_boot": 2000,
+      "reproduction_check": {
+        "engine_matches_s3_report": true,
+        "exclusion_path_with_no_exclusion_matches_engine": true
+      },
+      "run_ids": {
+        "abmil": "3b5b5a14a77841deba019377c3eec0b0",
+        "meanpool_logreg": "71a27f33c1354a878e23a0f3ae5cc351"
+      },
+      "seed": 1,
+      "split": "oof",
+      "status": "ok",
+      "tuning_set_note": "tuning estimates (optimistic): at least one model's operating threshold was selected on these same development scores, so the paired sensitivity / specificity deltas and McNemar at the operating points are tuning estimates; threshold-free deltas (AUROC, AUPRC, Brier) are not affected by that selection"
+    },
+    {
+      "all_development_patients": {
+        "counts": {
+          "n_bags": 45,
+          "n_patients": 35,
+          "negatives": 23,
+          "positives": 22,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 45,
+              "patients": 35
+            },
+            "unscorable": {
+              "handcrafted-stain-texture-v1": {
+                "bags": 0,
+                "patients": 0
+              },
+              "midnight-12k": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "handcrafted-stain-texture-v1",
+            "auprc": {
+              "ci": [
+                -0.2360432490505909,
+                0.07635202176341961
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.184,
+                "midnight-12k": 0.816
+              },
+              "value": -0.07201512070196392
+            },
+            "auroc": {
+              "ci": [
+                -0.2222222222222222,
+                0.060503636938646264
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.142,
+                "midnight-12k": 0.8545
+              },
+              "value": -0.07509881422924902
+            },
+            "b": "midnight-12k",
+            "brier": {
+              "ci": [
+                -0.07889334503263122,
+                0.09755014134837912
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.401,
+                "midnight-12k": 0.599
+              },
+              "value": 0.01004110729945143
+            },
+            "delta": "a - b",
+            "mcnemar_p": 0.5810546875,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.25,
+                0.1578947368421053
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.2435,
+                "midnight-12k": 0.593
+              },
+              "tuning_set": true,
+              "value": -0.045454545454545414
+            },
+            "specificity": {
+              "ci": [
+                -0.3636363636363636,
+                0.1364028213166143
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.191,
+                "midnight-12k": 0.7125
+              },
+              "tuning_set": true,
+              "value": -0.08695652173913049
+            }
+          }
+        ]
+      },
+      "bootstrap_seed": 20261026,
+      "excluding_undecided_near_duplicate_patients": {
+        "counts": {
+          "n_bags": 41,
+          "n_patients": 31,
+          "negatives": 21,
+          "positives": 20,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 41,
+              "patients": 31
+            },
+            "unscorable": {
+              "handcrafted-stain-texture-v1": {
+                "bags": 0,
+                "patients": 0
+              },
+              "midnight-12k": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "handcrafted-stain-texture-v1",
+            "auprc": {
+              "ci": [
+                -0.22943438627849985,
+                0.09937252569007896
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.245,
+                "midnight-12k": 0.755
+              },
+              "value": -0.05790302942794878
+            },
+            "auroc": {
+              "ci": [
+                -0.21154761904761907,
+                0.0916898148148147
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.2295,
+                "midnight-12k": 0.758
+              },
+              "value": -0.05476190476190468
+            },
+            "b": "midnight-12k",
+            "brier": {
+              "ci": [
+                -0.09556686808443327,
+                0.09678593053785944
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.4835,
+                "midnight-12k": 0.5165
+              },
+              "value": 0.0019361141541130167
+            },
+            "delta": "a - b",
+            "mcnemar_p": 1.0,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.2777777777777778,
+                0.16666666666666663
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.2595,
+                "midnight-12k": 0.566
+              },
+              "tuning_set": true,
+              "value": -0.050000000000000044
+            },
+            "specificity": {
+              "ci": [
+                -0.2666666666666667,
+                0.19999999999999996
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.4165,
+                "midnight-12k": 0.416
+              },
+              "tuning_set": true,
+              "value": 0.0
+            }
+          }
+        ]
+      },
+      "fixed": {
+        "head": "meanpool_logreg"
+      },
+      "group": "encoder_effects",
+      "min_patients": 10,
+      "models": [
+        "handcrafted-stain-texture-v1",
+        "midnight-12k"
+      ],
+      "n_boot": 2000,
+      "reproduction_check": {
+        "engine_matches_s3_report": true,
+        "exclusion_path_with_no_exclusion_matches_engine": true
+      },
+      "run_ids": {
+        "handcrafted-stain-texture-v1": "8da8058dcc1a4e8086a65caee8099a12",
+        "midnight-12k": "cec621cea0d74770acc511492731a0eb"
+      },
+      "seed": 2,
+      "split": "oof",
+      "status": "ok",
+      "tuning_set_note": "tuning estimates (optimistic): at least one model's operating threshold was selected on these same development scores, so the paired sensitivity / specificity deltas and McNemar at the operating points are tuning estimates; threshold-free deltas (AUROC, AUPRC, Brier) are not affected by that selection"
+    },
+    {
+      "all_development_patients": {
+        "counts": {
+          "n_bags": 45,
+          "n_patients": 35,
+          "negatives": 23,
+          "positives": 22,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 45,
+              "patients": 35
+            },
+            "unscorable": {
+              "handcrafted-stain-texture-v1": {
+                "bags": 0,
+                "patients": 0
+              },
+              "midnight-12k": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "handcrafted-stain-texture-v1",
+            "auprc": {
+              "ci": [
+                -0.262722411054688,
+                0.015056345698702001
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.058,
+                "midnight-12k": 0.942
+              },
+              "value": -0.09680282790277861
+            },
+            "auroc": {
+              "ci": [
+                -0.25896177944862153,
+                0.0019027264556077306
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.0255,
+                "midnight-12k": 0.9705
+              },
+              "value": -0.11462450592885376
+            },
+            "b": "midnight-12k",
+            "brier": {
+              "ci": [
+                0.003955395562278665,
+                0.2023297664631376
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.018,
+                "midnight-12k": 0.982
+              },
+              "value": 0.09908265150047005
+            },
+            "delta": "a - b",
+            "mcnemar_p": 0.0654296875,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.4285714285714286,
+                0.04550865800865778
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.033,
+                "midnight-12k": 0.906
+              },
+              "tuning_set": true,
+              "value": -0.18181818181818177
+            },
+            "specificity": {
+              "ci": [
+                -0.3158492822966507,
+                0.050000000000000044
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.0475,
+                "midnight-12k": 0.884
+              },
+              "tuning_set": true,
+              "value": -0.13043478260869557
+            }
+          }
+        ]
+      },
+      "bootstrap_seed": 20261026,
+      "excluding_undecided_near_duplicate_patients": {
+        "counts": {
+          "n_bags": 41,
+          "n_patients": 31,
+          "negatives": 21,
+          "positives": 20,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 41,
+              "patients": 31
+            },
+            "unscorable": {
+              "handcrafted-stain-texture-v1": {
+                "bags": 0,
+                "patients": 0
+              },
+              "midnight-12k": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "handcrafted-stain-texture-v1",
+            "auprc": {
+              "ci": [
+                -0.28945976222049363,
+                0.014658518179215855
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.0485,
+                "midnight-12k": 0.951
+              },
+              "value": -0.10440252862892174
+            },
+            "auroc": {
+              "ci": [
+                -0.2769101195016527,
+                -0.0068486433474992505
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.013,
+                "midnight-12k": 0.983
+              },
+              "value": -0.12380952380952381
+            },
+            "b": "midnight-12k",
+            "brier": {
+              "ci": [
+                0.01726221721070848,
+                0.22179948460027366
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.0085,
+                "midnight-12k": 0.9915
+              },
+              "value": 0.11566529615830129
+            },
+            "delta": "a - b",
+            "mcnemar_p": 0.0654296875,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.47368421052631576,
+                0.05555555555555558
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.041,
+                "midnight-12k": 0.9135
+              },
+              "tuning_set": true,
+              "value": -0.19999999999999996
+            },
+            "specificity": {
+              "ci": [
+                -0.3500735294117647,
+                0.04550865800865767
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "handcrafted-stain-texture-v1": 0.04,
+                "midnight-12k": 0.878
+              },
+              "tuning_set": true,
+              "value": -0.1428571428571429
+            }
+          }
+        ]
+      },
+      "fixed": {
+        "head": "abmil"
+      },
+      "group": "encoder_effects",
+      "min_patients": 10,
+      "models": [
+        "handcrafted-stain-texture-v1",
+        "midnight-12k"
+      ],
+      "n_boot": 2000,
+      "reproduction_check": {
+        "engine_matches_s3_report": true,
+        "exclusion_path_with_no_exclusion_matches_engine": true
+      },
+      "run_ids": {
+        "handcrafted-stain-texture-v1": "e6a98325ba9b4eeea5d7ab2b9affc92e",
+        "midnight-12k": "8b10d7b3b5c3436983c04aa0e9890a7b"
+      },
+      "seed": 2,
+      "split": "oof",
+      "status": "ok",
+      "tuning_set_note": "tuning estimates (optimistic): at least one model's operating threshold was selected on these same development scores, so the paired sensitivity / specificity deltas and McNemar at the operating points are tuning estimates; threshold-free deltas (AUROC, AUPRC, Brier) are not affected by that selection"
+    },
+    {
+      "all_development_patients": {
+        "counts": {
+          "n_bags": 45,
+          "n_patients": 35,
+          "negatives": 23,
+          "positives": 22,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 45,
+              "patients": 35
+            },
+            "unscorable": {
+              "abmil": {
+                "bags": 0,
+                "patients": 0
+              },
+              "meanpool_logreg": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "abmil",
+            "auprc": {
+              "ci": [
+                0.008628754839744877,
+                0.15522784956088492
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.9905,
+                "meanpool_logreg": 0.0095
+              },
+              "value": 0.07162393607172757
+            },
+            "auroc": {
+              "ci": [
+                -0.004529319564816508,
+                0.13992504409171075
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.962,
+                "meanpool_logreg": 0.0335
+              },
+              "value": 0.06126482213438733
+            },
+            "b": "meanpool_logreg",
+            "brier": {
+              "ci": [
+                -0.07599038305017337,
+                0.003954661797999543
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.9575,
+                "meanpool_logreg": 0.0425
+              },
+              "value": -0.033393250302818867
+            },
+            "delta": "a - b",
+            "mcnemar_p": 0.75390625,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.33333333333333326,
+                0.052631578947368474
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.047,
+                "meanpool_logreg": 0.874
+              },
+              "tuning_set": true,
+              "value": -0.13636363636363635
+            },
+            "specificity": {
+              "ci": [
+                0.050000000000000044,
+                0.4211032388663965
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.996,
+                "meanpool_logreg": 0.0
+              },
+              "tuning_set": true,
+              "value": 0.21739130434782616
+            }
+          }
+        ]
+      },
+      "bootstrap_seed": 20261026,
+      "excluding_undecided_near_duplicate_patients": {
+        "counts": {
+          "n_bags": 41,
+          "n_patients": 31,
+          "negatives": 21,
+          "positives": 20,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 41,
+              "patients": 31
+            },
+            "unscorable": {
+              "abmil": {
+                "bags": 0,
+                "patients": 0
+              },
+              "meanpool_logreg": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "abmil",
+            "auprc": {
+              "ci": [
+                0.0054533506592891225,
+                0.15268134414756837
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.9855,
+                "meanpool_logreg": 0.0145
+              },
+              "value": 0.06928851755345511
+            },
+            "auroc": {
+              "ci": [
+                -0.007831473214285713,
+                0.14401111111111106
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.9555,
+                "meanpool_logreg": 0.037
+              },
+              "value": 0.059523809523809534
+            },
+            "b": "meanpool_logreg",
+            "brier": {
+              "ci": [
+                -0.08496348572037626,
+                -0.002264393504307632
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.9815,
+                "meanpool_logreg": 0.0185
+              },
+              "value": -0.03961237632047385
+            },
+            "delta": "a - b",
+            "mcnemar_p": 1.0,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.2857142857142857,
+                0.09999999999999998
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.094,
+                "meanpool_logreg": 0.78
+              },
+              "tuning_set": true,
+              "value": -0.09999999999999998
+            },
+            "specificity": {
+              "ci": [
+                0.0,
+                0.3333333333333333
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.9635,
+                "meanpool_logreg": 0.0
+              },
+              "tuning_set": true,
+              "value": 0.1428571428571428
+            }
+          }
+        ]
+      },
+      "fixed": {
+        "encoder": "handcrafted-stain-texture-v1"
+      },
+      "group": "head_effects",
+      "min_patients": 10,
+      "models": [
+        "abmil",
+        "meanpool_logreg"
+      ],
+      "n_boot": 2000,
+      "reproduction_check": {
+        "engine_matches_s3_report": true,
+        "exclusion_path_with_no_exclusion_matches_engine": true
+      },
+      "run_ids": {
+        "abmil": "e6a98325ba9b4eeea5d7ab2b9affc92e",
+        "meanpool_logreg": "8da8058dcc1a4e8086a65caee8099a12"
+      },
+      "seed": 2,
+      "split": "oof",
+      "status": "ok",
+      "tuning_set_note": "tuning estimates (optimistic): at least one model's operating threshold was selected on these same development scores, so the paired sensitivity / specificity deltas and McNemar at the operating points are tuning estimates; threshold-free deltas (AUROC, AUPRC, Brier) are not affected by that selection"
+    },
+    {
+      "all_development_patients": {
+        "counts": {
+          "n_bags": 45,
+          "n_patients": 35,
+          "negatives": 23,
+          "positives": 22,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 45,
+              "patients": 35
+            },
+            "unscorable": {
+              "abmil": {
+                "bags": 0,
+                "patients": 0
+              },
+              "meanpool_logreg": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "abmil",
+            "auprc": {
+              "ci": [
+                -0.0361186607644245,
+                0.26275388324126936
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.913,
+                "meanpool_logreg": 0.087
+              },
+              "value": 0.09641164327254226
+            },
+            "auroc": {
+              "ci": [
+                -0.004446969696969727,
+                0.21076958525345607
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.965,
+                "meanpool_logreg": 0.0315
+              },
+              "value": 0.10079051383399207
+            },
+            "b": "meanpool_logreg",
+            "brier": {
+              "ci": [
+                -0.20730200202481258,
+                -0.03986710837656963
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.997,
+                "meanpool_logreg": 0.003
+              },
+              "value": -0.12243479450383749
+            },
+            "delta": "a - b",
+            "mcnemar_p": 0.109375,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.18181818181818177,
+                0.19047619047619047
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.391,
+                "meanpool_logreg": 0.405
+              },
+              "tuning_set": true,
+              "value": 0.0
+            },
+            "specificity": {
+              "ci": [
+                0.10521778584392014,
+                0.4138649425287353
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.998,
+                "meanpool_logreg": 0.0
+              },
+              "tuning_set": true,
+              "value": 0.26086956521739124
+            }
+          }
+        ]
+      },
+      "bootstrap_seed": 20261026,
+      "excluding_undecided_near_duplicate_patients": {
+        "counts": {
+          "n_bags": 41,
+          "n_patients": 31,
+          "negatives": 21,
+          "positives": 20,
+          "subject_accounting": {
+            "excluded_from_pairing": {
+              "bags": 0,
+              "patients": 0
+            },
+            "paired_evaluable": {
+              "bags": 41,
+              "patients": 31
+            },
+            "unscorable": {
+              "abmil": {
+                "bags": 0,
+                "patients": 0
+              },
+              "meanpool_logreg": {
+                "bags": 0,
+                "patients": 0
+              }
+            }
+          }
+        },
+        "deltas": [
+          {
+            "a": "abmil",
+            "auprc": {
+              "ci": [
+                -0.02889943308152334,
+                0.2973128147371991
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.941,
+                "meanpool_logreg": 0.059
+              },
+              "value": 0.11578801675442807
+            },
+            "auroc": {
+              "ci": [
+                0.01138285024154582,
+                0.24869561157796446
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.9825,
+                "meanpool_logreg": 0.0155
+              },
+              "value": 0.12857142857142867
+            },
+            "b": "meanpool_logreg",
+            "brier": {
+              "ci": [
+                -0.23525965660807743,
+                -0.07588636899595289
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 1.0,
+                "meanpool_logreg": 0.0
+              },
+              "value": -0.15334155832466212
+            },
+            "delta": "a - b",
+            "mcnemar_p": 0.0390625,
+            "mcnemar_tuning_set": true,
+            "sensitivity": {
+              "ci": [
+                -0.125,
+                0.23076923076923073
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.6155,
+                "meanpool_logreg": 0.192
+              },
+              "tuning_set": true,
+              "value": 0.04999999999999993
+            },
+            "specificity": {
+              "ci": [
+                0.11111111111111116,
+                0.4444444444444444
+              ],
+              "ci_reason": null,
+              "fraction_favouring": {
+                "abmil": 0.999,
+                "meanpool_logreg": 0.0
+              },
+              "tuning_set": true,
+              "value": 0.2857142857142857
+            }
+          }
+        ]
+      },
+      "fixed": {
+        "encoder": "midnight-12k"
+      },
+      "group": "head_effects",
+      "min_patients": 10,
+      "models": [
+        "abmil",
+        "meanpool_logreg"
+      ],
+      "n_boot": 2000,
+      "reproduction_check": {
+        "engine_matches_s3_report": true,
+        "exclusion_path_with_no_exclusion_matches_engine": true
+      },
+      "run_ids": {
+        "abmil": "8b10d7b3b5c3436983c04aa0e9890a7b",
+        "meanpool_logreg": "cec621cea0d74770acc511492731a0eb"
+      },
+      "seed": 2,
+      "split": "oof",
+      "status": "ok",
+      "tuning_set_note": "tuning estimates (optimistic): at least one model's operating threshold was selected on these same development scores, so the paired sensitivity / specificity deltas and McNemar at the operating points are tuning estimates; threshold-free deltas (AUROC, AUPRC, Brier) are not affected by that selection"
+    }
+  ],
+  "comparisons_across_seeds": [
+    {
+      "a": "handcrafted-stain-texture-v1",
+      "all": {
+        "auprc_delta": {
+          "max": -0.09680282790277861,
+          "mean": -0.1175072894678653,
+          "min": -0.1465187255749174,
+          "n": 3
+        },
+        "auroc_ci_excludes_zero_in_seeds": 0,
+        "auroc_delta": {
+          "max": -0.11264822134387353,
+          "mean": -0.12121212121212122,
+          "min": -0.13636363636363635,
+          "n": 3
+        },
+        "auroc_sign_consistent": true,
+        "by_seed": [
+          {
+            "auprc": -0.10920031492589988,
+            "auprc_ci": [
+              -0.27202692614687973,
+              0.012142840220451048
+            ],
+            "auroc": -0.11264822134387353,
+            "auroc_ci": [
+              -0.2551362545018008,
+              0.006698105973468238
+            ],
+            "seed": 0
+          },
+          {
+            "auprc": -0.1465187255749174,
+            "auprc_ci": [
+              -0.32742141421788656,
+              0.04340714824903257
+            ],
+            "auroc": -0.13636363636363635,
+            "auroc_ci": [
+              -0.3165734970674487,
+              0.02503289473684195
+            ],
+            "seed": 1
+          },
+          {
+            "auprc": -0.09680282790277861,
+            "auprc_ci": [
+              -0.262722411054688,
+              0.015056345698702001
+            ],
+            "auroc": -0.11462450592885376,
+            "auroc_ci": [
+              -0.25896177944862153,
+              0.0019027264556077306
+            ],
+            "seed": 2
+          }
+        ]
+      },
+      "b": "midnight-12k",
+      "delta": "a - b",
+      "excluding": {
+        "auprc_delta": {
+          "max": -0.10440252862892174,
+          "mean": -0.12985837684420265,
+          "min": -0.1704779872677188,
+          "n": 3
+        },
+        "auroc_ci_excludes_zero_in_seeds": 1,
+        "auroc_delta": {
+          "max": -0.10952380952380947,
+          "mean": -0.12698412698412695,
+          "min": -0.14761904761904754,
+          "n": 3
+        },
+        "auroc_sign_consistent": true,
+        "by_seed": [
+          {
+            "auprc": -0.11469461463596742,
+            "auprc_ci": [
+              -0.2997923764419637,
+              0.01075392431432137
+            ],
+            "auroc": -0.10952380952380947,
+            "auroc_ci": [
+              -0.25400862890922954,
+              0.00555952380952377
+            ],
+            "seed": 0
+          },
+          {
+            "auprc": -0.1704779872677188,
+            "auprc_ci": [
+              -0.3704307794158338,
+              0.040565472965954405
+            ],
+            "auroc": -0.14761904761904754,
+            "auroc_ci": [
+              -0.3393262987012986,
+              0.017551691729323207
+            ],
+            "seed": 1
+          },
+          {
+            "auprc": -0.10440252862892174,
+            "auprc_ci": [
+              -0.28945976222049363,
+              0.014658518179215855
+            ],
+            "auroc": -0.12380952380952381,
+            "auroc_ci": [
+              -0.2769101195016527,
+              -0.0068486433474992505
+            ],
+            "seed": 2
+          }
+        ]
+      },
+      "fixed": {
+        "head": "abmil"
+      },
+      "group": "encoder_effects"
+    },
+    {
+      "a": "handcrafted-stain-texture-v1",
+      "all": {
+        "auprc_delta": {
+          "max": -0.07201512070196392,
+          "mean": -0.07201512070196392,
+          "min": -0.07201512070196392,
+          "n": 3
+        },
+        "auroc_ci_excludes_zero_in_seeds": 0,
+        "auroc_delta": {
+          "max": -0.07509881422924902,
+          "mean": -0.07509881422924902,
+          "min": -0.07509881422924902,
+          "n": 3
+        },
+        "auroc_sign_consistent": true,
+        "by_seed": [
+          {
+            "auprc": -0.07201512070196392,
+            "auprc_ci": [
+              -0.2360432490505909,
+              0.07635202176341961
+            ],
+            "auroc": -0.07509881422924902,
+            "auroc_ci": [
+              -0.2222222222222222,
+              0.060503636938646264
+            ],
+            "seed": 0
+          },
+          {
+            "auprc": -0.07201512070196392,
+            "auprc_ci": [
+              -0.2360432490505909,
+              0.07635202176341961
+            ],
+            "auroc": -0.07509881422924902,
+            "auroc_ci": [
+              -0.2222222222222222,
+              0.060503636938646264
+            ],
+            "seed": 1
+          },
+          {
+            "auprc": -0.07201512070196392,
+            "auprc_ci": [
+              -0.2360432490505909,
+              0.07635202176341961
+            ],
+            "auroc": -0.07509881422924902,
+            "auroc_ci": [
+              -0.2222222222222222,
+              0.060503636938646264
+            ],
+            "seed": 2
+          }
+        ]
+      },
+      "b": "midnight-12k",
+      "delta": "a - b",
+      "excluding": {
+        "auprc_delta": {
+          "max": -0.05790302942794878,
+          "mean": -0.05790302942794878,
+          "min": -0.05790302942794878,
+          "n": 3
+        },
+        "auroc_ci_excludes_zero_in_seeds": 0,
+        "auroc_delta": {
+          "max": -0.05476190476190468,
+          "mean": -0.05476190476190468,
+          "min": -0.05476190476190468,
+          "n": 3
+        },
+        "auroc_sign_consistent": true,
+        "by_seed": [
+          {
+            "auprc": -0.05790302942794878,
+            "auprc_ci": [
+              -0.22943438627849985,
+              0.09937252569007896
+            ],
+            "auroc": -0.05476190476190468,
+            "auroc_ci": [
+              -0.21154761904761907,
+              0.0916898148148147
+            ],
+            "seed": 0
+          },
+          {
+            "auprc": -0.05790302942794878,
+            "auprc_ci": [
+              -0.22943438627849985,
+              0.09937252569007896
+            ],
+            "auroc": -0.05476190476190468,
+            "auroc_ci": [
+              -0.21154761904761907,
+              0.0916898148148147
+            ],
+            "seed": 1
+          },
+          {
+            "auprc": -0.05790302942794878,
+            "auprc_ci": [
+              -0.22943438627849985,
+              0.09937252569007896
+            ],
+            "auroc": -0.05476190476190468,
+            "auroc_ci": [
+              -0.21154761904761907,
+              0.0916898148148147
+            ],
+            "seed": 2
+          }
+        ]
+      },
+      "fixed": {
+        "head": "meanpool_logreg"
+      },
+      "group": "encoder_effects"
+    },
+    {
+      "a": "abmil",
+      "all": {
+        "auprc_delta": {
+          "max": 0.07791502280402507,
+          "mean": 0.05235938451261957,
+          "min": 0.0075391946621060635,
+          "n": 3
+        },
+        "auroc_ci_excludes_zero_in_seeds": 0,
+        "auroc_delta": {
+          "max": 0.06521739130434778,
+          "mean": 0.0494071146245059,
+          "min": 0.021739130434782594,
+          "n": 3
+        },
+        "auroc_sign_consistent": true,
+        "by_seed": [
+          {
+            "auprc": 0.07791502280402507,
+            "auprc_ci": [
+              -0.008036756754602411,
+              0.19814534108520798
+            ],
+            "auroc": 0.06521739130434778,
+            "auroc_ci": [
+              -0.03681647300068345,
+              0.1942896825396825
+            ],
+            "seed": 0
+          },
+          {
+            "auprc": 0.0075391946621060635,
+            "auprc_ci": [
+              -0.15680737441060685,
+              0.19778170252388816
+            ],
+            "auroc": 0.021739130434782594,
+            "auroc_ci": [
+              -0.12888040101912607,
+              0.1659090909090909
+            ],
+            "seed": 1
+          },
+          {
+            "auprc": 0.07162393607172757,
+            "auprc_ci": [
+              0.008628754839744877,
+              0.15522784956088492
+            ],
+            "auroc": 0.06126482213438733,
+            "auroc_ci": [
+              -0.004529319564816508,
+              0.13992504409171075
+            ],
+            "seed": 2
+          }
+        ]
+      },
+      "b": "meanpool_logreg",
+      "delta": "a - b",
+      "excluding": {
+        "auprc_delta": {
+          "max": 0.08562394813101992,
+          "mean": 0.0439770693876271,
+          "min": -0.022981257521593745,
+          "n": 3
+        },
+        "auroc_ci_excludes_zero_in_seeds": 0,
+        "auroc_delta": {
+          "max": 0.08809523809523812,
+          "mean": 0.05000000000000001,
+          "min": 0.0023809523809523725,
+          "n": 3
+        },
+        "auroc_sign_consistent": true,
+        "by_seed": [
+          {
+            "auprc": 0.08562394813101992,
+            "auprc_ci": [
+              0.007708499724076174,
+              0.2011811776656566
+            ],
+            "auroc": 0.08809523809523812,
+            "auroc_ci": [
+              0.0,
+              0.21191017316017305
+            ],
+            "seed": 0
+          },
+          {
+            "auprc": -0.022981257521593745,
+            "auprc_ci": [
+              -0.18599375366770773,
+              0.1735673168426448
+            ],
+            "auroc": 0.0023809523809523725,
+            "auroc_ci": [
+              -0.15386710239651416,
+              0.1578947368421052
+            ],
+            "seed": 1
+          },
+          {
+            "auprc": 0.06928851755345511,
+            "auprc_ci": [
+              0.0054533506592891225,
+              0.15268134414756837
+            ],
+            "auroc": 0.059523809523809534,
+            "auroc_ci": [
+              -0.007831473214285713,
+              0.14401111111111106
+            ],
+            "seed": 2
+          }
+        ]
+      },
+      "fixed": {
+        "encoder": "handcrafted-stain-texture-v1"
+      },
+      "group": "head_effects"
+    },
+    {
+      "a": "abmil",
+      "all": {
+        "auprc_delta": {
+          "max": 0.11510021702796103,
+          "mean": 0.09785155327852095,
+          "min": 0.08204279953505955,
+          "n": 3
+        },
+        "auroc_ci_excludes_zero_in_seeds": 0,
+        "auroc_delta": {
+          "max": 0.1027667984189723,
+          "mean": 0.0955204216073781,
+          "min": 0.08300395256916993,
+          "n": 3
+        },
+        "auroc_sign_consistent": true,
+        "by_seed": [
+          {
+            "auprc": 0.11510021702796103,
+            "auprc_ci": [
+              -0.007695087966976173,
+              0.2808852322892767
+            ],
+            "auroc": 0.1027667984189723,
+            "auroc_ci": [
+              -0.01587301587301582,
+              0.21968764302059499
+            ],
+            "seed": 0
+          },
+          {
+            "auprc": 0.08204279953505955,
+            "auprc_ci": [
+              -0.061628417285328474,
+              0.24154011263709718
+            ],
+            "auroc": 0.08300395256916993,
+            "auroc_ci": [
+              -0.028678143093465613,
+              0.18765624615536022
+            ],
+            "seed": 1
+          },
+          {
+            "auprc": 0.09641164327254226,
+            "auprc_ci": [
+              -0.0361186607644245,
+              0.26275388324126936
+            ],
+            "auroc": 0.10079051383399207,
+            "auroc_ci": [
+              -0.004446969696969727,
+              0.21076958525345607
+            ],
+            "seed": 2
+          }
+        ]
+      },
+      "b": "meanpool_logreg",
+      "delta": "a - b",
+      "excluding": {
+        "auprc_delta": {
+          "max": 0.14241553333903856,
+          "mean": 0.11593241680388096,
+          "min": 0.08959370031817626,
+          "n": 3
+        },
+        "auroc_ci_excludes_zero_in_seeds": 2,
+        "auroc_delta": {
+          "max": 0.1428571428571429,
+          "mean": 0.12222222222222227,
+          "min": 0.09523809523809523,
+          "n": 3
+        },
+        "auroc_sign_consistent": true,
+        "by_seed": [
+          {
+            "auprc": 0.14241553333903856,
+            "auprc_ci": [
+              0.014565514904751909,
+              0.3335490485391801
+            ],
+            "auroc": 0.1428571428571429,
+            "auroc_ci": [
+              0.03332236842105262,
+              0.2657917956656346
+            ],
+            "seed": 0
+          },
+          {
+            "auprc": 0.08959370031817626,
+            "auprc_ci": [
+              -0.053573123918481,
+              0.25743349268541993
+            ],
+            "auroc": 0.09523809523809523,
+            "auroc_ci": [
+              -0.02456473214285711,
+              0.21297743055555543
+            ],
+            "seed": 1
+          },
+          {
+            "auprc": 0.11578801675442807,
+            "auprc_ci": [
+              -0.02889943308152334,
+              0.2973128147371991
+            ],
+            "auroc": 0.12857142857142867,
+            "auroc_ci": [
+              0.01138285024154582,
+              0.24869561157796446
+            ],
+            "seed": 2
+          }
+        ]
+      },
+      "fixed": {
+        "encoder": "midnight-12k"
+      },
+      "group": "head_effects"
+    }
+  ],
+  "created_at": "2026-10-28T10:53:18+00:00",
+  "engine_runtime_dir": "a throwaway WB_VAR_DIR (removed on exit); workbench/var is never opened",
+  "inputs": {
+    "database_opened": "read-only (sqlite mode=ro URI, PRAGMA query_only=ON)",
+    "database_sha256": "6ee18a750e2841ff1dfb09fcd12d376665c04602585c09d0ccfa031aebd6661f",
+    "database_wal_sha256": "50554a9736cf1ef54f16739daac3dc2718d257e837b4e8af976576ddca1734c5",
+    "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+    "manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+    "s3_code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+    "s3_finished_at": "2026-10-28T07:53:28+00:00",
+    "s3_report_sha256": "30e44b22d67cc517af0e36ad17bba1fd942cac5086dd05003a7f6b50fa77e39b",
+    "script_sha256": "253d4d11bd4d69de0a3b05b6912af3ff1ef6dff8736e06a5bb4a05954de6008c",
+    "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2"
+  },
+  "near_duplicates": {
+    "excluded": {
+      "development_patients": 4,
+      "development_slides": 4,
+      "development_slides_by_label": {
+        "bcc_absent_not_benign": 2,
+        "bcc_present": 2
+      },
+      "patients": 4,
+      "test_patients": 0
+    },
+    "rule": "every patient of every near-duplicate candidate pair WITHOUT a human decision is excluded from the evaluation (both members, all of their development slides)",
+    "screen": {
+      "candidates": 2,
+      "method": "thumbnail dHash (64-bit), Hamming distance <= 6",
+      "source": "dermpath.datasets._near_duplicates over the frozen manifest (the dataset audit's own screen) with the project's latest near-duplicate decisions",
+      "undecided": 2,
+      "unscreened_slides": 0,
+      "with_human_decision": 0
+    },
+    "undecided_pairs": [
+      {
+        "cv_folds_of_members": [
+          0,
+          3
+        ],
+        "dhash_distance": 5,
+        "human_decision": null,
+        "members_in_different_cv_folds": true,
+        "same_patient": false,
+        "same_slide_label": true,
+        "slide_label": "bcc_absent_not_benign",
+        "splits": [
+          "train"
+        ]
+      },
+      {
+        "cv_folds_of_members": [
+          0,
+          4
+        ],
+        "dhash_distance": 6,
+        "human_decision": null,
+        "members_in_different_cv_folds": true,
+        "same_patient": false,
+        "same_slide_label": true,
+        "slide_label": "bcc_present",
+        "splits": [
+          "train"
+        ]
+      }
+    ]
+  },
+  "notice": "RESEARCH USE ONLY. Not a medical device; nothing here is a diagnosis or a clinical performance claim. Labels are COBRA's report-derived imported reference labels (not expert reads in this workbench): metrics measure agreement with that reference. 'BCC absent' is not 'benign'.",
+  "problems": [],
+  "question": "Do the s3 out-of-fold results and the encoder / head deltas depend on the patients of the undecided near-duplicate candidate pairs (which patient-grouped CV placed in different folds)?",
+  "reproduced": true,
+  "research_use_only": true,
+  "runs": [
+    {
+      "all_development_patients": {
+        "auprc": {
+          "ci": [
+            0.5688955266981605,
+            0.9086590100492188
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.7609020558359488
+        },
+        "auroc": {
+          "ci": [
+            0.6035917508417509,
+            0.8968327454438565
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.7687747035573123
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 35,
+          "seed": 0,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 45,
+        "n_patients": 35,
+        "n_unscorable": 0,
+        "negative_patients": 19,
+        "negatives": 23,
+        "positive_patients": 18,
+        "positives": 22
+      },
+      "change": {
+        "auprc": 0.002900867505442495,
+        "auroc": 0.002653867871259208
+      },
+      "encoder": "handcrafted-stain-texture-v1",
+      "excluding_undecided_near_duplicate_patients": {
+        "auprc": {
+          "ci": [
+            0.5585756205046609,
+            0.9130715233808204
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.7638029233413913
+        },
+        "auroc": {
+          "ci": [
+            0.6126934523809524,
+            0.9043062200956937
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.7714285714285715
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 31,
+          "seed": 0,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 41,
+        "n_patients": 31,
+        "n_unscorable": 0,
+        "negative_patients": 17,
+        "negatives": 21,
+        "positive_patients": 16,
+        "positives": 20
+      },
+      "head": "meanpool_logreg",
+      "reproduction_check": {
+        "auprc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        },
+        "auroc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        }
+      },
+      "run_id": "da0e15429d254469a88c05aa815a606e",
+      "seed": 0,
+      "threshold_free_only": true
+    },
+    {
+      "all_development_patients": {
+        "auprc": {
+          "ci": [
+            0.676362509236947,
+            0.9534625871229864
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.8388170786399739
+        },
+        "auroc": {
+          "ci": [
+            0.6918591519457662,
+            0.9459042755991285
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.83399209486166
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 35,
+          "seed": 0,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 45,
+        "n_patients": 35,
+        "n_unscorable": 0,
+        "negative_patients": 19,
+        "negatives": 23,
+        "positive_patients": 18,
+        "positives": 22
+      },
+      "change": {
+        "auprc": 0.010609792832437348,
+        "auroc": 0.02553171466214954
+      },
+      "encoder": "handcrafted-stain-texture-v1",
+      "excluding_undecided_near_duplicate_patients": {
+        "auprc": {
+          "ci": [
+            0.6684188001127719,
+            0.96948230723998
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.8494268714724112
+        },
+        "auroc": {
+          "ci": [
+            0.7296753093315003,
+            0.9640581232492997
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.8595238095238096
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 31,
+          "seed": 0,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 41,
+        "n_patients": 31,
+        "n_unscorable": 0,
+        "negative_patients": 17,
+        "negatives": 21,
+        "positive_patients": 16,
+        "positives": 20
+      },
+      "head": "abmil",
+      "reproduction_check": {
+        "auprc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        },
+        "auroc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        }
+      },
+      "run_id": "5d2d00e3232e43e3b74a78c5a9fda417",
+      "seed": 0,
+      "threshold_free_only": true
+    },
+    {
+      "all_development_patients": {
+        "auprc": {
+          "ci": [
+            0.6653570731322832,
+            0.9551524846681094
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.8329171765379128
+        },
+        "auroc": {
+          "ci": [
+            0.7329011330409356,
+            0.9409101731601731
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.8438735177865613
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 35,
+          "seed": 0,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 45,
+        "n_patients": 35,
+        "n_unscorable": 0,
+        "negative_patients": 19,
+        "negatives": 23,
+        "positive_patients": 18,
+        "positives": 22
+      },
+      "change": {
+        "auprc": -0.011211223768572642,
+        "auroc": -0.017683041596085136
+      },
+      "encoder": "midnight-12k",
+      "excluding_undecided_near_duplicate_patients": {
+        "auprc": {
+          "ci": [
+            0.6334516794009881,
+            0.951626858667914
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.8217059527693401
+        },
+        "auroc": {
+          "ci": [
+            0.7084372335890878,
+            0.9305653239556692
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.8261904761904761
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 31,
+          "seed": 0,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 41,
+        "n_patients": 31,
+        "n_unscorable": 0,
+        "negative_patients": 17,
+        "negatives": 21,
+        "positive_patients": 16,
+        "positives": 20
+      },
+      "head": "meanpool_logreg",
+      "reproduction_check": {
+        "auprc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        },
+        "auroc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        }
+      },
+      "run_id": "b7abc046747a49e6ac834cccb09b6802",
+      "seed": 0,
+      "threshold_free_only": true
+    },
+    {
+      "all_development_patients": {
+        "auprc": {
+          "ci": [
+            0.8643373675956397,
+            0.9977768106939409
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.9480173935658738
+        },
+        "auroc": {
+          "ci": [
+            0.8633079710144927,
+            0.9979296066252588
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.9466403162055336
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 35,
+          "seed": 0,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 45,
+        "n_patients": 35,
+        "n_unscorable": 0,
+        "negative_patients": 19,
+        "negatives": 23,
+        "positive_patients": 18,
+        "positives": 22
+      },
+      "change": {
+        "auprc": 0.01610409254250489,
+        "auroc": 0.022407302842085475
+      },
+      "encoder": "midnight-12k",
+      "excluding_undecided_near_duplicate_patients": {
+        "auprc": {
+          "ci": [
+            0.8808464862450932,
+            1.0
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.9641214861083787
+        },
+        "auroc": {
+          "ci": [
+            0.9038125,
+            1.0
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.969047619047619
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 31,
+          "seed": 0,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 41,
+        "n_patients": 31,
+        "n_unscorable": 0,
+        "negative_patients": 17,
+        "negatives": 21,
+        "positive_patients": 16,
+        "positives": 20
+      },
+      "head": "abmil",
+      "reproduction_check": {
+        "auprc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        },
+        "auroc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        }
+      },
+      "run_id": "ba364f52b97843c18315d8bacbaf9180",
+      "seed": 0,
+      "threshold_free_only": true
+    },
+    {
+      "all_development_patients": {
+        "auprc": {
+          "ci": [
+            0.5664760588924325,
+            0.90708627389337
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.7609020558359488
+        },
+        "auroc": {
+          "ci": [
+            0.6107615446934918,
+            0.8983426724137931
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.7687747035573123
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 35,
+          "seed": 1,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 45,
+        "n_patients": 35,
+        "n_unscorable": 0,
+        "negative_patients": 19,
+        "negatives": 23,
+        "positive_patients": 18,
+        "positives": 22
+      },
+      "change": {
+        "auprc": 0.002900867505442495,
+        "auroc": 0.002653867871259208
+      },
+      "encoder": "handcrafted-stain-texture-v1",
+      "excluding_undecided_near_duplicate_patients": {
+        "auprc": {
+          "ci": [
+            0.5622764517736524,
+            0.9124419030499004
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.7638029233413913
+        },
+        "auroc": {
+          "ci": [
+            0.605818833943834,
+            0.903042264752791
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.7714285714285715
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 31,
+          "seed": 1,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 41,
+        "n_patients": 31,
+        "n_unscorable": 0,
+        "negative_patients": 17,
+        "negatives": 21,
+        "positive_patients": 16,
+        "positives": 20
+      },
+      "head": "meanpool_logreg",
+      "reproduction_check": {
+        "auprc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        },
+        "auroc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        }
+      },
+      "run_id": "39aae3d495af4701b655d92aaae1a618",
+      "seed": 1,
+      "threshold_free_only": true
+    },
+    {
+      "all_development_patients": {
+        "auprc": {
+          "ci": [
+            0.5680042606683475,
+            0.9390504805397968
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.7684412504980549
+        },
+        "auroc": {
+          "ci": [
+            0.6092550505050506,
+            0.9351076388888888
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.7905138339920948
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 35,
+          "seed": 1,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 45,
+        "n_patients": 35,
+        "n_unscorable": 0,
+        "negative_patients": 19,
+        "negatives": 23,
+        "positive_patients": 18,
+        "positives": 22
+      },
+      "change": {
+        "auprc": -0.027619584678257314,
+        "auroc": -0.016704310182571014
+      },
+      "encoder": "handcrafted-stain-texture-v1",
+      "excluding_undecided_near_duplicate_patients": {
+        "auprc": {
+          "ci": [
+            0.5412385546011402,
+            0.9296119939467948
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.7408216658197976
+        },
+        "auroc": {
+          "ci": [
+            0.5799770408163265,
+            0.9313244047619047
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.7738095238095238
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 31,
+          "seed": 1,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 41,
+        "n_patients": 31,
+        "n_unscorable": 0,
+        "negative_patients": 17,
+        "negatives": 21,
+        "positive_patients": 16,
+        "positives": 20
+      },
+      "head": "abmil",
+      "reproduction_check": {
+        "auprc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        },
+        "auroc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        }
+      },
+      "run_id": "e53e958230ac4290885bb13f5b9f1991",
+      "seed": 1,
+      "threshold_free_only": true
+    },
+    {
+      "all_development_patients": {
+        "auprc": {
+          "ci": [
+            0.6474902293660215,
+            0.9515658427656667
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.8329171765379128
+        },
+        "auroc": {
+          "ci": [
+            0.7340807880391214,
+            0.936113683127572
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.8438735177865613
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 35,
+          "seed": 1,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 45,
+        "n_patients": 35,
+        "n_unscorable": 0,
+        "negative_patients": 19,
+        "negatives": 23,
+        "positive_patients": 18,
+        "positives": 22
+      },
+      "change": {
+        "auprc": -0.011211223768572642,
+        "auroc": -0.017683041596085136
+      },
+      "encoder": "midnight-12k",
+      "excluding_undecided_near_duplicate_patients": {
+        "auprc": {
+          "ci": [
+            0.6258288057648438,
+            0.9509511462204119
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.8217059527693401
+        },
+        "auroc": {
+          "ci": [
+            0.7085505793226381,
+            0.928393313847278
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.8261904761904761
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 31,
+          "seed": 1,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 41,
+        "n_patients": 31,
+        "n_unscorable": 0,
+        "negative_patients": 17,
+        "negatives": 21,
+        "positive_patients": 16,
+        "positives": 20
+      },
+      "head": "meanpool_logreg",
+      "reproduction_check": {
+        "auprc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        },
+        "auroc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        }
+      },
+      "run_id": "71a27f33c1354a878e23a0f3ae5cc351",
+      "seed": 1,
+      "threshold_free_only": true
+    },
+    {
+      "all_development_patients": {
+        "auprc": {
+          "ci": [
+            0.7806479176686159,
+            1.0
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.9149599760729723
+        },
+        "auroc": {
+          "ci": [
+            0.8312081128747796,
+            1.0
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.9268774703557312
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 35,
+          "seed": 1,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 45,
+        "n_patients": 35,
+        "n_unscorable": 0,
+        "negative_patients": 19,
+        "negatives": 23,
+        "positive_patients": 18,
+        "positives": 22
+      },
+      "change": {
+        "auprc": -0.0036603229854559327,
+        "auroc": -0.005448898927159829
+      },
+      "encoder": "midnight-12k",
+      "excluding_undecided_near_duplicate_patients": {
+        "auprc": {
+          "ci": [
+            0.7838669100472772,
+            1.0
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.9112996530875164
+        },
+        "auroc": {
+          "ci": [
+            0.8154864535787272,
+            1.0
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.9214285714285714
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 31,
+          "seed": 1,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 41,
+        "n_patients": 31,
+        "n_unscorable": 0,
+        "negative_patients": 17,
+        "negatives": 21,
+        "positive_patients": 16,
+        "positives": 20
+      },
+      "head": "abmil",
+      "reproduction_check": {
+        "auprc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        },
+        "auroc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        }
+      },
+      "run_id": "3b5b5a14a77841deba019377c3eec0b0",
+      "seed": 1,
+      "threshold_free_only": true
+    },
+    {
+      "all_development_patients": {
+        "auprc": {
+          "ci": [
+            0.5780887547294202,
+            0.9078585733138026
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.7609020558359488
+        },
+        "auroc": {
+          "ci": [
+            0.6098352191091955,
+            0.8909107997265892
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.7687747035573123
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 35,
+          "seed": 2,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 45,
+        "n_patients": 35,
+        "n_unscorable": 0,
+        "negative_patients": 19,
+        "negatives": 23,
+        "positive_patients": 18,
+        "positives": 22
+      },
+      "change": {
+        "auprc": 0.002900867505442495,
+        "auroc": 0.002653867871259208
+      },
+      "encoder": "handcrafted-stain-texture-v1",
+      "excluding_undecided_near_duplicate_patients": {
+        "auprc": {
+          "ci": [
+            0.5490079624595476,
+            0.9145763461714812
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.7638029233413913
+        },
+        "auroc": {
+          "ci": [
+            0.5987579331249407,
+            0.9043542620137299
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.7714285714285715
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 31,
+          "seed": 2,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 41,
+        "n_patients": 31,
+        "n_unscorable": 0,
+        "negative_patients": 17,
+        "negatives": 21,
+        "positive_patients": 16,
+        "positives": 20
+      },
+      "head": "meanpool_logreg",
+      "reproduction_check": {
+        "auprc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        },
+        "auroc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        }
+      },
+      "run_id": "8da8058dcc1a4e8086a65caee8099a12",
+      "seed": 2,
+      "threshold_free_only": true
+    },
+    {
+      "all_development_patients": {
+        "auprc": {
+          "ci": [
+            0.666166375434874,
+            0.9449231311741945
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.8325259919076764
+        },
+        "auroc": {
+          "ci": [
+            0.6799950738916256,
+            0.9387767106842737
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.8300395256916996
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 35,
+          "seed": 2,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 45,
+        "n_patients": 35,
+        "n_unscorable": 0,
+        "negative_patients": 19,
+        "negatives": 23,
+        "positive_patients": 18,
+        "positives": 22
+      },
+      "change": {
+        "auprc": 0.0005654489871700363,
+        "auroc": 0.0009128552606814111
+      },
+      "encoder": "handcrafted-stain-texture-v1",
+      "excluding_undecided_near_duplicate_patients": {
+        "auprc": {
+          "ci": [
+            0.649049264274184,
+            0.9538595919857277
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.8330914408948464
+        },
+        "auroc": {
+          "ci": [
+            0.6796183561808562,
+            0.9473684210526315
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.830952380952381
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 31,
+          "seed": 2,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 41,
+        "n_patients": 31,
+        "n_unscorable": 0,
+        "negative_patients": 17,
+        "negatives": 21,
+        "positive_patients": 16,
+        "positives": 20
+      },
+      "head": "abmil",
+      "reproduction_check": {
+        "auprc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        },
+        "auroc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        }
+      },
+      "run_id": "e6a98325ba9b4eeea5d7ab2b9affc92e",
+      "seed": 2,
+      "threshold_free_only": true
+    },
+    {
+      "all_development_patients": {
+        "auprc": {
+          "ci": [
+            0.6643175961726244,
+            0.9556809817526045
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.8329171765379128
+        },
+        "auroc": {
+          "ci": [
+            0.7350265426497277,
+            0.9404044117647058
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.8438735177865613
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 35,
+          "seed": 2,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 45,
+        "n_patients": 35,
+        "n_unscorable": 0,
+        "negative_patients": 19,
+        "negatives": 23,
+        "positive_patients": 18,
+        "positives": 22
+      },
+      "change": {
+        "auprc": -0.011211223768572642,
+        "auroc": -0.017683041596085136
+      },
+      "encoder": "midnight-12k",
+      "excluding_undecided_near_duplicate_patients": {
+        "auprc": {
+          "ci": [
+            0.6246576569377492,
+            0.9542903852922793
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.8217059527693401
+        },
+        "auroc": {
+          "ci": [
+            0.6983582427536232,
+            0.9308664021164021
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.8261904761904761
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 31,
+          "seed": 2,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 41,
+        "n_patients": 31,
+        "n_unscorable": 0,
+        "negative_patients": 17,
+        "negatives": 21,
+        "positive_patients": 16,
+        "positives": 20
+      },
+      "head": "meanpool_logreg",
+      "reproduction_check": {
+        "auprc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        },
+        "auroc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        }
+      },
+      "run_id": "cec621cea0d74770acc511492731a0eb",
+      "seed": 2,
+      "threshold_free_only": true
+    },
+    {
+      "all_development_patients": {
+        "auprc": {
+          "ci": [
+            0.8123022974048886,
+            0.9981952341137124
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.929328819810455
+        },
+        "auroc": {
+          "ci": [
+            0.8553559981684982,
+            0.9983295652173912
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.9446640316205533
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 35,
+          "seed": 2,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 45,
+        "n_patients": 35,
+        "n_unscorable": 0,
+        "negative_patients": 19,
+        "negatives": 23,
+        "positive_patients": 18,
+        "positives": 22
+      },
+      "change": {
+        "auprc": 0.008165149713313169,
+        "auroc": 0.010097873141351466
+      },
+      "encoder": "midnight-12k",
+      "excluding_undecided_near_duplicate_patients": {
+        "auprc": {
+          "ci": [
+            0.8106244197312561,
+            1.0
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.9374939695237682
+        },
+        "auroc": {
+          "ci": [
+            0.8542186167945439,
+            1.0
+          ],
+          "ci_reason": null,
+          "ci_valid_replicates": 2000,
+          "value": 0.9547619047619048
+        },
+        "bootstrap": {
+          "interval": "percentile 2.5\u201397.5",
+          "method": "patient_cluster",
+          "min_patients": 10,
+          "n_boot": 2000,
+          "n_patients": 31,
+          "seed": 2,
+          "status": "ok",
+          "stratified": false
+        },
+        "n_items": 41,
+        "n_patients": 31,
+        "n_unscorable": 0,
+        "negative_patients": 17,
+        "negatives": 21,
+        "positive_patients": 16,
+        "positives": 20
+      },
+      "head": "abmil",
+      "reproduction_check": {
+        "auprc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        },
+        "auroc": {
+          "matches_database_oof_summary": true,
+          "matches_s3_report": true
+        }
+      },
+      "run_id": "8b10d7b3b5c3436983c04aa0e9890a7b",
+      "seed": 2,
+      "threshold_free_only": true
+    }
+  ],
+  "runs_across_seeds": [
+    {
+      "auprc_all": {
+        "max": 0.8388170786399739,
+        "mean": 0.8132614403485684,
+        "min": 0.7684412504980549,
+        "n": 3
+      },
+      "auprc_excluding": {
+        "max": 0.8494268714724112,
+        "mean": 0.8077799927290185,
+        "min": 0.7408216658197976,
+        "n": 3
+      },
+      "auroc_all": {
+        "max": 0.83399209486166,
+        "mean": 0.8181818181818182,
+        "min": 0.7905138339920948,
+        "n": 3
+      },
+      "auroc_excluding": {
+        "max": 0.8595238095238096,
+        "mean": 0.8214285714285715,
+        "min": 0.7738095238095238,
+        "n": 3
+      },
+      "encoder": "handcrafted-stain-texture-v1",
+      "head": "abmil",
+      "seeds": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "auprc_all": {
+        "max": 0.7609020558359488,
+        "mean": 0.7609020558359488,
+        "min": 0.7609020558359488,
+        "n": 3
+      },
+      "auprc_excluding": {
+        "max": 0.7638029233413913,
+        "mean": 0.7638029233413913,
+        "min": 0.7638029233413913,
+        "n": 3
+      },
+      "auroc_all": {
+        "max": 0.7687747035573123,
+        "mean": 0.7687747035573121,
+        "min": 0.7687747035573123,
+        "n": 3
+      },
+      "auroc_excluding": {
+        "max": 0.7714285714285715,
+        "mean": 0.7714285714285715,
+        "min": 0.7714285714285715,
+        "n": 3
+      },
+      "encoder": "handcrafted-stain-texture-v1",
+      "head": "meanpool_logreg",
+      "seeds": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "auprc_all": {
+        "max": 0.9480173935658738,
+        "mean": 0.9307687298164337,
+        "min": 0.9149599760729723,
+        "n": 3
+      },
+      "auprc_excluding": {
+        "max": 0.9641214861083787,
+        "mean": 0.9376383695732211,
+        "min": 0.9112996530875164,
+        "n": 3
+      },
+      "auroc_all": {
+        "max": 0.9466403162055336,
+        "mean": 0.9393939393939394,
+        "min": 0.9268774703557312,
+        "n": 3
+      },
+      "auroc_excluding": {
+        "max": 0.969047619047619,
+        "mean": 0.9484126984126985,
+        "min": 0.9214285714285714,
+        "n": 3
+      },
+      "encoder": "midnight-12k",
+      "head": "abmil",
+      "seeds": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "auprc_all": {
+        "max": 0.8329171765379128,
+        "mean": 0.8329171765379128,
+        "min": 0.8329171765379128,
+        "n": 3
+      },
+      "auprc_excluding": {
+        "max": 0.8217059527693401,
+        "mean": 0.8217059527693401,
+        "min": 0.8217059527693401,
+        "n": 3
+      },
+      "auroc_all": {
+        "max": 0.8438735177865613,
+        "mean": 0.8438735177865612,
+        "min": 0.8438735177865613,
+        "n": 3
+      },
+      "auroc_excluding": {
+        "max": 0.8261904761904761,
+        "mean": 0.8261904761904763,
+        "min": 0.8261904761904761,
+        "n": 3
+      },
+      "encoder": "midnight-12k",
+      "head": "meanpool_logreg",
+      "seeds": [
+        0,
+        1,
+        2
+      ]
+    }
+  ],
+  "schema": "dermpath.near_duplicate_sensitivity/1",
+  "unit": "prediction unit: slide (bag); resampling unit: patient (patient-cluster bootstrap)"
+}

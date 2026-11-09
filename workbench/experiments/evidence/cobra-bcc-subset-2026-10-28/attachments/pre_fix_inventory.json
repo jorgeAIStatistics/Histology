@@ -1,0 +1,3651 @@
+{
+  "banner": "HISTORICAL, PRE-FIX INVENTORY. Prepared 2026-10-28 (about 04:50 UTC) by the read-only inventory agent at HEAD 23a68f6, BEFORE the fix rounds (commits 7ba0435 and 8a1a59e) and before the post-fix real run. Its run-level figures describe stale pre-fix runs (code 782668c, tree 810e3288) and are NOT results; they are superseded by the post-fix run of 2026-10-28 (code 8a1a59e) reported in results.json. Kept for the record: cohort identities, dry-run overlap (section 7), anomalies and decisions taken.",
+  "inventory": {
+    "al_proposals": 0,
+    "anomalies": [
+      "Stranded job 6481f266 (build_feature_set, status running, lease expired 04:40:56 UTC, owner process gone) and feature set 0ad3a2dd left 'building' at 30/60. Any worker started on the shared DB will reclaim and resume it with whatever code is checked out at that moment.",
+      "A preview API process (uvicorn pid 99436, config 'dermpath-api-shared', started 23:58 local) holds the shared DB open read-write and runs the pre-fix code in memory; UI actions write to the real DB. No job handler was found in dermpath/main.py, so jobs it enqueues would stay queued.",
+      "Dry-run overlap with the real test split: the same 6 patients were used by every 6-slide dry run; 4 of them are in the real test split (4 of 15 test patients, 4 slides). 2 were dry-run test patients scored by dry-run test releases (up to 4 times, tiny 4-slide models); 2 were dry-run training patients (labels read, slides used for dry-run Macenko references). This happened before the real split was frozen. No real-cohort run, threshold or candidate used them: 0 test releases, 0 sealed patients, 0 test predictions in the shared DB.",
+      "Two undecided near-duplicate candidate pairs (dHash 5 and 6, different patients, same label) lie inside the development pool, and each pair was split across CV folds in s3 (folds 0/4 and 3/0). If either is a true duplicate, OOF estimates leak across folds. near_duplicate_review has 0 rows.",
+      "ABMIL fitting: docs/config text says the final model is refitted on the development pool, the code fits 34/45 bags with an 11-bag inner hold-out (the design's Implemented-differently note at \u00a76 says there is no refit).",
+      "Calibration evidence counts bags (45), not patients (35) or duplicate groups.",
+      "s0/s1 came from a separate '--only s0,s1' invocation 15 s before the full run, which then skipped them because the files existed (the brief's item-4 defect). Here the code tree (810e3288) and driver (2e15ff00) were identical, so the skip was harmless; it was not checked by the driver.",
+      "docs/readiness.md is dated 2026-10-26 (173 tests; real cohorts 'not measured') and docs/ml-engine-report.md does not exist although ml-engine-design.md line 7 refers to it.",
+      "All 17 real-cohort runs use training seed 0; the brief asks for multiple predeclared seeds.",
+      "Observation (cause not verified): 19 comparison_family_member rows but only 2 comparison_family.member_added audit events in the COBRA project; members created together with their runs may be audited only via experiment.created."
+    ],
+    "artifact_integrity": {
+      "checkpoint_problems": [],
+      "checkpoints_checked": 17,
+      "cobra_artifacts": 210,
+      "note": "object_key equals quality_key in this schema, so some files are counted twice",
+      "object_files_checked": 630,
+      "problems": []
+    },
+    "classification": {
+      "dry_run": {
+        "notes": [
+          "dryrun/reports and dryrun/reports-reimport used code tree 810e3288 (same tree as the real run, recorded dirty at f4e62d3 before commit 782668c); the other dirs used tree 3df9025b (older code).",
+          "dryrun-ack/reports/s1.json has dry_run false but ran on a throwaway DB (6 slides).",
+          "scratchpad/demo-dryrun is a UI walkthrough with no ML results."
+        ],
+        "report_dirs": [
+          {
+            "code_tree_sha256": [
+              "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c"
+            ],
+            "dir": "dryrun/reports",
+            "driver_sha256": [
+              "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb"
+            ],
+            "dry_run_flag": [
+              "True"
+            ],
+            "stages": [
+              "s0",
+              "s1",
+              "s2",
+              "s3",
+              "s4",
+              "s5",
+              "s6",
+              "s7",
+              "s8"
+            ]
+          },
+          {
+            "code_tree_sha256": [
+              "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22"
+            ],
+            "dir": "dryrun/reports-attempt1",
+            "driver_sha256": [
+              "6f1b018e05276164f5782a92b6255454737746bf92d9db1ad4509092928c867e",
+              "6ffeafde45ad7ed686b06b41d218d703022dca9afd0fb823c92c486a7505e338"
+            ],
+            "dry_run_flag": [
+              "True"
+            ],
+            "stages": [
+              "s0",
+              "s1",
+              "s2",
+              "s3",
+              "s4",
+              "s5",
+              "s6",
+              "s7",
+              "s8"
+            ]
+          },
+          {
+            "code_tree_sha256": [
+              "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22"
+            ],
+            "dir": "dryrun/reports-attempt2",
+            "driver_sha256": [
+              "aa0cebeb77b4a2e5d737203061759efd1dd683c49eebae66f34ff403007ea033"
+            ],
+            "dry_run_flag": [
+              "True"
+            ],
+            "stages": [
+              "s0",
+              "s1",
+              "s2",
+              "s3",
+              "s4",
+              "s5",
+              "s6",
+              "s7",
+              "s8"
+            ]
+          },
+          {
+            "code_tree_sha256": [
+              "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22"
+            ],
+            "dir": "dryrun/reports-extra",
+            "driver_sha256": [
+              "038076dddcabf15bf8694a866eefb04d323ccbf3a37bafe8fa365460713295bf",
+              "aa0cebeb77b4a2e5d737203061759efd1dd683c49eebae66f34ff403007ea033"
+            ],
+            "dry_run_flag": [
+              "True"
+            ],
+            "stages": [
+              "s0",
+              "s1",
+              "s2",
+              "s3",
+              "s4",
+              "s5",
+              "s6",
+              "s7",
+              "s8"
+            ]
+          },
+          {
+            "code_tree_sha256": [
+              "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22"
+            ],
+            "dir": "dryrun/reports-prefix",
+            "driver_sha256": [
+              "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb"
+            ],
+            "dry_run_flag": [
+              "True"
+            ],
+            "stages": [
+              "s0",
+              "s1",
+              "s2",
+              "s3",
+              "s4",
+              "s5",
+              "s6",
+              "s7",
+              "s8"
+            ]
+          },
+          {
+            "code_tree_sha256": [
+              "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c"
+            ],
+            "dir": "dryrun/reports-reimport",
+            "driver_sha256": [
+              "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb"
+            ],
+            "dry_run_flag": [
+              "True"
+            ],
+            "stages": [
+              "s0",
+              "s1",
+              "s2",
+              "s3",
+              "s4"
+            ]
+          },
+          {
+            "code_tree_sha256": [
+              "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22"
+            ],
+            "dir": "dryrun-ack/reports",
+            "driver_sha256": [
+              "038076dddcabf15bf8694a866eefb04d323ccbf3a37bafe8fa365460713295bf"
+            ],
+            "dry_run_flag": [
+              "False"
+            ],
+            "stages": [
+              "s1"
+            ]
+          }
+        ],
+        "test_releases_in_dry_runs": [
+          {
+            "id": "ebaba04469e24823b0cb381b35533ac1",
+            "where": "dryrun/reports-attempt1 (DB since reset)"
+          },
+          {
+            "id": "bcff4b466a4a4de5917539f0588025d3",
+            "where": "dryrun/reports-attempt2 and -extra; DB dryrun-ack/var"
+          },
+          {
+            "id": "d3815c19b47b44d59848cb4e6970f4a2",
+            "where": "dryrun/reports-prefix (DB since reset)"
+          },
+          {
+            "id": "893ebc8f235b4a37b2f1bc2d4f99b8f9",
+            "where": "dryrun/reports (final); DB dryrun/var-proof-run"
+          }
+        ]
+      },
+      "incomplete": [
+        {
+          "id": "0ad3a2dddabc43c59078904b1e2605fd",
+          "identity": {
+            "policy_sha256": "7c2475a91d37f7466b877c7d1354887c05e134ab8c19ddb4e1ff54e94c47163a",
+            "spec_sha256": "3c6a6f6e8dc65bd002ec170408304a3998b1c1cde4d41154d96f46d04e38d8d4"
+          },
+          "items_done": 30,
+          "items_pending": 30,
+          "job": {
+            "attempts": "1/3",
+            "id": "6481f2660fe243a9bc9e073ddd3b089b",
+            "lease_owner": "cobra-driver-84781 (process gone)",
+            "lease_until_utc": "2026-10-28 04:40:56",
+            "progress": 0.502,
+            "status": "running (stranded)"
+          },
+          "partial_outputs": "30 artifacts present and hash-verified; build is resumable (done slides skipped); orphan temp file var/cache/feature-tmp/extract-_htb9pse/embeddings.capacity.npy (3.1 MB, in-flight slide)",
+          "remaining_cost": "about 30 slides x 51 s = 26 min on MPS",
+          "status": "building",
+          "what": "S4 sampling-ablation feature set, midnight-12k, uniform sampling"
+        },
+        {
+          "state": "_state/s4.json holds family 5c326ae6 and run 6c922244; sets {}; s4.json was never written",
+          "what": "s4 stage"
+        }
+      ],
+      "invalid": [
+        {
+          "items": [],
+          "note": "No macenko-v1 feature set, reference or run exists in the shared database: s4 was stopped during arm a_sampling_uniform, before arm b_stain_macenko started. Keep it that way: block or refuse the macenko dev_cv arm before s4 resumes (brief item 3).",
+          "scope": "real cohort"
+        },
+        {
+          "items": [
+            {
+              "dir": "dryrun/reports",
+              "macenko_arm": {
+                "handcrafted-stain-texture-v1": {
+                  "feature_set_id": "95bcccb715004ba8b101636b0b443658",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "540c92b8418a41459ea0cb3192686e37",
+                  "status": "succeeded"
+                },
+                "midnight-12k": {
+                  "feature_set_id": "2e59445b102542039fdc0d7078b13893",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "8e28f21b08b24063a3ef7e95e76fd78f",
+                  "status": "succeeded"
+                }
+              }
+            },
+            {
+              "dir": "dryrun/reports-attempt1",
+              "macenko_arm": {
+                "handcrafted-stain-texture-v1": {
+                  "feature_set_id": "15cd6af2611c49d2b297a04b58f8e769",
+                  "reference_fit": null,
+                  "run_id": "7d56704db147438eb8c38d440fa4d039",
+                  "status": "succeeded"
+                },
+                "midnight-12k": {
+                  "feature_set_id": "5e92cf99a7d8421fb5e1d302ebec06b0",
+                  "reference_fit": null,
+                  "run_id": "bfbd3707b2d94334936353c6969a2299",
+                  "status": "succeeded"
+                }
+              }
+            },
+            {
+              "dir": "dryrun/reports-attempt2",
+              "macenko_arm": {
+                "handcrafted-stain-texture-v1": {
+                  "feature_set_id": "b869d57b63a5413f89d6bf361dc6a19a",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "73b6edf0525a4e36a8e9ed392ed10cfd",
+                  "status": "succeeded"
+                },
+                "midnight-12k": {
+                  "feature_set_id": "00729ad5769442f3ba68fd627391ddeb",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "80ecf824de7b4ee492d4534d97654569",
+                  "status": "succeeded"
+                }
+              }
+            },
+            {
+              "dir": "dryrun/reports-extra",
+              "macenko_arm": {
+                "handcrafted-stain-texture-v1": {
+                  "feature_set_id": "b869d57b63a5413f89d6bf361dc6a19a",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "d9da16a7a683499d924d70255eba243e",
+                  "status": "succeeded"
+                },
+                "midnight-12k": {
+                  "feature_set_id": "00729ad5769442f3ba68fd627391ddeb",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "89120e4b838b4f5b9e67ba93bfe9f598",
+                  "status": "succeeded"
+                }
+              }
+            },
+            {
+              "dir": "dryrun/reports-prefix",
+              "macenko_arm": {
+                "handcrafted-stain-texture-v1": {
+                  "feature_set_id": "c88c0c9365064065b5285062017f3c8e",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "cfbe25ec02ff41d289b2c3c3ba76b086",
+                  "status": "succeeded"
+                },
+                "midnight-12k": {
+                  "feature_set_id": "c74ca194261247f7a734f4d23ea38686",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "ae580052290a49198d60007c6c62e167",
+                  "status": "succeeded"
+                }
+              }
+            },
+            {
+              "dir": "dryrun/reports-reimport",
+              "macenko_arm": {
+                "handcrafted-stain-texture-v1": {
+                  "feature_set_id": "6706e444948b4cd68d4a950407661ef4",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "fe566601718748abbfb7aa25de305fda",
+                  "status": "succeeded"
+                },
+                "midnight-12k": {
+                  "feature_set_id": "aa0203fa7ce24a7bbc6d3f2582f79a6f",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "d06751965a764b87bb7bd361f241e390",
+                  "status": "succeeded"
+                }
+              }
+            }
+          ],
+          "note": "every b_stain_macenko dev_cv run in the dry-run reports fitted one reference on the 4 development slides and reused it across all folds (preprocessing leakage); invalid for CV comparison in addition to being dry runs",
+          "scope": "dry runs"
+        }
+      ],
+      "legend": {
+        "dry_run": "6-slide subset on throwaway databases; plumbing evidence only, never performance evidence",
+        "incomplete": "interrupted; partial outputs are intact",
+        "invalid": "must not be used for CV comparison",
+        "not_run": "no output exists",
+        "stale_superseded": "produced correctly by the HEAD code of the time, but that code has confirmed defects that change these outputs or their reported meaning; keep as history, rerun after fixes",
+        "valid_reusable": "content-verified and not affected by the confirmed defects; reuse after the fixes if the identity check (cache keys / fingerprints) still matches"
+      },
+      "not_run": [
+        "s5 resources",
+        "s6 test release (real cohort)",
+        "s7 failure analysis",
+        "s8 summary",
+        "s4 arm b_stain_macenko",
+        "s4 precision study (fp16) and its downstream arm"
+      ],
+      "stale_superseded": [
+        {
+          "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44 (status open)",
+          "identity": {
+            "code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+            "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+            "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb"
+          },
+          "rerun_cost": "16 train jobs took 37.6 s (s3 stage 47.3 s) on cached embeddings",
+          "run_ids": [
+            "87a5f0758f2942ba831b80f35b82f2d0",
+            "ce186228fdd04eb0bf43a75c31706427",
+            "1d9535e7cecc412b853a18a7d1f7e53d",
+            "79aa243ee9ac46328d5a34a1a6b2172e",
+            "ad6a67b3f4aa49d8a7c7474a1cecc473",
+            "00719018ce2247b580b18760c348877b",
+            "19319ee9ca4f451f89c1ec1e78084f19",
+            "dfc27b4ab6be4a88ac9747ec8352af53",
+            "7ae6ee9d9c6740fb961fac0f843bc21f",
+            "11b1fffb5aad42c38aeb4cad7a22fafb",
+            "31ebcc9e66aa430dbab5ecc40846667d",
+            "f9fb8cdf1a764e5c95b737fab42f7fac",
+            "486ca433d5954e839d7e82cbb8f9f765",
+            "31ab2d976b454035ac9aec8921f2a7e3",
+            "bf3ea93f88cc40a7b2ac7c5e94a9ecc6",
+            "a013330c16764d0c97a1de32c828fd70"
+          ],
+          "what": "S3 supervised baseline runs (16; 4 grid + 12 learning-curve, all seed 0, dev_cv 5 folds)",
+          "why": [
+            "ABMIL runs ce186228fdd04eb0bf43a75c31706427, 79aa243ee9ac46328d5a34a1a6b2172e: the final development model was fitted on 34 of 45 bags (28 of 35 patients); 11 bags (7 patients) were held out for early stopping (best epoch 4 and 7). The config comment and design \u00a76 main text say 'refit on the development pool'; the design's Implemented-differently note says there is no refit. Fitting counts in summaries must be corrected and the refit semantics fixed (brief item 7).",
+            "All 16: Platt calibration evidence was gated on bags (fitted_on n=45, 22/23), not on distinct patients / duplicate groups (35 patients; 18 positive, 19 negative counting both mixed-label patients on each side); calibration is in-sample on the same OOF scores (brief item 7).",
+            "Single training seed; learning-curve repeats vary the patient subset only.",
+            "The code identity of every run changes when the fixes land; the run identity includes code_tree_sha256."
+          ]
+        },
+        {
+          "run_id": "79aa243ee9ac46328d5a34a1a6b2172e",
+          "what": "s3 pre-declared test candidate",
+          "why": "chosen by the highest OOF AUROC point estimate among pre-fix runs (midnight-12k + abmil, a tuning-set estimate); no bundle was registered and no test release happened. Re-declare from post-fix runs before any s6."
+        },
+        {
+          "family_id": "5c326ae64f9141ea98ce829d0aa3642e (open)",
+          "run_id": "6c922244db6246c8a1104f99ff5756c8",
+          "what": "S4 sampling-ablation run (handcrafted, uniform, meanpool_logreg)",
+          "why": "pre-fix code (calibration gate); its family is incomplete"
+        },
+        {
+          "what": "s0.json / s1.json / s3.json reports",
+          "why": "historical records for code 782668c; s0 reruns in about 2 s. s1's dataset remains the cohort of record (DB truth). s3.json holds the stale results above."
+        }
+      ],
+      "valid_reusable": [
+        {
+          "id": "1868803e54c045eba4df9c7a9fd53a7b",
+          "identity": {
+            "manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+            "split_family_id": "bc569b2976a640d0a7715af772c07399",
+            "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2"
+          },
+          "what": "dataset version (frozen)",
+          "why": "manifest sha and split fingerprint recomputed and match; 0 test releases, 0 sealed patients, 0 predictions on test patients; no active-learning proposals exist, so the new exposure rules have nothing to conflict with"
+        },
+        {
+          "id": "527f9080dfb74e2f95c46cfd5138fa06",
+          "identity": {
+            "extraction_env_sha256": "d43dccd91de265c4ab133a7d85f5921a371663f0a31cf4686b98a4fca6e92d23",
+            "extractor_version": "dermpath.feature_sets/2",
+            "policy_sha256": "cefdf1652950adc92b73e942f5f636013be21525700a7f1cfac1d044df4218f9",
+            "spec_sha256": "1e5969dfee9245c11aaf766d67726e995f5dde7790e68cb2ab0e3fef01338e74",
+            "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+          },
+          "what": "S2 technical feature set, handcrafted-stain-texture-v1 (spatial, 256, stain none, fp32 cpu)",
+          "why": "60/60 done, determinism validation passed, artifacts hash-verified; stain none has no fitted preprocessing, so the fold-leakage defect does not apply"
+        },
+        {
+          "id": "b3b75db25fd945ab9ba079b9e4244738",
+          "identity": {
+            "encoder_spec_sha256": "36d2e01f76b332c8df3b5d95203abba4c903f7064d3563ad452f8b59c592ebdc",
+            "extraction_env_sha256": "e90c2b64cb34bac89923729b40d1d5c48339f492fcdf895278c0458dd454c70a",
+            "extractor_version": "dermpath.feature_sets/2",
+            "policy_sha256": "cefdf1652950adc92b73e942f5f636013be21525700a7f1cfac1d044df4218f9",
+            "spec_sha256": "6162aaf482108f1683a58e52482d00c643ae7f28fe425cbd40b6b5e3832e0049",
+            "weights_config_sha256": "0362e014a3f3b1ad2f2faf115d21cbc05ed48b3a6114bdb4ddec897bc83cc0fd",
+            "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+          },
+          "what": "S2 technical feature set, midnight-12k (spatial, 256, stain none, fp32 mps)",
+          "why": "60/60 done (3,399 s of extraction), determinism validation passed, weights re-hashed and equal to the pin, artifacts hash-verified"
+        },
+        {
+          "id": [
+            "c2aa86f4871c4554a88f2bbe73f123ed (handcrafted, spec 7a6177a7...)",
+            "c74591ee84e74c74934b0cbc28610769 (midnight, spec 3928575d...)"
+          ],
+          "what": "S3 supervised feature-set views (same artifacts as S2, 60 cache hits each)",
+          "why": "artifact ids identical to the S2 sets; these are the sets every S3 run trained on"
+        },
+        {
+          "id": "2f1f57b21cbc4a31b50d26a43845aed1",
+          "identity": {
+            "policy_sha256": "7c2475a91d37f7466b877c7d1354887c05e134ab8c19ddb4e1ff54e94c47163a",
+            "spec_sha256": "a3a5b981e273d779f5aa0774caf14d1dc0ff10aacbe0c5021aaa490e51bf148c"
+          },
+          "what": "S4 sampling-ablation feature set, handcrafted, uniform sampling",
+          "why": "60/60 ready, stain none; only its run is stale"
+        },
+        {
+          "id": "workbench/experiments/reports/s2.json",
+          "what": "s2.json technical-validation report",
+          "why": "label-free (labels_read false); determinism, coverage and throughput of the reusable sets"
+        },
+        {
+          "id": "object store",
+          "what": "17 checkpoints and 210 feature artifacts",
+          "why": "all files present and sha256-equal to the DB (kept for audit; checkpoints themselves are stale)"
+        }
+      ]
+    },
+    "cohort": {
+      "actual_frozen": {
+        "by_split": {
+          "development_pool (train; val ratio 0)": {
+            "cases": 41,
+            "patients": 35,
+            "patients_bcc_absent_not_benign": 17,
+            "patients_bcc_present_any_positive": 18,
+            "slides": 45,
+            "slides_bcc_absent_not_benign": 23,
+            "slides_bcc_present": 22
+          },
+          "test": {
+            "cases": 15,
+            "patients": 15,
+            "patients_bcc_absent_not_benign": 7,
+            "patients_bcc_present_any_positive": 8,
+            "slides": 15,
+            "slides_bcc_absent_not_benign": 7,
+            "slides_bcc_present": 8
+          }
+        },
+        "counts": {
+          "blocks": 56,
+          "cases": 56,
+          "patients": 50,
+          "slides": 60
+        },
+        "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+        "exclusions": [],
+        "frozen_at_utc": "2026-10-28 03:05:12.194513",
+        "frozen_by": "user-research-lead",
+        "label_scope": "slide",
+        "label_source": {
+          "imported_reference": 60
+        },
+        "lineage_id": "ffe262d92b5b403e95466db19e5ec8c5",
+        "manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "manifest_sha256_recomputed_from_db_json": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "manifest_sha256_recomputed_from_object_store": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "mixed_label_patients": {
+          "count": 2,
+          "splits": {
+            "train": 2
+          }
+        },
+        "mpp_x": [
+          0.4851
+        ],
+        "near_duplicate_candidates": [
+          {
+            "dhash_distance": 6,
+            "human_decision": null,
+            "labels": [
+              "bcc_present",
+              "bcc_present"
+            ],
+            "s3_cv_folds": [
+              0,
+              4
+            ],
+            "same_patient": false,
+            "slide_ids": [
+              "id:c6b3c595cc9b",
+              "id:45a952077970"
+            ],
+            "splits": [
+              "train",
+              "train"
+            ]
+          },
+          {
+            "dhash_distance": 5,
+            "human_decision": null,
+            "labels": [
+              "bcc_absent_not_benign",
+              "bcc_absent_not_benign"
+            ],
+            "s3_cv_folds": [
+              3,
+              0
+            ],
+            "same_patient": false,
+            "slide_ids": [
+              "id:40c480cfc4cd",
+              "id:8c53e0e7de79"
+            ],
+            "splits": [
+              "train",
+              "train"
+            ]
+          }
+        ],
+        "patient_label_rule": "any_positive",
+        "provenance": {
+          "public_licensed": 60
+        },
+        "reference_standard": "imported_reference",
+        "scanner_ids": {
+          "3d-histech-panoramic-p1000": 60
+        },
+        "site_ids": {
+          "radboudumc": 60
+        },
+        "slides_per_patient": {
+          "1": 40,
+          "2": 10
+        },
+        "split_config": {
+          "algorithm": "dermpath.splits/3",
+          "partition": "random",
+          "patient_label_rule": "any_positive",
+          "ratios": {
+            "test": 0.3,
+            "train": 0.7,
+            "val": 0.0
+          },
+          "seed": 20261027
+        },
+        "split_family_id": "bc569b2976a640d0a7715af772c07399",
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "split_fingerprint_recomputed": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "stain": {
+          "H&E": 60
+        },
+        "status": "frozen",
+        "test_split_sealed_patients": 0,
+        "version": 1
+      },
+      "documented": {
+        "blocks": 56,
+        "cases": 56,
+        "example_split_in_doc": "seed 0, 60/20/20: train 16+/14-, val 5/5, test 5/5 patients (not the split in use)",
+        "labels": "report-derived (COBRA rule-based extraction), imported_reference",
+        "mixed_label_patients": 2,
+        "mpp": 0.4851,
+        "patients": 50,
+        "patients_any_positive": {
+          "negative": 24,
+          "positive": 26
+        },
+        "scanner_models": 1,
+        "sites": 1,
+        "slide_labels": {
+          "bcc_absent_not_benign": 30,
+          "bcc_present": 30
+        },
+        "slides": 60,
+        "source": "workbench/docs/public-datasets.md"
+      },
+      "reconciliation": [
+        "60 slides / 50 patients / 56 cases / 56 blocks / 30+30 slide labels / 26+24 patients (any_positive) / 1 site / 1 scanner model / 0.4851 um/px / 60 imported_reference labels: documented == actual.",
+        "Split in use differs from the doc's illustrative split: seed 20261027, ratios 0.7/0.0/0.3 (dermpath.splits/3, patient-grouped, stratified on any_positive). Development pool 35 patients (18 positive, 17 negative; 45 slides: 22 bcc_present, 23 bcc_absent_not_benign; 41 cases); test 15 patients (8/7; 15 slides 8/7; 15 cases). The doc's 'any test split holds about 10 patients' does not describe this version (15).",
+        "Both mixed-label patients are in the development pool; each slide keeps its own label.",
+        "Slide-level tables by patient label (any_positive) give 32 slides from positive patients and 28 from negative patients; by slide label it is 30/30. Report both bases explicitly.",
+        "Independent patients for any patient-level statement: 35 development, 15 test."
+      ]
+    },
+    "comparison_families": [
+      {
+        "bootstrap_seed": 20261026,
+        "created_at": "2026-10-28 04:09:02.489364",
+        "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+        "id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "locked_at": null,
+        "name": "S3 COBRA baselines",
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "status": "open"
+      },
+      {
+        "bootstrap_seed": 20261026,
+        "created_at": "2026-10-28 04:09:41.384065",
+        "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+        "id": "5c326ae64f9141ea98ce829d0aa3642e",
+        "locked_at": null,
+        "name": "S4 COBRA ablations",
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "status": "open"
+      }
+    ],
+    "comparison_family_members": [
+      {
+        "family_id": "5c326ae64f9141ea98ce829d0aa3642e",
+        "n": 1,
+        "role": "a_sampling_uniform"
+      },
+      {
+        "family_id": "5c326ae64f9141ea98ce829d0aa3642e",
+        "n": 2,
+        "role": "s3_baseline"
+      },
+      {
+        "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "n": 4,
+        "role": "grid"
+      },
+      {
+        "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "n": 12,
+        "role": "learning_curve"
+      }
+    ],
+    "dry_runs": {
+      "databases": [
+        {
+          "dataset_version_id": "326099b243e94bfca809728895c73303",
+          "db": "dryrun/var",
+          "patient_split_crosswalk_counts": {
+            "dryrun_test->real_test": 2,
+            "dryrun_train->real_test": 2,
+            "dryrun_train->real_train": 2
+          },
+          "patients": 6,
+          "test_releases": []
+        },
+        {
+          "dataset_version_id": "b917d05dba4f4c20a30ffb8fbad71675",
+          "db": "dryrun/var-proof-run",
+          "patient_split_crosswalk_counts": {
+            "dryrun_test->real_test": 2,
+            "dryrun_train->real_test": 2,
+            "dryrun_train->real_train": 2
+          },
+          "patients": 6,
+          "test_releases": [
+            {
+              "id": "893ebc8f235b4a37b2f1bc2d4f99b8f9",
+              "release_number": 1,
+              "sealed_patients": 2
+            }
+          ]
+        },
+        {
+          "dataset_version_id": "dd46829b25a942d6b7001f3347a5effd",
+          "db": "dryrun-ack/var",
+          "patient_split_crosswalk_counts": {
+            "dryrun_test->real_test": 2,
+            "dryrun_train->real_test": 2,
+            "dryrun_train->real_train": 2
+          },
+          "patients": 6,
+          "test_releases": [
+            {
+              "id": "bcff4b466a4a4de5917539f0588025d3",
+              "release_number": 1,
+              "sealed_patients": 2
+            }
+          ]
+        },
+        {
+          "dataset_version_id": "67b911c7d46448529fb895aaffe90297",
+          "db": "dryrun-ack/var",
+          "patient_split_crosswalk_counts": {
+            "dryrun_test->real_test": 2,
+            "dryrun_train->real_test": 2,
+            "dryrun_train->real_train": 2
+          },
+          "patients": 6,
+          "test_releases": []
+        }
+      ],
+      "report_dirs": [
+        {
+          "dir": "dryrun/reports",
+          "stages": {
+            "s0": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+              "dirty": true,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:55:01+00:00",
+              "warnings": 0
+            },
+            "s1": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+              "dirty": true,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:55:03+00:00",
+              "warnings": 0
+            },
+            "s2": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+              "dirty": true,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:55:03+00:00",
+              "warnings": 0
+            },
+            "s3": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+              "dirty": true,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:55:48+00:00",
+              "warnings": 0
+            },
+            "s4": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+              "dirty": true,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "macenko_arm": {
+                "handcrafted-stain-texture-v1": {
+                  "feature_set_id": "95bcccb715004ba8b101636b0b443658",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "540c92b8418a41459ea0cb3192686e37",
+                  "status": "succeeded"
+                },
+                "midnight-12k": {
+                  "feature_set_id": "2e59445b102542039fdc0d7078b13893",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "8e28f21b08b24063a3ef7e95e76fd78f",
+                  "status": "succeeded"
+                }
+              },
+              "started_at": "2026-10-28T02:55:50+00:00",
+              "warnings": 0
+            },
+            "s5": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+              "dirty": true,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:58:29+00:00",
+              "warnings": 0
+            },
+            "s6": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+              "dirty": true,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:58:29+00:00",
+              "test_release": {
+                "action": "new test release recorded",
+                "counts": {
+                  "n_items": 2,
+                  "n_patients": 2,
+                  "n_scored_patients": 2,
+                  "negative_patients": 1,
+                  "negatives": 1,
+                  "positive_patients": 1,
+                  "positives": 1
+                },
+                "id": "893ebc8f235b4a37b2f1bc2d4f99b8f9"
+              },
+              "warnings": 0
+            },
+            "s7": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+              "dirty": true,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:58:29+00:00",
+              "warnings": 0
+            },
+            "s8": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+              "dirty": true,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:58:29+00:00",
+              "warnings": 0
+            }
+          }
+        },
+        {
+          "dir": "dryrun/reports-attempt1",
+          "stages": {
+            "s0": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "6f1b018e05276164f5782a92b6255454737746bf92d9db1ad4509092928c867e",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:27:38+00:00",
+              "warnings": 0
+            },
+            "s1": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "6f1b018e05276164f5782a92b6255454737746bf92d9db1ad4509092928c867e",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:27:41+00:00",
+              "warnings": 0
+            },
+            "s2": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "6ffeafde45ad7ed686b06b41d218d703022dca9afd0fb823c92c486a7505e338",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:28:05+00:00",
+              "warnings": 0
+            },
+            "s3": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "6ffeafde45ad7ed686b06b41d218d703022dca9afd0fb823c92c486a7505e338",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:29:07+00:00",
+              "warnings": 0
+            },
+            "s4": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "6ffeafde45ad7ed686b06b41d218d703022dca9afd0fb823c92c486a7505e338",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "macenko_arm": {
+                "handcrafted-stain-texture-v1": {
+                  "feature_set_id": "15cd6af2611c49d2b297a04b58f8e769",
+                  "reference_fit": null,
+                  "run_id": "7d56704db147438eb8c38d440fa4d039",
+                  "status": "succeeded"
+                },
+                "midnight-12k": {
+                  "feature_set_id": "5e92cf99a7d8421fb5e1d302ebec06b0",
+                  "reference_fit": null,
+                  "run_id": "bfbd3707b2d94334936353c6969a2299",
+                  "status": "succeeded"
+                }
+              },
+              "started_at": "2026-10-28T02:29:39+00:00",
+              "warnings": 0
+            },
+            "s5": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "6ffeafde45ad7ed686b06b41d218d703022dca9afd0fb823c92c486a7505e338",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:32:54+00:00",
+              "warnings": 0
+            },
+            "s6": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "6ffeafde45ad7ed686b06b41d218d703022dca9afd0fb823c92c486a7505e338",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:34:04+00:00",
+              "test_release": {
+                "action": "--force s6: the candidate run was already released (the engine refuses a second release of one run); its stored result is re-read (audited), no new release",
+                "counts": {
+                  "n_items": 2,
+                  "n_patients": 2,
+                  "n_scored_patients": 2,
+                  "negative_patients": 1,
+                  "negatives": 1,
+                  "positive_patients": 1,
+                  "positives": 1
+                },
+                "id": "ebaba04469e24823b0cb381b35533ac1"
+              },
+              "warnings": 0
+            },
+            "s7": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "6ffeafde45ad7ed686b06b41d218d703022dca9afd0fb823c92c486a7505e338",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:32:55+00:00",
+              "warnings": 0
+            },
+            "s8": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "6ffeafde45ad7ed686b06b41d218d703022dca9afd0fb823c92c486a7505e338",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:32:55+00:00",
+              "warnings": 0
+            }
+          }
+        },
+        {
+          "dir": "dryrun/reports-attempt2",
+          "stages": {
+            "s0": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "aa0cebeb77b4a2e5d737203061759efd1dd683c49eebae66f34ff403007ea033",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:35:22+00:00",
+              "warnings": 0
+            },
+            "s1": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "aa0cebeb77b4a2e5d737203061759efd1dd683c49eebae66f34ff403007ea033",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:35:24+00:00",
+              "warnings": 0
+            },
+            "s2": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "aa0cebeb77b4a2e5d737203061759efd1dd683c49eebae66f34ff403007ea033",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:35:24+00:00",
+              "warnings": 0
+            },
+            "s3": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "aa0cebeb77b4a2e5d737203061759efd1dd683c49eebae66f34ff403007ea033",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:36:03+00:00",
+              "warnings": 0
+            },
+            "s4": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "aa0cebeb77b4a2e5d737203061759efd1dd683c49eebae66f34ff403007ea033",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "macenko_arm": {
+                "handcrafted-stain-texture-v1": {
+                  "feature_set_id": "b869d57b63a5413f89d6bf361dc6a19a",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "73b6edf0525a4e36a8e9ed392ed10cfd",
+                  "status": "succeeded"
+                },
+                "midnight-12k": {
+                  "feature_set_id": "00729ad5769442f3ba68fd627391ddeb",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "80ecf824de7b4ee492d4534d97654569",
+                  "status": "succeeded"
+                }
+              },
+              "started_at": "2026-10-28T02:36:04+00:00",
+              "warnings": 0
+            },
+            "s5": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "aa0cebeb77b4a2e5d737203061759efd1dd683c49eebae66f34ff403007ea033",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:38:35+00:00",
+              "warnings": 0
+            },
+            "s6": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "aa0cebeb77b4a2e5d737203061759efd1dd683c49eebae66f34ff403007ea033",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:38:35+00:00",
+              "test_release": {
+                "action": "new test release recorded",
+                "counts": {
+                  "n_items": 2,
+                  "n_patients": 2,
+                  "n_scored_patients": 2,
+                  "negative_patients": 1,
+                  "negatives": 1,
+                  "positive_patients": 1,
+                  "positives": 1
+                },
+                "id": "bcff4b466a4a4de5917539f0588025d3"
+              },
+              "warnings": 0
+            },
+            "s7": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "aa0cebeb77b4a2e5d737203061759efd1dd683c49eebae66f34ff403007ea033",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:38:35+00:00",
+              "warnings": 0
+            },
+            "s8": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "aa0cebeb77b4a2e5d737203061759efd1dd683c49eebae66f34ff403007ea033",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:38:35+00:00",
+              "warnings": 0
+            }
+          }
+        },
+        {
+          "dir": "dryrun/reports-extra",
+          "stages": {
+            "s0": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "aa0cebeb77b4a2e5d737203061759efd1dd683c49eebae66f34ff403007ea033",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:35:22+00:00",
+              "warnings": 0
+            },
+            "s1": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "aa0cebeb77b4a2e5d737203061759efd1dd683c49eebae66f34ff403007ea033",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:38:58+00:00",
+              "warnings": 0
+            },
+            "s2": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "aa0cebeb77b4a2e5d737203061759efd1dd683c49eebae66f34ff403007ea033",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:35:24+00:00",
+              "warnings": 0
+            },
+            "s3": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "aa0cebeb77b4a2e5d737203061759efd1dd683c49eebae66f34ff403007ea033",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:36:03+00:00",
+              "warnings": 0
+            },
+            "s4": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "aa0cebeb77b4a2e5d737203061759efd1dd683c49eebae66f34ff403007ea033",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "macenko_arm": {
+                "handcrafted-stain-texture-v1": {
+                  "feature_set_id": "b869d57b63a5413f89d6bf361dc6a19a",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "d9da16a7a683499d924d70255eba243e",
+                  "status": "succeeded"
+                },
+                "midnight-12k": {
+                  "feature_set_id": "00729ad5769442f3ba68fd627391ddeb",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "89120e4b838b4f5b9e67ba93bfe9f598",
+                  "status": "succeeded"
+                }
+              },
+              "started_at": "2026-10-28T02:38:58+00:00",
+              "warnings": 0
+            },
+            "s5": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "038076dddcabf15bf8694a866eefb04d323ccbf3a37bafe8fa365460713295bf",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:41:33+00:00",
+              "warnings": 0
+            },
+            "s6": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "aa0cebeb77b4a2e5d737203061759efd1dd683c49eebae66f34ff403007ea033",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:38:35+00:00",
+              "test_release": {
+                "action": "new test release recorded",
+                "counts": {
+                  "n_items": 2,
+                  "n_patients": 2,
+                  "n_scored_patients": 2,
+                  "negative_patients": 1,
+                  "negatives": 1,
+                  "positive_patients": 1,
+                  "positives": 1
+                },
+                "id": "bcff4b466a4a4de5917539f0588025d3"
+              },
+              "warnings": 0
+            },
+            "s7": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "aa0cebeb77b4a2e5d737203061759efd1dd683c49eebae66f34ff403007ea033",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:38:35+00:00",
+              "warnings": 0
+            },
+            "s8": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "038076dddcabf15bf8694a866eefb04d323ccbf3a37bafe8fa365460713295bf",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:41:33+00:00",
+              "warnings": 0
+            }
+          }
+        },
+        {
+          "dir": "dryrun/reports-prefix",
+          "stages": {
+            "s0": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:44:14+00:00",
+              "warnings": 0
+            },
+            "s1": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:44:16+00:00",
+              "warnings": 0
+            },
+            "s2": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:44:16+00:00",
+              "warnings": 0
+            },
+            "s3": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:44:57+00:00",
+              "warnings": 0
+            },
+            "s4": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "macenko_arm": {
+                "handcrafted-stain-texture-v1": {
+                  "feature_set_id": "c88c0c9365064065b5285062017f3c8e",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "cfbe25ec02ff41d289b2c3c3ba76b086",
+                  "status": "succeeded"
+                },
+                "midnight-12k": {
+                  "feature_set_id": "c74ca194261247f7a734f4d23ea38686",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "ae580052290a49198d60007c6c62e167",
+                  "status": "succeeded"
+                }
+              },
+              "started_at": "2026-10-28T02:44:58+00:00",
+              "warnings": 0
+            },
+            "s5": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:47:36+00:00",
+              "warnings": 0
+            },
+            "s6": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:47:36+00:00",
+              "test_release": {
+                "action": "new test release recorded",
+                "counts": {
+                  "n_items": 2,
+                  "n_patients": 2,
+                  "n_scored_patients": 2,
+                  "negative_patients": 1,
+                  "negatives": 1,
+                  "positive_patients": 1,
+                  "positives": 1
+                },
+                "id": "d3815c19b47b44d59848cb4e6970f4a2"
+              },
+              "warnings": 0
+            },
+            "s7": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:47:36+00:00",
+              "warnings": 0
+            },
+            "s8": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:47:36+00:00",
+              "warnings": 0
+            }
+          }
+        },
+        {
+          "dir": "dryrun/reports-reimport",
+          "stages": {
+            "s0": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+              "dirty": true,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:58:53+00:00",
+              "warnings": 0
+            },
+            "s1": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+              "dirty": true,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:58:56+00:00",
+              "warnings": 0
+            },
+            "s2": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+              "dirty": true,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:58:56+00:00",
+              "warnings": 0
+            },
+            "s3": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+              "dirty": true,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "started_at": "2026-10-28T02:59:35+00:00",
+              "warnings": 0
+            },
+            "s4": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+              "dirty": true,
+              "driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+              "dry_run": true,
+              "dry_run_subset": 6,
+              "macenko_arm": {
+                "handcrafted-stain-texture-v1": {
+                  "feature_set_id": "6706e444948b4cd68d4a950407661ef4",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "fe566601718748abbfb7aa25de305fda",
+                  "status": "succeeded"
+                },
+                "midnight-12k": {
+                  "feature_set_id": "aa0203fa7ce24a7bbc6d3f2582f79a6f",
+                  "reference_fit": {
+                    "all_train_split": true,
+                    "fitted_on": "train-split slides of the dataset version only (never validation or test)",
+                    "fitted_on_slides": 4,
+                    "splits": [
+                      "train"
+                    ]
+                  },
+                  "run_id": "d06751965a764b87bb7bd361f241e390",
+                  "status": "succeeded"
+                }
+              },
+              "started_at": "2026-10-28T02:59:37+00:00",
+              "warnings": 0
+            }
+          }
+        },
+        {
+          "dir": "dryrun-ack/reports",
+          "stages": {
+            "s1": {
+              "code_revision": "f4e62d3270f58c28e661e25e9c25e46bb8f7877e",
+              "code_tree_sha256": "3df9025b89d9bacd8a99f0787815705be79819969d602974b267d2a45bd81a22",
+              "dirty": false,
+              "driver_sha256": "038076dddcabf15bf8694a866eefb04d323ccbf3a37bafe8fa365460713295bf",
+              "dry_run": false,
+              "dry_run_subset": null,
+              "started_at": "2026-10-28T02:42:06+00:00",
+              "warnings": 0
+            }
+          }
+        }
+      ]
+    },
+    "environment": {
+      "dependency_versions": {
+        "fastapi": "0.143.0",
+        "huggingface_hub": "2.2.0",
+        "machine": "arm64",
+        "numpy": "2.4.2",
+        "openslide (C library)": "4.0.1",
+        "openslide-bin": "4.0.1.2",
+        "openslide-python": "1.4.6",
+        "pillow": "12.3.0",
+        "platform": "macOS-14.5-arm64-arm-64bit-Mach-O",
+        "python": "3.14.5",
+        "python_implementation": "CPython",
+        "safetensors": "0.8.0",
+        "scikit-learn": "1.9.0",
+        "scipy": "1.17.0",
+        "sqlalchemy": "2.1.4",
+        "timm": "1.0.30",
+        "torch": "2.14.1",
+        "torch.cuda": "none",
+        "torch.cuda_available": "false",
+        "torch.git_version": "5c4886908584029761b579af026dcfb627c84070",
+        "torch.mps_available": "true",
+        "torch.mps_built": "true",
+        "torchvision": "0.29.1",
+        "transformers": "5.19.0"
+      },
+      "devices": {
+        "available": [
+          "mps",
+          "cpu"
+        ],
+        "cuda": false,
+        "midnight_device": "mps"
+      },
+      "encoders": {
+        "handcrafted-stain-texture-v1": {
+          "embedding_dim": 64,
+          "input_size": 224,
+          "license": {
+            "commercial_use": "unknown",
+            "name": "Project code (no third-party weights)",
+            "notes": "No model weights exist. The workbench's own licence terms apply to the code.",
+            "url": null
+          },
+          "spec_sha256": "8e4d14d0f79eaafbb7f2e2bfb1289fa543f2201abe94f5cfcc0d46096e80c1ed",
+          "status": "available",
+          "status_detail": null,
+          "weights_config_sha256": null,
+          "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+        },
+        "midnight-12k": {
+          "embedding_dim": 3072,
+          "input_size": 224,
+          "license": {
+            "commercial_use": "yes",
+            "name": "MIT",
+            "notes": "The weights licence (MIT) permits commercial use; the model was trained on public TCGA FFPE slides, whose terms are a question for counsel. The workbench never downloads it and uses it for research only.",
+            "url": "https://huggingface.co/kaiko-ai/midnight"
+          },
+          "spec_sha256": "36d2e01f76b332c8df3b5d95203abba4c903f7064d3563ad452f8b59c592ebdc",
+          "status": "available",
+          "status_detail": null,
+          "weights_config_sha256": "0362e014a3f3b1ad2f2faf115d21cbc05ed48b3a6114bdb4ddec897bc83cc0fd",
+          "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+        }
+      },
+      "machine": {
+        "cpu_count": 11,
+        "machine": "arm64",
+        "memory_bytes": 19327352832,
+        "platform": "macOS-14.5-arm64-arm-64bit-Mach-O",
+        "processor": "arm",
+        "python": "3.14.5",
+        "torch_threads": 5,
+        "wb_ml_batch_size": "32 (default)",
+        "wb_ml_cpu_threads": 4
+      },
+      "midnight_adapter_parity_record": "scratchpad/midnight_parity_result.json (2026-10-26): adapter vs transformers Dinov2Model.from_pretrained, 8 CC0 patches, cpu fp32, max_abs_diff 2.0e-6, cos_min 0.99999994; mps vs cpu cos_min 0.99999994. Not a comparison with kaiko's own pipeline; the official transform (Resize 224, CenterCrop 224, mean/std 0.5) is the identity on 224 px inputs apart from normalisation.",
+      "midnight_weights_local_sha256": {
+        "config.json": "0362e014a3f3b1ad2f2faf115d21cbc05ed48b3a6114bdb4ddec897bc83cc0fd",
+        "model.safetensors": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+      },
+      "midnight_weights_match_pinned": true
+    },
+    "feature_set_validations": [
+      {
+        "created_at": "2026-10-28 03:09:59.961836",
+        "feature_set_id": "527f9080dfb74e2f95c46cfd5138fa06",
+        "id": "3845cd754b9348409d544e66f236d6de",
+        "job_id": "23695b8ce34148bd8ac48099e6987d7b",
+        "passed": 1,
+        "seed": 0
+      },
+      {
+        "created_at": "2026-10-28 04:08:49.881818",
+        "feature_set_id": "b3b75db25fd945ab9ba079b9e4244738",
+        "id": "ae64b2574c234326803ffb9908263a8f",
+        "job_id": "508427af507745d79526e37226e29d27",
+        "passed": 1,
+        "seed": 0
+      }
+    ],
+    "feature_sets": [
+      {
+        "artifact_preprocessing_versions": [
+          "dermpath.patching/2;dermpath.patch-quality/1;dermpath.sampling/1;dermpath.feature_sets/2;handcrafted-stain-texture-v1/a1"
+        ],
+        "artifacts_linked": 60,
+        "build_job_id": "dbf761b1ed6d4059bde1cac7ad3ef64b",
+        "coverage": {
+          "candidates_per_slide_min_median_max": [
+            402,
+            1675.0,
+            8488
+          ],
+          "fragments_without_sampled_patch_max": 90,
+          "fragments_without_sampled_patch_mean": 19.28,
+          "sampled_tissue_fraction_median": 0.152,
+          "sampled_tissue_fraction_min": 0.0272,
+          "slides_with_candidates_le_1024": 17,
+          "slides_with_unsampled_fragments": 56,
+          "tissue_within_radius_of_sample_fraction_median": 0.7966,
+          "tissue_within_radius_of_sample_fraction_min": 0.189
+        },
+        "created_at_utc": "2026-10-28 03:05:24.847361",
+        "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+        "device": "cpu",
+        "embedding_dim": [
+          64
+        ],
+        "encoder_id": "handcrafted-stain-texture-v1",
+        "encoder_spec_sha256": "8e4d14d0f79eaafbb7f2e2bfb1289fa543f2201abe94f5cfcc0d46096e80c1ed",
+        "execution_mode": "real_image_technical",
+        "extraction_env_sha256": "d43dccd91de265c4ab133a7d85f5921a371663f0a31cf4686b98a4fca6e92d23",
+        "extraction_seconds": {
+          "median_per_slide": 4.42,
+          "sum": 265.1
+        },
+        "extractor_versions": [
+          "dermpath.feature_sets/2"
+        ],
+        "id": "527f9080dfb74e2f95c46cfd5138fa06",
+        "input_snapshot_sha256": "15a5c6b0e4d099f943d389c723dd5190f8d18ccc0f007924a06f0eb8053860cf",
+        "items": {
+          "done": 60
+        },
+        "min_tissue_fraction": 0.25,
+        "name": "S2 technical \u00b7 handcrafted-stain-texture-v1",
+        "patch_size": 224,
+        "patches": {
+          "max_per_slide": 256,
+          "min_per_slide": 252,
+          "total": 15342
+        },
+        "patching_version": "dermpath.patching/2",
+        "peak_rss_gib_max_process": 0.87,
+        "policy_sha256": "cefdf1652950adc92b73e942f5f636013be21525700a7f1cfac1d044df4218f9",
+        "precision": "fp32",
+        "ready_at_utc": "2026-10-28 03:09:50.757279",
+        "sampling": {
+          "all_safety_cap": 50000,
+          "lesion_fraction": 0.5,
+          "max_patches": 256,
+          "seed": 0,
+          "strategy": "spatial",
+          "version": "dermpath.sampling/1"
+        },
+        "spec_sha256": "1e5969dfee9245c11aaf766d67726e995f5dde7790e68cb2ab0e3fef01338e74",
+        "stain_policy": {
+          "method": "none",
+          "reference": null,
+          "reference_sha256": null,
+          "version": "dermpath.stain/1"
+        },
+        "stain_policy_sha256": "5975f29b774a9b85fc350439527ff0db2b487c8c26127a2c02c2e629278ea14f",
+        "stain_reference_sha256": null,
+        "status": "ready",
+        "target_mpp": 0.5,
+        "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+      },
+      {
+        "artifact_preprocessing_versions": [
+          "dermpath.patching/2;dermpath.patch-quality/1;dermpath.sampling/1;dermpath.feature_sets/2;midnight-12k/a1"
+        ],
+        "artifacts_linked": 60,
+        "build_job_id": "e7c1dfef06984bacbe6b642b9cac9b80",
+        "coverage": {
+          "candidates_per_slide_min_median_max": [
+            402,
+            1675.0,
+            8488
+          ],
+          "fragments_without_sampled_patch_max": 90,
+          "fragments_without_sampled_patch_mean": 19.28,
+          "sampled_tissue_fraction_median": 0.152,
+          "sampled_tissue_fraction_min": 0.0272,
+          "slides_with_candidates_le_1024": 17,
+          "slides_with_unsampled_fragments": 56,
+          "tissue_within_radius_of_sample_fraction_median": 0.7966,
+          "tissue_within_radius_of_sample_fraction_min": 0.189
+        },
+        "created_at_utc": "2026-10-28 03:10:06.281973",
+        "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+        "device": "mps",
+        "embedding_dim": [
+          3072
+        ],
+        "encoder_id": "midnight-12k",
+        "encoder_spec_sha256": "36d2e01f76b332c8df3b5d95203abba4c903f7064d3563ad452f8b59c592ebdc",
+        "execution_mode": "real_image_technical",
+        "extraction_env_sha256": "e90c2b64cb34bac89923729b40d1d5c48339f492fcdf895278c0458dd454c70a",
+        "extraction_seconds": {
+          "median_per_slide": 56.47,
+          "sum": 3399.5
+        },
+        "extractor_versions": [
+          "dermpath.feature_sets/2"
+        ],
+        "id": "b3b75db25fd945ab9ba079b9e4244738",
+        "input_snapshot_sha256": "15a5c6b0e4d099f943d389c723dd5190f8d18ccc0f007924a06f0eb8053860cf",
+        "items": {
+          "done": 60
+        },
+        "min_tissue_fraction": 0.25,
+        "name": "S2 technical \u00b7 midnight-12k",
+        "patch_size": 224,
+        "patches": {
+          "max_per_slide": 256,
+          "min_per_slide": 252,
+          "total": 15342
+        },
+        "patching_version": "dermpath.patching/2",
+        "peak_rss_gib_max_process": 5.48,
+        "policy_sha256": "cefdf1652950adc92b73e942f5f636013be21525700a7f1cfac1d044df4218f9",
+        "precision": "fp32",
+        "ready_at_utc": "2026-10-28 04:06:58.764823",
+        "sampling": {
+          "all_safety_cap": 50000,
+          "lesion_fraction": 0.5,
+          "max_patches": 256,
+          "seed": 0,
+          "strategy": "spatial",
+          "version": "dermpath.sampling/1"
+        },
+        "spec_sha256": "6162aaf482108f1683a58e52482d00c643ae7f28fe425cbd40b6b5e3832e0049",
+        "stain_policy": {
+          "method": "none",
+          "reference": null,
+          "reference_sha256": null,
+          "version": "dermpath.stain/1"
+        },
+        "stain_policy_sha256": "5975f29b774a9b85fc350439527ff0db2b487c8c26127a2c02c2e629278ea14f",
+        "stain_reference_sha256": null,
+        "status": "ready",
+        "target_mpp": 0.5,
+        "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+      },
+      {
+        "artifact_preprocessing_versions": [
+          "dermpath.patching/2;dermpath.patch-quality/1;dermpath.sampling/1;dermpath.feature_sets/2;handcrafted-stain-texture-v1/a1"
+        ],
+        "artifacts_linked": 60,
+        "build_job_id": "ad55dc3a8e2f4185bc68b7eb18e451c0",
+        "coverage": {
+          "candidates_per_slide_min_median_max": [
+            402,
+            1675.0,
+            8488
+          ],
+          "fragments_without_sampled_patch_max": 90,
+          "fragments_without_sampled_patch_mean": 19.28,
+          "sampled_tissue_fraction_median": 0.152,
+          "sampled_tissue_fraction_min": 0.0272,
+          "slides_with_candidates_le_1024": 17,
+          "slides_with_unsampled_fragments": 56,
+          "tissue_within_radius_of_sample_fraction_median": 0.7966,
+          "tissue_within_radius_of_sample_fraction_min": 0.189
+        },
+        "created_at_utc": "2026-10-28 04:08:54.144314",
+        "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+        "device": "cpu",
+        "embedding_dim": [
+          64
+        ],
+        "encoder_id": "handcrafted-stain-texture-v1",
+        "encoder_spec_sha256": "8e4d14d0f79eaafbb7f2e2bfb1289fa543f2201abe94f5cfcc0d46096e80c1ed",
+        "execution_mode": "supervised_experiment",
+        "extraction_env_sha256": "d43dccd91de265c4ab133a7d85f5921a371663f0a31cf4686b98a4fca6e92d23",
+        "extraction_seconds": {
+          "median_per_slide": 4.42,
+          "sum": 265.1
+        },
+        "extractor_versions": [
+          "dermpath.feature_sets/2"
+        ],
+        "id": "c2aa86f4871c4554a88f2bbe73f123ed",
+        "input_snapshot_sha256": "15a5c6b0e4d099f943d389c723dd5190f8d18ccc0f007924a06f0eb8053860cf",
+        "items": {
+          "done": 60
+        },
+        "min_tissue_fraction": 0.25,
+        "name": "S3 supervised \u00b7 handcrafted-stain-texture-v1",
+        "patch_size": 224,
+        "patches": {
+          "max_per_slide": 256,
+          "min_per_slide": 252,
+          "total": 15342
+        },
+        "patching_version": "dermpath.patching/2",
+        "peak_rss_gib_max_process": 0.87,
+        "policy_sha256": "cefdf1652950adc92b73e942f5f636013be21525700a7f1cfac1d044df4218f9",
+        "precision": "fp32",
+        "ready_at_utc": "2026-10-28 04:08:58.266213",
+        "sampling": {
+          "all_safety_cap": 50000,
+          "lesion_fraction": 0.5,
+          "max_patches": 256,
+          "seed": 0,
+          "strategy": "spatial",
+          "version": "dermpath.sampling/1"
+        },
+        "spec_sha256": "7a6177a760422eabd2f005c064ec463c5a158ee153076fee8a0d7f684c536f75",
+        "stain_policy": {
+          "method": "none",
+          "reference": null,
+          "reference_sha256": null,
+          "version": "dermpath.stain/1"
+        },
+        "stain_policy_sha256": "5975f29b774a9b85fc350439527ff0db2b487c8c26127a2c02c2e629278ea14f",
+        "stain_reference_sha256": null,
+        "status": "ready",
+        "target_mpp": 0.5,
+        "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+      },
+      {
+        "artifact_preprocessing_versions": [
+          "dermpath.patching/2;dermpath.patch-quality/1;dermpath.sampling/1;dermpath.feature_sets/2;midnight-12k/a1"
+        ],
+        "artifacts_linked": 60,
+        "build_job_id": "202ffd5bf42a4576abfc94ec43d8c0f1",
+        "coverage": {
+          "candidates_per_slide_min_median_max": [
+            402,
+            1675.0,
+            8488
+          ],
+          "fragments_without_sampled_patch_max": 90,
+          "fragments_without_sampled_patch_mean": 19.28,
+          "sampled_tissue_fraction_median": 0.152,
+          "sampled_tissue_fraction_min": 0.0272,
+          "slides_with_candidates_le_1024": 17,
+          "slides_with_unsampled_fragments": 56,
+          "tissue_within_radius_of_sample_fraction_median": 0.7966,
+          "tissue_within_radius_of_sample_fraction_min": 0.189
+        },
+        "created_at_utc": "2026-10-28 04:08:58.297710",
+        "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+        "device": "mps",
+        "embedding_dim": [
+          3072
+        ],
+        "encoder_id": "midnight-12k",
+        "encoder_spec_sha256": "36d2e01f76b332c8df3b5d95203abba4c903f7064d3563ad452f8b59c592ebdc",
+        "execution_mode": "supervised_experiment",
+        "extraction_env_sha256": "e90c2b64cb34bac89923729b40d1d5c48339f492fcdf895278c0458dd454c70a",
+        "extraction_seconds": {
+          "median_per_slide": 56.47,
+          "sum": 3399.5
+        },
+        "extractor_versions": [
+          "dermpath.feature_sets/2"
+        ],
+        "id": "c74591ee84e74c74934b0cbc28610769",
+        "input_snapshot_sha256": "15a5c6b0e4d099f943d389c723dd5190f8d18ccc0f007924a06f0eb8053860cf",
+        "items": {
+          "done": 60
+        },
+        "min_tissue_fraction": 0.25,
+        "name": "S3 supervised \u00b7 midnight-12k",
+        "patch_size": 224,
+        "patches": {
+          "max_per_slide": 256,
+          "min_per_slide": 252,
+          "total": 15342
+        },
+        "patching_version": "dermpath.patching/2",
+        "peak_rss_gib_max_process": 5.48,
+        "policy_sha256": "cefdf1652950adc92b73e942f5f636013be21525700a7f1cfac1d044df4218f9",
+        "precision": "fp32",
+        "ready_at_utc": "2026-10-28 04:09:02.473989",
+        "sampling": {
+          "all_safety_cap": 50000,
+          "lesion_fraction": 0.5,
+          "max_patches": 256,
+          "seed": 0,
+          "strategy": "spatial",
+          "version": "dermpath.sampling/1"
+        },
+        "spec_sha256": "3928575dd84f3c2145fceaa52e8853262b24e1a8ea308fd6d69dfc41ceafc0a3",
+        "stain_policy": {
+          "method": "none",
+          "reference": null,
+          "reference_sha256": null,
+          "version": "dermpath.stain/1"
+        },
+        "stain_policy_sha256": "5975f29b774a9b85fc350439527ff0db2b487c8c26127a2c02c2e629278ea14f",
+        "stain_reference_sha256": null,
+        "status": "ready",
+        "target_mpp": 0.5,
+        "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+      },
+      {
+        "artifact_preprocessing_versions": [
+          "dermpath.patching/2;dermpath.patch-quality/1;dermpath.sampling/1;dermpath.feature_sets/2;handcrafted-stain-texture-v1/a1"
+        ],
+        "artifacts_linked": 60,
+        "build_job_id": "77f1bfbf1ea742faa61b269f14f69ce8",
+        "coverage": {
+          "candidates_per_slide_min_median_max": [
+            402,
+            1675.0,
+            8488
+          ],
+          "fragments_without_sampled_patch_max": 88,
+          "fragments_without_sampled_patch_mean": 19.43,
+          "sampled_tissue_fraction_median": 0.1518,
+          "sampled_tissue_fraction_min": 0.0281,
+          "slides_with_candidates_le_1024": 17,
+          "slides_with_unsampled_fragments": 58,
+          "tissue_within_radius_of_sample_fraction_median": 0.7027,
+          "tissue_within_radius_of_sample_fraction_min": 0.1825
+        },
+        "created_at_utc": "2026-10-28 04:09:41.414831",
+        "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+        "device": "cpu",
+        "embedding_dim": [
+          64
+        ],
+        "encoder_id": "handcrafted-stain-texture-v1",
+        "encoder_spec_sha256": "8e4d14d0f79eaafbb7f2e2bfb1289fa543f2201abe94f5cfcc0d46096e80c1ed",
+        "execution_mode": "supervised_experiment",
+        "extraction_env_sha256": "d43dccd91de265c4ab133a7d85f5921a371663f0a31cf4686b98a4fca6e92d23",
+        "extraction_seconds": {
+          "median_per_slide": 4.63,
+          "sum": 279.3
+        },
+        "extractor_versions": [
+          "dermpath.feature_sets/2"
+        ],
+        "id": "2f1f57b21cbc4a31b50d26a43845aed1",
+        "input_snapshot_sha256": "15a5c6b0e4d099f943d389c723dd5190f8d18ccc0f007924a06f0eb8053860cf",
+        "items": {
+          "done": 60
+        },
+        "min_tissue_fraction": 0.25,
+        "name": "S4 a_sampling_uniform \u00b7 handcrafted-stain-texture-v1",
+        "patch_size": 224,
+        "patches": {
+          "max_per_slide": 256,
+          "min_per_slide": 253,
+          "total": 15342
+        },
+        "patching_version": "dermpath.patching/2",
+        "peak_rss_gib_max_process": 5.48,
+        "policy_sha256": "7c2475a91d37f7466b877c7d1354887c05e134ab8c19ddb4e1ff54e94c47163a",
+        "precision": "fp32",
+        "ready_at_utc": "2026-10-28 04:14:21.709279",
+        "sampling": {
+          "all_safety_cap": 50000,
+          "lesion_fraction": 0.5,
+          "max_patches": 256,
+          "seed": 0,
+          "strategy": "uniform",
+          "version": "dermpath.sampling/1"
+        },
+        "spec_sha256": "a3a5b981e273d779f5aa0774caf14d1dc0ff10aacbe0c5021aaa490e51bf148c",
+        "stain_policy": {
+          "method": "none",
+          "reference": null,
+          "reference_sha256": null,
+          "version": "dermpath.stain/1"
+        },
+        "stain_policy_sha256": "5975f29b774a9b85fc350439527ff0db2b487c8c26127a2c02c2e629278ea14f",
+        "stain_reference_sha256": null,
+        "status": "ready",
+        "target_mpp": 0.5,
+        "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+      },
+      {
+        "artifact_preprocessing_versions": [
+          "dermpath.patching/2;dermpath.patch-quality/1;dermpath.sampling/1;dermpath.feature_sets/2;midnight-12k/a1"
+        ],
+        "artifacts_linked": 30,
+        "build_job_id": "6481f2660fe243a9bc9e073ddd3b089b",
+        "coverage": {
+          "candidates_per_slide_min_median_max": [
+            402,
+            1697.0,
+            8488
+          ],
+          "fragments_without_sampled_patch_max": 88,
+          "fragments_without_sampled_patch_mean": 18.7,
+          "sampled_tissue_fraction_median": 0.1499,
+          "sampled_tissue_fraction_min": 0.0281,
+          "slides_with_candidates_le_1024": 8,
+          "slides_with_unsampled_fragments": 29,
+          "tissue_within_radius_of_sample_fraction_median": 0.688,
+          "tissue_within_radius_of_sample_fraction_min": 0.1825
+        },
+        "created_at_utc": "2026-10-28 04:14:22.912904",
+        "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+        "device": "mps",
+        "embedding_dim": [
+          3072
+        ],
+        "encoder_id": "midnight-12k",
+        "encoder_spec_sha256": "36d2e01f76b332c8df3b5d95203abba4c903f7064d3563ad452f8b59c592ebdc",
+        "execution_mode": "supervised_experiment",
+        "extraction_env_sha256": "e90c2b64cb34bac89923729b40d1d5c48339f492fcdf895278c0458dd454c70a",
+        "extraction_seconds": {
+          "median_per_slide": 50.71,
+          "sum": 1526.5
+        },
+        "extractor_versions": [
+          "dermpath.feature_sets/2"
+        ],
+        "id": "0ad3a2dddabc43c59078904b1e2605fd",
+        "input_snapshot_sha256": "15a5c6b0e4d099f943d389c723dd5190f8d18ccc0f007924a06f0eb8053860cf",
+        "items": {
+          "done": 30,
+          "pending": 30
+        },
+        "min_tissue_fraction": 0.25,
+        "name": "S4 a_sampling_uniform \u00b7 midnight-12k",
+        "patch_size": 224,
+        "patches": {
+          "max_per_slide": 256,
+          "min_per_slide": 253,
+          "total": 7669
+        },
+        "patching_version": "dermpath.patching/2",
+        "peak_rss_gib_max_process": 5.48,
+        "policy_sha256": "7c2475a91d37f7466b877c7d1354887c05e134ab8c19ddb4e1ff54e94c47163a",
+        "precision": "fp32",
+        "ready_at_utc": null,
+        "sampling": {
+          "all_safety_cap": 50000,
+          "lesion_fraction": 0.5,
+          "max_patches": 256,
+          "seed": 0,
+          "strategy": "uniform",
+          "version": "dermpath.sampling/1"
+        },
+        "spec_sha256": "3c6a6f6e8dc65bd002ec170408304a3998b1c1cde4d41154d96f46d04e38d8d4",
+        "stain_policy": {
+          "method": "none",
+          "reference": null,
+          "reference_sha256": null,
+          "version": "dermpath.stain/1"
+        },
+        "stain_policy_sha256": "5975f29b774a9b85fc350439527ff0db2b487c8c26127a2c02c2e629278ea14f",
+        "stain_reference_sha256": null,
+        "status": "building",
+        "target_mpp": 0.5,
+        "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+      }
+    ],
+    "generated_at_utc": "2026-10-28T04:50Z",
+    "inference_bundles": 0,
+    "inference_predictions": 0,
+    "jobs": {
+      "failed_any_project": [
+        {
+          "n": 1,
+          "project_id": "proj-bcc-demo",
+          "status": "failed",
+          "type": "ingest"
+        }
+      ],
+      "left_open_by_stop": [
+        {
+          "attempts": 1,
+          "created_at": "2026-10-28 04:14:22.920980",
+          "heartbeat_at": "2026-10-28 04:39:56.444404",
+          "id": "6481f2660fe243a9bc9e073ddd3b089b",
+          "lease_owner": "cobra-driver-84781",
+          "lease_until": "2026-10-28 04:40:56.444404",
+          "max_attempts": 3,
+          "progress": 0.501875,
+          "progress_message": "slide 31/60",
+          "started_at": "2026-10-28 04:14:22.922495",
+          "status": "running",
+          "type": "build_feature_set"
+        }
+      ],
+      "summary": [
+        {
+          "n": 1,
+          "status": "running",
+          "type": "build_feature_set"
+        },
+        {
+          "n": 5,
+          "status": "succeeded",
+          "type": "build_feature_set"
+        },
+        {
+          "n": 60,
+          "status": "succeeded",
+          "type": "ingest"
+        },
+        {
+          "n": 60,
+          "status": "succeeded",
+          "type": "qc_screen"
+        },
+        {
+          "n": 17,
+          "status": "succeeded",
+          "type": "train"
+        },
+        {
+          "n": 2,
+          "status": "succeeded",
+          "type": "validate_feature_set"
+        }
+      ]
+    },
+    "lead_decisions": [
+      "Stranded build: do not start a worker on the shared DB until the fixes land; then either resume feature set 0ad3a2dd (about 26 min MPS, 30 intact artifacts reused) through the fixed driver, or cancel job 6481f266 and record why. The driver fix must handle a 'building' set whose job lease expired.",
+      "Stop the preview API (pid 99436) during the rerun, or accept that it serves pre-fix code on the real DB.",
+      "Ask the feature_sets.py / inference.py owners to keep the stain=none artifact cache-key inputs unchanged (extractor_version dermpath.feature_sets/2, preprocessing_version strings, policy/stain/env sha, mask and exclusion sha) or to declare a bump explicitly; otherwise about 62 min of extraction (S2 sets) plus 26 min (uniform Midnight) is lost. Verify with the s3 reuse probe (expect 60 cache hits, 0 fresh) before training.",
+      "After the fixes: rerun s0, s3 (about 40 s of training per 16 runs; 3 seeds x 4 combinations is still minutes) and s4 on dataset version 1868803e; mark families 8e64b136 and 5c326ae6 superseded (do not delete); re-declare the test candidate from post-fix runs before any s6.",
+      "Keep the macenko dev_cv arm blocked on the real cohort (none exists yet).",
+      "Have a human decide the 2 near-duplicate candidate pairs before the final benchmark; if confirmed, regroup them (new dataset version) before computing CV estimates.",
+      "Decide how to disclose the dry-run overlap (4 of 15 test patients processed in dry runs, 2 scored by dry-run test releases) in the evidence package and in any future test-release justification. Suggested wording: 'not used for real-cohort model selection', instead of 'never touched'.",
+      "Sampling study budget: a 1024-patch arm is roughly 2.5-3 h of Midnight extraction for the 45 development slides (estimate). Decide whether it is affordable before predeclaring it."
+    ],
+    "method": {
+      "database": "byte copy of workbench/var/workbench.db, -wal and -shm taken at 2026-10-28T04:42Z into the inventory scratch dir and opened with sqlite URI mode=ro; the shared database itself was never opened",
+      "db_file_sha256_at_copy": {
+        "workbench.db": "64cc7ee34e39a157c731037e5217a01af9c38c332ea50ff4d93b4abae620e456",
+        "workbench.db-wal": "2f0e1dcef7047d1eee4eb984d81622460f3c5c4439b3e970e634fa70da1d5cfb"
+      },
+      "files_hashed": "every COBRA feature artifact object, every COBRA checkpoint, the dataset manifest object and the local Midnight weights and config were re-hashed (read only)",
+      "sanitization": "no patient codes and no slide file names; DB row ids only"
+    },
+    "model_versions": 0,
+    "near_duplicate_reviews": 0,
+    "notice": "Research use only. COBRA labels are report-derived imported reference labels, not expert reads; 'BCC absent' is not 'benign'. Nothing here is a clinical performance claim.",
+    "predictions_by_split": [
+      {
+        "n": 765,
+        "runs": 17,
+        "split": "oof"
+      },
+      {
+        "n": 421,
+        "runs": 17,
+        "split": "train"
+      }
+    ],
+    "predictions_on_test_patients": 0,
+    "reports": {
+      "index": [
+        {
+          "bytes": 29532,
+          "path": "workbench/experiments/reports/s0.json",
+          "sha256": "13c80299d2127abb5c5f4c1cfc88e58cc16369601cfe41d16c556dd2478ee0d6"
+        },
+        {
+          "bytes": 24907,
+          "path": "workbench/experiments/reports/s1.json",
+          "sha256": "9d49d3a7b028dda47175e1c3701e419d93ff7e2cffd828b5fb8c27289ac6219f"
+        },
+        {
+          "bytes": 323239,
+          "path": "workbench/experiments/reports/s2.json",
+          "sha256": "e7aa82d723cad82db96a53712b7036a3257d254585762fa9a96656ed9d369804"
+        },
+        {
+          "bytes": 582014,
+          "path": "workbench/experiments/reports/s3.json",
+          "sha256": "4329d989f1fd138d1f430f5f59efb9d0ff97fd8ff397efa2dcf60cd82cc8665d"
+        },
+        {
+          "bytes": 1431,
+          "path": "workbench/experiments/reports/_state/s3.json",
+          "sha256": "5d7cc381f5a7fd6f6200bff7f76274978dd1835c13d4b98df7d96640f0e274df"
+        },
+        {
+          "bytes": 174,
+          "path": "workbench/experiments/reports/_state/s4.json",
+          "sha256": "49676ded6bda6dde3c5c6e1d3b840cc451747873c6c50c3341e5127adb601cdc"
+        },
+        {
+          "bytes": 8600,
+          "path": "workbench/experiments/reports/_full_run.log",
+          "sha256": "4892404436653b2bb2f8beee9ad1a90c245a0ea8db486af4dd0b272b12d94087"
+        }
+      ],
+      "s0": {
+        "argv": [
+          "--only",
+          "s0,s1",
+          "--device",
+          "mps"
+        ],
+        "started_at": "2026-10-28T03:05:09+00:00",
+        "status": "present"
+      },
+      "s1": {
+        "argv": [
+          "--only",
+          "s0,s1",
+          "--device",
+          "mps"
+        ],
+        "started_at": "2026-10-28T03:05:12+00:00",
+        "status": "present"
+      },
+      "s2": {
+        "argv": [
+          "--device",
+          "mps"
+        ],
+        "elapsed_seconds": 3809.329,
+        "labels_read": false,
+        "policy": {
+          "max_patches_per_slide": 256,
+          "min_tissue_fraction": 0.25,
+          "precision": "fp32",
+          "sampling_seed": 0,
+          "sampling_strategy": "spatial",
+          "stain_normalization": "none",
+          "target_mpp": 0.5
+        },
+        "status": "present",
+        "validation_passed": {
+          "handcrafted-stain-texture-v1": true,
+          "midnight-12k": true
+        }
+      },
+      "s3": {
+        "argv": [
+          "--device",
+          "mps"
+        ],
+        "elapsed_seconds": 47.288,
+        "family": {
+          "bootstrap_seed": 20261026,
+          "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+          "note": "the family stays open; the test candidate is the registered bundle of the chosen run",
+          "status": "open"
+        },
+        "pre_declared_test_candidate": {
+          "bundle_registered": false,
+          "chosen": "midnight-12k + abmil",
+          "chosen_run_id": "79aa243ee9ac46328d5a34a1a6b2172e",
+          "released": false,
+          "rule": "the encoder x head combination with the highest out-of-fold AUROC point estimate in S3; ties resolved toward meanpool_logreg, then handcrafted"
+        },
+        "status": "present",
+        "test_untouched_check": {
+          "every_run_scored_only_train_and_oof": true,
+          "test_items_used": [
+            0
+          ]
+        }
+      },
+      "s4": {
+        "state_file": {
+          "family_id": "5c326ae64f9141ea98ce829d0aa3642e",
+          "runs": {
+            "a_sampling_uniform|handcrafted-stain-texture-v1": "6c922244db6246c8a1104f99ff5756c8"
+          },
+          "sets": {}
+        },
+        "status": "missing (stage interrupted)"
+      },
+      "s5": {
+        "status": "never run"
+      },
+      "s6": {
+        "status": "never run on the real cohort"
+      },
+      "s7": {
+        "status": "never run"
+      },
+      "s8": {
+        "status": "never run"
+      }
+    },
+    "repository": {
+      "branch": "dermpath-ml-engine",
+      "code_tree_files": 88,
+      "code_tree_sha256_at_head": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+      "config_sha256": {
+        "cobra_supervised_baseline.json": "3dd87d85c59732c5a08798fe0b6a04f18bf59d872e2ed0d0b934b9ee765a894b",
+        "cobra_technical_validation.json": "f1f33eabd5e54ee77ca6e3fd7216d1da30d5931a724dd3fa7547e896000a04b5",
+        "synthetic_pipeline_benchmark.json": "5ffd4644ab534721f3b52304cdd4b3e241b5ffb83de4307932f2a347cd0a64b2"
+      },
+      "driver_sha256_at_head": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+      "head": "23a68f6d567d45c131b55c29906f4ee08d1d8487",
+      "note": "HEAD 23a68f6 differs from 782668c only in .claude/launch.json, so every real-cohort record was produced by exactly the HEAD ML code and driver. They become stale when the pending fixes land.",
+      "reports_code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+      "reports_code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+      "reports_driver_sha256": "2e15ff0097d65b22e318d61a547c0f211710797fab6543a936439bd0b5684bbb",
+      "working_tree_clean_at_inventory": true
+    },
+    "research_use_only": true,
+    "run_attempts": [
+      {
+        "code_dirty": 0,
+        "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+        "identity_matches": 1,
+        "n": 17,
+        "outcome": "succeeded"
+      }
+    ],
+    "sampling_and_resources_observed": {
+      "budget_1024_estimate": "about 4x Midnight extraction per slide for the 43 slides with >1024 candidates; roughly 3-3.8 h on MPS for all 60, about 2.5-3 h for the 45 development slides only (estimate from the measured 5 patches/s, not measured)",
+      "coverage_spatial_256": {
+        "candidates_per_slide": "min 402, median 1675, max 8488",
+        "sampled_fraction_of_candidates": "median 0.153, min 0.030",
+        "sampled_tissue_fraction": "median 0.152, min 0.027",
+        "slides_with_le_1024_candidates": 17,
+        "slides_with_unsampled_fragments": "56 of 60 (mean 19.3, max 90 fragments)",
+        "tissue_within_radius_of_sample": "median 0.797, min 0.189"
+      },
+      "handcrafted_spatial_256": {
+        "build_wall_s": 265.9,
+        "median_s_per_slide": 4.4,
+        "validation_job_s": 9.2
+      },
+      "handcrafted_uniform_256": {
+        "build_wall_s": 280,
+        "note": "peak RSS 5.48 GiB is process-wide (Midnight loaded in the same driver process)"
+      },
+      "midnight_spatial_256": {
+        "build_wall_s": 3412.5,
+        "median_s_per_slide": 56.5,
+        "patches_per_s": "about 5",
+        "peak_rss_gib": 5.48,
+        "validation_job_s": 111.1
+      },
+      "midnight_uniform_256_partial": {
+        "extraction_s": 1526,
+        "slides_done": 30
+      },
+      "note": "measured during s2/s4 on this machine (macOS arm64, 18 GB, MPS); technical facts, not diagnostic quality",
+      "s3_training": {
+        "abmil_midnight_job_s": "about 26",
+        "train_jobs": 16,
+        "wall_s": 37.6
+      }
+    },
+    "schema": "dermpath.experiment_inventory/1",
+    "test_releases": 0,
+    "training_runs": [
+      {
+        "abmil_fit": null,
+        "bundle_id": null,
+        "calibration": {
+          "fitted_on": {
+            "data_sha256": "d8eeb044768f5ee820cacbdff4b19980e56cc53e6c109b9f817f9619b063bc52",
+            "n": 45,
+            "n_negative": 23,
+            "n_positive": 22,
+            "splits": [
+              "oof"
+            ]
+          },
+          "gate_unit_note": "fitted_on counts bags (n); distinct patients not gated",
+          "method": "platt"
+        },
+        "checkpoint_sha256": "c847cb2cfa998a530c57006fc5c4372e4ed35aea3ef058d7bc105a2e9134b2d3",
+        "code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+        "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+        "created_at_utc": "2026-10-28 04:09:02.496880",
+        "dataset_manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "encoder_id": "handcrafted-stain-texture-v1",
+        "evaluation_protocol": "dev_cv",
+        "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+        "finished_at_utc": "2026-10-28 04:09:03.968719",
+        "head": "meanpool_logreg",
+        "id": "87a5f0758f2942ba831b80f35b82f2d0",
+        "identity_sha256": "a29b9ec899fff320b631ce0117b12b7262d5018b9414236a1840ea637144f1d7",
+        "job_id": "f4c1c449839442998976b67e95704705",
+        "max_patches_per_slide": 256,
+        "name": "S3 \u00b7 handcrafted-stain-texture-v1 \u00b7 meanpool_logreg",
+        "oof_stale_do_not_cite": {
+          "auprc": 0.7609020558359488,
+          "auroc": 0.7687747035573123,
+          "auroc_ci": [
+            0.6035917508417509,
+            0.8968327454438565
+          ],
+          "n_bags": 45,
+          "n_patients": 35,
+          "n_unscorable": 0,
+          "note": "tuning-set estimates (threshold and calibration chosen on these OOF scores); pre-fix code",
+          "sensitivity_at_tuned_threshold": 0.8636363636363636,
+          "specificity_at_tuned_threshold": 0.5652173913043478
+        },
+        "params_sha256": "9170c3f59c39f1785f1654698df7832bfd894b3068d5d37f90d0a0e5650af785",
+        "role": "grid",
+        "sampling_strategy": "spatial",
+        "seed": 0,
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "stage": "s3",
+        "stain_normalization": "none",
+        "status": "succeeded",
+        "subset_repeat": 0,
+        "threshold": {
+          "evidence": {
+            "n_items": 45,
+            "n_patients": 35,
+            "negative_bags": 23,
+            "negatives": 19,
+            "positive_bags": 22,
+            "positives": 18,
+            "unit": "patients"
+          },
+          "rule": "youden",
+          "value": 0.3421709860571548
+        },
+        "train_patient_fraction": 1.0,
+        "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+      },
+      {
+        "abmil_fit": {
+          "best_epoch": 4,
+          "development_bags": 45,
+          "epochs_run": 14,
+          "fit_bags": 34,
+          "fit_patients": 28,
+          "inner_holdout_bags": 11,
+          "inner_holdout_patients": 7
+        },
+        "bundle_id": null,
+        "calibration": {
+          "fitted_on": {
+            "data_sha256": "d68da1709d784e6413d97961e6e9e9a353440af72925c4d3c028d800baf40fa3",
+            "n": 45,
+            "n_negative": 23,
+            "n_positive": 22,
+            "splits": [
+              "oof"
+            ]
+          },
+          "gate_unit_note": "fitted_on counts bags (n); distinct patients not gated",
+          "method": "platt"
+        },
+        "checkpoint_sha256": "26fe98449b0b12f77dc20d4d1f029a6ea626c552bc055c285f96abb8dc2f383c",
+        "code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+        "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+        "created_at_utc": "2026-10-28 04:09:02.502681",
+        "dataset_manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "encoder_id": "handcrafted-stain-texture-v1",
+        "evaluation_protocol": "dev_cv",
+        "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+        "finished_at_utc": "2026-10-28 04:09:07.266244",
+        "head": "abmil",
+        "id": "ce186228fdd04eb0bf43a75c31706427",
+        "identity_sha256": "5fa686bba7241c382ddc39754f0a29558f0ab5634e669f17aefe727842859838",
+        "job_id": "73bed2dc77834282a66400910a2c60c3",
+        "max_patches_per_slide": 256,
+        "name": "S3 \u00b7 handcrafted-stain-texture-v1 \u00b7 abmil",
+        "oof_stale_do_not_cite": {
+          "auprc": 0.8234588474846707,
+          "auroc": 0.8438735177865613,
+          "auroc_ci": [
+            0.704035607298475,
+            0.9565217391304348
+          ],
+          "n_bags": 45,
+          "n_patients": 35,
+          "n_unscorable": 0,
+          "note": "tuning-set estimates (threshold and calibration chosen on these OOF scores); pre-fix code",
+          "sensitivity_at_tuned_threshold": 0.9090909090909091,
+          "specificity_at_tuned_threshold": 0.6956521739130435
+        },
+        "params_sha256": "dc9a81b9e886499e605cca6b131c47bf23ce724e0c9184a63d944632bb6a91d5",
+        "role": "grid",
+        "sampling_strategy": "spatial",
+        "seed": 0,
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "stage": "s3",
+        "stain_normalization": "none",
+        "status": "succeeded",
+        "subset_repeat": 0,
+        "threshold": {
+          "evidence": {
+            "n_items": 45,
+            "n_patients": 35,
+            "negative_bags": 23,
+            "negatives": 19,
+            "positive_bags": 22,
+            "positives": 18,
+            "unit": "patients"
+          },
+          "rule": "youden",
+          "value": 0.4790474772453308
+        },
+        "train_patient_fraction": 1.0,
+        "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+      },
+      {
+        "abmil_fit": null,
+        "bundle_id": null,
+        "calibration": {
+          "fitted_on": {
+            "data_sha256": "cac2e4ac325153aad57b97919aafc17e8a3f07cc8e4d216af36fd7b0e90359f9",
+            "n": 45,
+            "n_negative": 23,
+            "n_positive": 22,
+            "splits": [
+              "oof"
+            ]
+          },
+          "gate_unit_note": "fitted_on counts bags (n); distinct patients not gated",
+          "method": "platt"
+        },
+        "checkpoint_sha256": "de357566db4130e0105aab02b1cc99e84631b24607f4e46288d345138b5edb9e",
+        "code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+        "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+        "created_at_utc": "2026-10-28 04:09:02.508115",
+        "dataset_manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "encoder_id": "midnight-12k",
+        "evaluation_protocol": "dev_cv",
+        "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+        "finished_at_utc": "2026-10-28 04:09:08.528031",
+        "head": "meanpool_logreg",
+        "id": "1d9535e7cecc412b853a18a7d1f7e53d",
+        "identity_sha256": "5346f4b3fb2b309cadddad28d54b0046510baf44e227dd67eb80671aa8875b76",
+        "job_id": "de23b4abefae4d869d4232859696c3c1",
+        "max_patches_per_slide": 256,
+        "name": "S3 \u00b7 midnight-12k \u00b7 meanpool_logreg",
+        "oof_stale_do_not_cite": {
+          "auprc": 0.8329171765379128,
+          "auroc": 0.8438735177865613,
+          "auroc_ci": [
+            0.7329011330409356,
+            0.9409101731601731
+          ],
+          "n_bags": 45,
+          "n_patients": 35,
+          "n_unscorable": 0,
+          "note": "tuning-set estimates (threshold and calibration chosen on these OOF scores); pre-fix code",
+          "sensitivity_at_tuned_threshold": 0.9090909090909091,
+          "specificity_at_tuned_threshold": 0.6521739130434783
+        },
+        "params_sha256": "2722a26e74c251f6039f7311f881d5be031d7bd8e81ae2a65fbec4c3cd819084",
+        "role": "grid",
+        "sampling_strategy": "spatial",
+        "seed": 0,
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "stage": "s3",
+        "stain_normalization": "none",
+        "status": "succeeded",
+        "subset_repeat": 0,
+        "threshold": {
+          "evidence": {
+            "n_items": 45,
+            "n_patients": 35,
+            "negative_bags": 23,
+            "negatives": 19,
+            "positive_bags": 22,
+            "positives": 18,
+            "unit": "patients"
+          },
+          "rule": "youden",
+          "value": 0.26472640198830916
+        },
+        "train_patient_fraction": 1.0,
+        "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+      },
+      {
+        "abmil_fit": {
+          "best_epoch": 7,
+          "development_bags": 45,
+          "epochs_run": 17,
+          "fit_bags": 34,
+          "fit_patients": 28,
+          "inner_holdout_bags": 11,
+          "inner_holdout_patients": 7
+        },
+        "bundle_id": null,
+        "calibration": {
+          "fitted_on": {
+            "data_sha256": "b417a1ae977d5f1aa10ca298959a4732d0bf212096e2d90fa4b95fbe3f79ddc7",
+            "n": 45,
+            "n_negative": 23,
+            "n_positive": 22,
+            "splits": [
+              "oof"
+            ]
+          },
+          "gate_unit_note": "fitted_on counts bags (n); distinct patients not gated",
+          "method": "platt"
+        },
+        "checkpoint_sha256": "b1a19e293cc7d41046f57ebb87031d73cc451d3f2914d00af6722e741454e354",
+        "code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+        "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+        "created_at_utc": "2026-10-28 04:09:02.513579",
+        "dataset_manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "encoder_id": "midnight-12k",
+        "evaluation_protocol": "dev_cv",
+        "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+        "finished_at_utc": "2026-10-28 04:09:28.485163",
+        "head": "abmil",
+        "id": "79aa243ee9ac46328d5a34a1a6b2172e",
+        "identity_sha256": "d638eb481bb0684f2184d6df6c3c6530961046f3aa4149348c4554f6df847a21",
+        "job_id": "2ef4491879514c938b2aac172fdf12a7",
+        "max_patches_per_slide": 256,
+        "name": "S3 \u00b7 midnight-12k \u00b7 abmil",
+        "oof_stale_do_not_cite": {
+          "auprc": 0.972097979607861,
+          "auroc": 0.9723320158102767,
+          "auroc_ci": [
+            0.9150432504873294,
+            1.0
+          ],
+          "n_bags": 45,
+          "n_patients": 35,
+          "n_unscorable": 0,
+          "note": "tuning-set estimates (threshold and calibration chosen on these OOF scores); pre-fix code",
+          "sensitivity_at_tuned_threshold": 0.9545454545454546,
+          "specificity_at_tuned_threshold": 0.9130434782608695
+        },
+        "params_sha256": "3f31878e057bc47c887c020bd5399c83816b0cbe3727e69908edc349529ce260",
+        "role": "grid",
+        "sampling_strategy": "spatial",
+        "seed": 0,
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "stage": "s3",
+        "stain_normalization": "none",
+        "status": "succeeded",
+        "subset_repeat": 0,
+        "threshold": {
+          "evidence": {
+            "n_items": 45,
+            "n_patients": 35,
+            "negative_bags": 23,
+            "negatives": 19,
+            "positive_bags": 22,
+            "positives": 18,
+            "unit": "patients"
+          },
+          "rule": "youden",
+          "value": 0.5106076002120972
+        },
+        "train_patient_fraction": 1.0,
+        "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+      },
+      {
+        "abmil_fit": null,
+        "bundle_id": null,
+        "calibration": {
+          "fitted_on": {
+            "data_sha256": "3b286d7095dd5f593678e6558103dea45c0f0fad9615eba9330700ffaee3b366",
+            "n": 45,
+            "n_negative": 23,
+            "n_positive": 22,
+            "splits": [
+              "oof"
+            ]
+          },
+          "gate_unit_note": "fitted_on counts bags (n); distinct patients not gated",
+          "method": "platt"
+        },
+        "checkpoint_sha256": "cb400f5271652ee2ccc3be6a86b4c62a339b0c2de750f38e4eb6e4e6d1f029c5",
+        "code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+        "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+        "created_at_utc": "2026-10-28 04:09:02.517110",
+        "dataset_manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "encoder_id": "handcrafted-stain-texture-v1",
+        "evaluation_protocol": "dev_cv",
+        "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+        "finished_at_utc": "2026-10-28 04:09:29.366829",
+        "head": "meanpool_logreg",
+        "id": "ad6a67b3f4aa49d8a7c7474a1cecc473",
+        "identity_sha256": "b9777d21e01f3f60e3cd40dbc0503f8b364ee7425dbf8da32eefc77aed476470",
+        "job_id": "bc76337dd7b146deb12389997e200339",
+        "max_patches_per_slide": 256,
+        "name": "S3 \u00b7 handcrafted-stain-texture-v1 \u00b7 meanpool_logreg \u00b7 train fraction 0.25 r0",
+        "oof_stale_do_not_cite": {
+          "auprc": 0.7432795864129997,
+          "auroc": 0.7845849802371542,
+          "auroc_ci": [
+            0.632818459191457,
+            0.9053531004224136
+          ],
+          "n_bags": 45,
+          "n_patients": 35,
+          "n_unscorable": 0,
+          "note": "tuning-set estimates (threshold and calibration chosen on these OOF scores); pre-fix code",
+          "sensitivity_at_tuned_threshold": 0.9090909090909091,
+          "specificity_at_tuned_threshold": 0.6086956521739131
+        },
+        "params_sha256": "0fab8ca45cc685621bb0bc3ee045917e511e72f14de32e4096885ca2f5eb128d",
+        "role": "learning_curve",
+        "sampling_strategy": "spatial",
+        "seed": 0,
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "stage": "s3",
+        "stain_normalization": "none",
+        "status": "succeeded",
+        "subset_repeat": 0,
+        "threshold": {
+          "evidence": {
+            "n_items": 45,
+            "n_patients": 35,
+            "negative_bags": 23,
+            "negatives": 19,
+            "positive_bags": 22,
+            "positives": 18,
+            "unit": "patients"
+          },
+          "rule": "youden",
+          "value": 0.15724122800255458
+        },
+        "train_patient_fraction": 0.25,
+        "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+      },
+      {
+        "abmil_fit": null,
+        "bundle_id": null,
+        "calibration": {
+          "fitted_on": {
+            "data_sha256": "770f0d0fe9931ba1c23ebe3d443444ef74d9e9cef2fcf632330b60eda640c1a1",
+            "n": 45,
+            "n_negative": 23,
+            "n_positive": 22,
+            "splits": [
+              "oof"
+            ]
+          },
+          "gate_unit_note": "fitted_on counts bags (n); distinct patients not gated",
+          "method": "platt"
+        },
+        "checkpoint_sha256": "bdb516024d45165e2de351abf9369373a19b8a378e616f423b3967bf7b9efebd",
+        "code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+        "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+        "created_at_utc": "2026-10-28 04:09:02.520627",
+        "dataset_manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "encoder_id": "handcrafted-stain-texture-v1",
+        "evaluation_protocol": "dev_cv",
+        "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+        "finished_at_utc": "2026-10-28 04:09:30.226884",
+        "head": "meanpool_logreg",
+        "id": "00719018ce2247b580b18760c348877b",
+        "identity_sha256": "c6e5f7e1aca0a72fa5e011ed3680b325a5a3ed7362a846fc4cfeb8e4c8390684",
+        "job_id": "19cf74cbdea74c1f9da73c0e8bcf9115",
+        "max_patches_per_slide": 256,
+        "name": "S3 \u00b7 handcrafted-stain-texture-v1 \u00b7 meanpool_logreg \u00b7 train fraction 0.25 r1",
+        "oof_stale_do_not_cite": {
+          "auprc": 0.5647497016017831,
+          "auroc": 0.5573122529644269,
+          "auroc_ci": [
+            0.38898264683447753,
+            0.7186279761904758
+          ],
+          "n_bags": 45,
+          "n_patients": 35,
+          "n_unscorable": 0,
+          "note": "tuning-set estimates (threshold and calibration chosen on these OOF scores); pre-fix code",
+          "sensitivity_at_tuned_threshold": 0.3181818181818182,
+          "specificity_at_tuned_threshold": 0.8695652173913043
+        },
+        "params_sha256": "ff03890032947d128b37687c2eb8dc9060d31557d88be41b2edb28638cd80e76",
+        "role": "learning_curve",
+        "sampling_strategy": "spatial",
+        "seed": 0,
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "stage": "s3",
+        "stain_normalization": "none",
+        "status": "succeeded",
+        "subset_repeat": 1,
+        "threshold": {
+          "evidence": {
+            "n_items": 45,
+            "n_patients": 35,
+            "negative_bags": 23,
+            "negatives": 19,
+            "positive_bags": 22,
+            "positives": 18,
+            "unit": "patients"
+          },
+          "rule": "youden",
+          "value": 0.9203428900545672
+        },
+        "train_patient_fraction": 0.25,
+        "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+      },
+      {
+        "abmil_fit": null,
+        "bundle_id": null,
+        "calibration": {
+          "fitted_on": {
+            "data_sha256": "9d0b863afafc20e492e4ec63ac7f5dcf156f41a497f237f230bc3cb0664aee6a",
+            "n": 45,
+            "n_negative": 23,
+            "n_positive": 22,
+            "splits": [
+              "oof"
+            ]
+          },
+          "gate_unit_note": "fitted_on counts bags (n); distinct patients not gated",
+          "method": "platt"
+        },
+        "checkpoint_sha256": "324c6cb2caeb271890ff622c0bd58a0689e5bfed085e5d166578fcd61abd65a2",
+        "code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+        "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+        "created_at_utc": "2026-10-28 04:09:02.524362",
+        "dataset_manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "encoder_id": "handcrafted-stain-texture-v1",
+        "evaluation_protocol": "dev_cv",
+        "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+        "finished_at_utc": "2026-10-28 04:09:31.245425",
+        "head": "meanpool_logreg",
+        "id": "19319ee9ca4f451f89c1ec1e78084f19",
+        "identity_sha256": "2014ee73834cfee81fb0b9ff192a91a18a76de3fd2d157605ae89ec171609b9a",
+        "job_id": "43430e331a7141bdbad777ead130d44a",
+        "max_patches_per_slide": 256,
+        "name": "S3 \u00b7 handcrafted-stain-texture-v1 \u00b7 meanpool_logreg \u00b7 train fraction 0.25 r2",
+        "oof_stale_do_not_cite": {
+          "auprc": 0.7480162504091623,
+          "auroc": 0.7094861660079052,
+          "auroc_ci": [
+            0.5384486607142857,
+            0.8501010081451935
+          ],
+          "n_bags": 45,
+          "n_patients": 35,
+          "n_unscorable": 0,
+          "note": "tuning-set estimates (threshold and calibration chosen on these OOF scores); pre-fix code",
+          "sensitivity_at_tuned_threshold": 0.5909090909090909,
+          "specificity_at_tuned_threshold": 0.8260869565217391
+        },
+        "params_sha256": "cc86ef8191541759dee5322635ee23397ad095653ca8a4dbda8b8ccf4121ce88",
+        "role": "learning_curve",
+        "sampling_strategy": "spatial",
+        "seed": 0,
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "stage": "s3",
+        "stain_normalization": "none",
+        "status": "succeeded",
+        "subset_repeat": 2,
+        "threshold": {
+          "evidence": {
+            "n_items": 45,
+            "n_patients": 35,
+            "negative_bags": 23,
+            "negatives": 19,
+            "positive_bags": 22,
+            "positives": 18,
+            "unit": "patients"
+          },
+          "rule": "youden",
+          "value": 0.9364282859973556
+        },
+        "train_patient_fraction": 0.25,
+        "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+      },
+      {
+        "abmil_fit": null,
+        "bundle_id": null,
+        "calibration": {
+          "fitted_on": {
+            "data_sha256": "af0d05da7c49f21fdf5264d7393b446393b578b1b224ecd242fb20fc32af84fe",
+            "n": 45,
+            "n_negative": 23,
+            "n_positive": 22,
+            "splits": [
+              "oof"
+            ]
+          },
+          "gate_unit_note": "fitted_on counts bags (n); distinct patients not gated",
+          "method": "platt"
+        },
+        "checkpoint_sha256": "c6b83b3336d1a1413972498b2816cd62a53f5c624c62117df7759843fec28acb",
+        "code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+        "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+        "created_at_utc": "2026-10-28 04:09:02.527968",
+        "dataset_manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "encoder_id": "handcrafted-stain-texture-v1",
+        "evaluation_protocol": "dev_cv",
+        "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+        "finished_at_utc": "2026-10-28 04:09:32.099672",
+        "head": "meanpool_logreg",
+        "id": "dfc27b4ab6be4a88ac9747ec8352af53",
+        "identity_sha256": "1a3cf16c0ce53b67f05571a9ac73f66e243f81b27380fe5aa68dc8adb8829c7e",
+        "job_id": "76635439a17e472a826e2b8f782ef4cf",
+        "max_patches_per_slide": 256,
+        "name": "S3 \u00b7 handcrafted-stain-texture-v1 \u00b7 meanpool_logreg \u00b7 train fraction 0.5 r0",
+        "oof_stale_do_not_cite": {
+          "auprc": 0.8131973406975038,
+          "auroc": 0.808300395256917,
+          "auroc_ci": [
+            0.6685606060606061,
+            0.9276465311004785
+          ],
+          "n_bags": 45,
+          "n_patients": 35,
+          "n_unscorable": 0,
+          "note": "tuning-set estimates (threshold and calibration chosen on these OOF scores); pre-fix code",
+          "sensitivity_at_tuned_threshold": 0.8181818181818182,
+          "specificity_at_tuned_threshold": 0.7391304347826086
+        },
+        "params_sha256": "b518457c42d817262374e103339207b143d3d7f48fb4acf4045f759cfde9ad06",
+        "role": "learning_curve",
+        "sampling_strategy": "spatial",
+        "seed": 0,
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "stage": "s3",
+        "stain_normalization": "none",
+        "status": "succeeded",
+        "subset_repeat": 0,
+        "threshold": {
+          "evidence": {
+            "n_items": 45,
+            "n_patients": 35,
+            "negative_bags": 23,
+            "negatives": 19,
+            "positive_bags": 22,
+            "positives": 18,
+            "unit": "patients"
+          },
+          "rule": "youden",
+          "value": 0.45065541699523226
+        },
+        "train_patient_fraction": 0.5,
+        "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+      },
+      {
+        "abmil_fit": null,
+        "bundle_id": null,
+        "calibration": {
+          "fitted_on": {
+            "data_sha256": "7ed67bc0862aae12cfb097218cd5b4ef9ac7552b48f88677adec6ccf0a061f2d",
+            "n": 45,
+            "n_negative": 23,
+            "n_positive": 22,
+            "splits": [
+              "oof"
+            ]
+          },
+          "gate_unit_note": "fitted_on counts bags (n); distinct patients not gated",
+          "method": "platt"
+        },
+        "checkpoint_sha256": "114c122f6175d986bb23b7ecf2ce47290ad7245c0335552b695560d279b5c562",
+        "code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+        "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+        "created_at_utc": "2026-10-28 04:09:02.539241",
+        "dataset_manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "encoder_id": "handcrafted-stain-texture-v1",
+        "evaluation_protocol": "dev_cv",
+        "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+        "finished_at_utc": "2026-10-28 04:09:32.928331",
+        "head": "meanpool_logreg",
+        "id": "7ae6ee9d9c6740fb961fac0f843bc21f",
+        "identity_sha256": "8c91a43bea0695c963487ea942900b642117a94a0ab2f36ec8d9a9805c85890f",
+        "job_id": "316d5d71629043e4a4176733bbca34e2",
+        "max_patches_per_slide": 256,
+        "name": "S3 \u00b7 handcrafted-stain-texture-v1 \u00b7 meanpool_logreg \u00b7 train fraction 0.5 r1",
+        "oof_stale_do_not_cite": {
+          "auprc": 0.7942673235855054,
+          "auroc": 0.7391304347826086,
+          "auroc_ci": [
+            0.5732934782608696,
+            0.8733031674208145
+          ],
+          "n_bags": 45,
+          "n_patients": 35,
+          "n_unscorable": 0,
+          "note": "tuning-set estimates (threshold and calibration chosen on these OOF scores); pre-fix code",
+          "sensitivity_at_tuned_threshold": 0.7272727272727273,
+          "specificity_at_tuned_threshold": 0.7391304347826086
+        },
+        "params_sha256": "b3901362a2087870e94bfe7ad34e4edeb1f03e87c95da1f097a3d7d872698e0d",
+        "role": "learning_curve",
+        "sampling_strategy": "spatial",
+        "seed": 0,
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "stage": "s3",
+        "stain_normalization": "none",
+        "status": "succeeded",
+        "subset_repeat": 1,
+        "threshold": {
+          "evidence": {
+            "n_items": 45,
+            "n_patients": 35,
+            "negative_bags": 23,
+            "negatives": 19,
+            "positive_bags": 22,
+            "positives": 18,
+            "unit": "patients"
+          },
+          "rule": "youden",
+          "value": 0.651668555085971
+        },
+        "train_patient_fraction": 0.5,
+        "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+      },
+      {
+        "abmil_fit": null,
+        "bundle_id": null,
+        "calibration": {
+          "fitted_on": {
+            "data_sha256": "4ea1bad286e6f874120acbbfef0f6fc239db510fbb70d421d40afe4b373c4dfe",
+            "n": 45,
+            "n_negative": 23,
+            "n_positive": 22,
+            "splits": [
+              "oof"
+            ]
+          },
+          "gate_unit_note": "fitted_on counts bags (n); distinct patients not gated",
+          "method": "platt"
+        },
+        "checkpoint_sha256": "0b9809450b0eae70296a7aed7e5ae749ff5e652260f085c12755b8af7f83df53",
+        "code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+        "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+        "created_at_utc": "2026-10-28 04:09:02.542868",
+        "dataset_manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "encoder_id": "handcrafted-stain-texture-v1",
+        "evaluation_protocol": "dev_cv",
+        "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+        "finished_at_utc": "2026-10-28 04:09:33.753439",
+        "head": "meanpool_logreg",
+        "id": "11b1fffb5aad42c38aeb4cad7a22fafb",
+        "identity_sha256": "afe8df4e4d7249c86030d0d5c6afdaab6d3dd55cc3136c7d05725750322b9368",
+        "job_id": "1fae373ce4014b3189a47a49b7e14a9f",
+        "max_patches_per_slide": 256,
+        "name": "S3 \u00b7 handcrafted-stain-texture-v1 \u00b7 meanpool_logreg \u00b7 train fraction 0.5 r2",
+        "oof_stale_do_not_cite": {
+          "auprc": 0.7427247921706263,
+          "auroc": 0.7905138339920948,
+          "auroc_ci": [
+            0.6507881773399015,
+            0.905099548877522
+          ],
+          "n_bags": 45,
+          "n_patients": 35,
+          "n_unscorable": 0,
+          "note": "tuning-set estimates (threshold and calibration chosen on these OOF scores); pre-fix code",
+          "sensitivity_at_tuned_threshold": 0.8181818181818182,
+          "specificity_at_tuned_threshold": 0.6521739130434783
+        },
+        "params_sha256": "5dc8d8083f0114c223a083305cbc6f17c894dae9f396c43b2f2fd2fe472e563f",
+        "role": "learning_curve",
+        "sampling_strategy": "spatial",
+        "seed": 0,
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "stage": "s3",
+        "stain_normalization": "none",
+        "status": "succeeded",
+        "subset_repeat": 2,
+        "threshold": {
+          "evidence": {
+            "n_items": 45,
+            "n_patients": 35,
+            "negative_bags": 23,
+            "negatives": 19,
+            "positive_bags": 22,
+            "positives": 18,
+            "unit": "patients"
+          },
+          "rule": "youden",
+          "value": 0.6304895740638365
+        },
+        "train_patient_fraction": 0.5,
+        "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+      },
+      {
+        "abmil_fit": null,
+        "bundle_id": null,
+        "calibration": {
+          "fitted_on": {
+            "data_sha256": "197d641f600e218cadc5ac0c4cd7852850fc96ed8e47d194c42c0ebb7449ef2e",
+            "n": 45,
+            "n_negative": 23,
+            "n_positive": 22,
+            "splits": [
+              "oof"
+            ]
+          },
+          "gate_unit_note": "fitted_on counts bags (n); distinct patients not gated",
+          "method": "platt"
+        },
+        "checkpoint_sha256": "ead6c64b47371712b43f420d6c51ada950060548b7353b46d09d9f8903e838a5",
+        "code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+        "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+        "created_at_utc": "2026-10-28 04:09:02.548200",
+        "dataset_manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "encoder_id": "midnight-12k",
+        "evaluation_protocol": "dev_cv",
+        "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+        "finished_at_utc": "2026-10-28 04:09:34.731245",
+        "head": "meanpool_logreg",
+        "id": "31ebcc9e66aa430dbab5ecc40846667d",
+        "identity_sha256": "b8ebeeecb8294f0006722400fdd352093cbf7363f00cc33e1f02f4be0110d645",
+        "job_id": "2117af3f552947cca297439d8a65ae03",
+        "max_patches_per_slide": 256,
+        "name": "S3 \u00b7 midnight-12k \u00b7 meanpool_logreg \u00b7 train fraction 0.25 r0",
+        "oof_stale_do_not_cite": {
+          "auprc": 0.713277666693716,
+          "auroc": 0.7075098814229249,
+          "auroc_ci": [
+            0.5388693659281895,
+            0.8636454545454545
+          ],
+          "n_bags": 45,
+          "n_patients": 35,
+          "n_unscorable": 0,
+          "note": "tuning-set estimates (threshold and calibration chosen on these OOF scores); pre-fix code",
+          "sensitivity_at_tuned_threshold": 0.8181818181818182,
+          "specificity_at_tuned_threshold": 0.6086956521739131
+        },
+        "params_sha256": "dc48f303f36409a8046af1a8ffee9e90ff901db746b1b6fb1e0da16d5b8d9b77",
+        "role": "learning_curve",
+        "sampling_strategy": "spatial",
+        "seed": 0,
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "stage": "s3",
+        "stain_normalization": "none",
+        "status": "succeeded",
+        "subset_repeat": 0,
+        "threshold": {
+          "evidence": {
+            "n_items": 45,
+            "n_patients": 35,
+            "negative_bags": 23,
+            "negatives": 19,
+            "positive_bags": 22,
+            "positives": 18,
+            "unit": "patients"
+          },
+          "rule": "youden",
+          "value": 0.30425893521711456
+        },
+        "train_patient_fraction": 0.25,
+        "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+      },
+      {
+        "abmil_fit": null,
+        "bundle_id": null,
+        "calibration": {
+          "fitted_on": {
+            "data_sha256": "418f276081d8464ed4f6d95941360a0904fb01fe3d4f93a8998a309acb4ea7a6",
+            "n": 45,
+            "n_negative": 23,
+            "n_positive": 22,
+            "splits": [
+              "oof"
+            ]
+          },
+          "gate_unit_note": "fitted_on counts bags (n); distinct patients not gated",
+          "method": "platt"
+        },
+        "checkpoint_sha256": "eb29f10d8edcaf4b2bf49db2fd5e4393c4b0701ddca42c77f2902051bc1c23d6",
+        "code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+        "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+        "created_at_utc": "2026-10-28 04:09:02.553400",
+        "dataset_manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "encoder_id": "midnight-12k",
+        "evaluation_protocol": "dev_cv",
+        "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+        "finished_at_utc": "2026-10-28 04:09:35.645039",
+        "head": "meanpool_logreg",
+        "id": "f9fb8cdf1a764e5c95b737fab42f7fac",
+        "identity_sha256": "f7801418568ab987f48a1cc95d5247ac5ea12f0f16a0afe5d529c6ea02204ccc",
+        "job_id": "609f9c0225304c3fb26ae6b69ea83db4",
+        "max_patches_per_slide": 256,
+        "name": "S3 \u00b7 midnight-12k \u00b7 meanpool_logreg \u00b7 train fraction 0.25 r1",
+        "oof_stale_do_not_cite": {
+          "auprc": 0.7080990706547798,
+          "auroc": 0.717391304347826,
+          "auroc_ci": [
+            0.5747759344012204,
+            0.859375
+          ],
+          "n_bags": 45,
+          "n_patients": 35,
+          "n_unscorable": 0,
+          "note": "tuning-set estimates (threshold and calibration chosen on these OOF scores); pre-fix code",
+          "sensitivity_at_tuned_threshold": 0.8636363636363636,
+          "specificity_at_tuned_threshold": 0.6086956521739131
+        },
+        "params_sha256": "e613cf0cf6825fe546dec899835774c23c4932e8cfee9ea6648fd8fc212bb0d8",
+        "role": "learning_curve",
+        "sampling_strategy": "spatial",
+        "seed": 0,
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "stage": "s3",
+        "stain_normalization": "none",
+        "status": "succeeded",
+        "subset_repeat": 1,
+        "threshold": {
+          "evidence": {
+            "n_items": 45,
+            "n_patients": 35,
+            "negative_bags": 23,
+            "negatives": 19,
+            "positive_bags": 22,
+            "positives": 18,
+            "unit": "patients"
+          },
+          "rule": "youden",
+          "value": 0.6048744525919347
+        },
+        "train_patient_fraction": 0.25,
+        "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+      },
+      {
+        "abmil_fit": null,
+        "bundle_id": null,
+        "calibration": {
+          "fitted_on": {
+            "data_sha256": "2600ccde9edc590bc813087e0146eeb30ac274de5381870a4e25e6515452aa37",
+            "n": 45,
+            "n_negative": 23,
+            "n_positive": 22,
+            "splits": [
+              "oof"
+            ]
+          },
+          "gate_unit_note": "fitted_on counts bags (n); distinct patients not gated",
+          "method": "platt"
+        },
+        "checkpoint_sha256": "32726d4c68c9f053cc037e452213c3add6507798cfb6dab4f8979dbab0f10259",
+        "code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+        "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+        "created_at_utc": "2026-10-28 04:09:02.558766",
+        "dataset_manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "encoder_id": "midnight-12k",
+        "evaluation_protocol": "dev_cv",
+        "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+        "finished_at_utc": "2026-10-28 04:09:36.514767",
+        "head": "meanpool_logreg",
+        "id": "486ca433d5954e839d7e82cbb8f9f765",
+        "identity_sha256": "d5be2f3ff20d061b9e2d9a02a41d0681b4fe7c5b481c2349958c0c5bf13e1d91",
+        "job_id": "27c961be71144c9bbdc867ff65f71e86",
+        "max_patches_per_slide": 256,
+        "name": "S3 \u00b7 midnight-12k \u00b7 meanpool_logreg \u00b7 train fraction 0.25 r2",
+        "oof_stale_do_not_cite": {
+          "auprc": 0.5761521372809368,
+          "auroc": 0.6067193675889329,
+          "auroc_ci": [
+            0.42045042819499345,
+            0.7580999721526036
+          ],
+          "n_bags": 45,
+          "n_patients": 35,
+          "n_unscorable": 0,
+          "note": "tuning-set estimates (threshold and calibration chosen on these OOF scores); pre-fix code",
+          "sensitivity_at_tuned_threshold": 0.45454545454545453,
+          "specificity_at_tuned_threshold": 0.782608695652174
+        },
+        "params_sha256": "8222f10744fe8ae25d28d6de507d8b6656393b91e29bc2784cba06f55a81bba9",
+        "role": "learning_curve",
+        "sampling_strategy": "spatial",
+        "seed": 0,
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "stage": "s3",
+        "stain_normalization": "none",
+        "status": "succeeded",
+        "subset_repeat": 2,
+        "threshold": {
+          "evidence": {
+            "n_items": 45,
+            "n_patients": 35,
+            "negative_bags": 23,
+            "negatives": 19,
+            "positive_bags": 22,
+            "positives": 18,
+            "unit": "patients"
+          },
+          "rule": "youden",
+          "value": 0.9849888994380541
+        },
+        "train_patient_fraction": 0.25,
+        "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+      },
+      {
+        "abmil_fit": null,
+        "bundle_id": null,
+        "calibration": {
+          "fitted_on": {
+            "data_sha256": "63fa831e005837d8174f99a875b6ef184a221c0fc0341d4405c92067492eb1d6",
+            "n": 45,
+            "n_negative": 23,
+            "n_positive": 22,
+            "splits": [
+              "oof"
+            ]
+          },
+          "gate_unit_note": "fitted_on counts bags (n); distinct patients not gated",
+          "method": "platt"
+        },
+        "checkpoint_sha256": "10c937a9aa023472cc712c473b028366264e31df4959fdfdd6f7569715de7eb8",
+        "code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+        "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+        "created_at_utc": "2026-10-28 04:09:02.564046",
+        "dataset_manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "encoder_id": "midnight-12k",
+        "evaluation_protocol": "dev_cv",
+        "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+        "finished_at_utc": "2026-10-28 04:09:37.427746",
+        "head": "meanpool_logreg",
+        "id": "31ab2d976b454035ac9aec8921f2a7e3",
+        "identity_sha256": "3966b9aa035439bb4d6ff13dbc8f9a99e88ceb06bfba8db96ec15b81301f02af",
+        "job_id": "0a48150d56d745058ac5ba7b39f3b6f8",
+        "max_patches_per_slide": 256,
+        "name": "S3 \u00b7 midnight-12k \u00b7 meanpool_logreg \u00b7 train fraction 0.5 r0",
+        "oof_stale_do_not_cite": {
+          "auprc": 0.7860161122539397,
+          "auroc": 0.7806324110671937,
+          "auroc_ci": [
+            0.6626934523809523,
+            0.8916793478260869
+          ],
+          "n_bags": 45,
+          "n_patients": 35,
+          "n_unscorable": 0,
+          "note": "tuning-set estimates (threshold and calibration chosen on these OOF scores); pre-fix code",
+          "sensitivity_at_tuned_threshold": 0.7727272727272727,
+          "specificity_at_tuned_threshold": 0.6956521739130435
+        },
+        "params_sha256": "d3fc6f1818be4b15698409c3f649dad7e89a16368a8e8698148af9477d37a9fa",
+        "role": "learning_curve",
+        "sampling_strategy": "spatial",
+        "seed": 0,
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "stage": "s3",
+        "stain_normalization": "none",
+        "status": "succeeded",
+        "subset_repeat": 0,
+        "threshold": {
+          "evidence": {
+            "n_items": 45,
+            "n_patients": 35,
+            "negative_bags": 23,
+            "negatives": 19,
+            "positive_bags": 22,
+            "positives": 18,
+            "unit": "patients"
+          },
+          "rule": "youden",
+          "value": 0.6638841054002128
+        },
+        "train_patient_fraction": 0.5,
+        "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+      },
+      {
+        "abmil_fit": null,
+        "bundle_id": null,
+        "calibration": {
+          "fitted_on": {
+            "data_sha256": "825da2dd4a70837be3d5510635f18c3db97be95bdce09996b22e3dc549396e4b",
+            "n": 45,
+            "n_negative": 23,
+            "n_positive": 22,
+            "splits": [
+              "oof"
+            ]
+          },
+          "gate_unit_note": "fitted_on counts bags (n); distinct patients not gated",
+          "method": "platt"
+        },
+        "checkpoint_sha256": "37d7400cdf1b72568b9996269c5422fb5f3f5108e3f2b28330e80590370ac159",
+        "code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+        "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+        "created_at_utc": "2026-10-28 04:09:02.569219",
+        "dataset_manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "encoder_id": "midnight-12k",
+        "evaluation_protocol": "dev_cv",
+        "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+        "finished_at_utc": "2026-10-28 04:09:38.620437",
+        "head": "meanpool_logreg",
+        "id": "bf3ea93f88cc40a7b2ac7c5e94a9ecc6",
+        "identity_sha256": "5b36dbf487b252cd3d777ea009c5cda430733600b7c2b21ea7a068a703644054",
+        "job_id": "ae7c645d009c47788a41a8d9ca6c7fe0",
+        "max_patches_per_slide": 256,
+        "name": "S3 \u00b7 midnight-12k \u00b7 meanpool_logreg \u00b7 train fraction 0.5 r1",
+        "oof_stale_do_not_cite": {
+          "auprc": 0.8092565588748999,
+          "auroc": 0.7766798418972332,
+          "auroc_ci": [
+            0.6296296296296297,
+            0.9058021739130435
+          ],
+          "n_bags": 45,
+          "n_patients": 35,
+          "n_unscorable": 0,
+          "note": "tuning-set estimates (threshold and calibration chosen on these OOF scores); pre-fix code",
+          "sensitivity_at_tuned_threshold": 0.6818181818181818,
+          "specificity_at_tuned_threshold": 0.782608695652174
+        },
+        "params_sha256": "dd943e7daf85f5c2235bdd83d80040205dda768bdf8a3b284e6671ba2b9eb590",
+        "role": "learning_curve",
+        "sampling_strategy": "spatial",
+        "seed": 0,
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "stage": "s3",
+        "stain_normalization": "none",
+        "status": "succeeded",
+        "subset_repeat": 1,
+        "threshold": {
+          "evidence": {
+            "n_items": 45,
+            "n_patients": 35,
+            "negative_bags": 23,
+            "negatives": 19,
+            "positive_bags": 22,
+            "positives": 18,
+            "unit": "patients"
+          },
+          "rule": "youden",
+          "value": 0.9280908895265294
+        },
+        "train_patient_fraction": 0.5,
+        "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+      },
+      {
+        "abmil_fit": null,
+        "bundle_id": null,
+        "calibration": {
+          "fitted_on": {
+            "data_sha256": "6d3e645ed783e7325c86d051c50121f40f7a14744545c053c16209c3225ddd02",
+            "n": 45,
+            "n_negative": 23,
+            "n_positive": 22,
+            "splits": [
+              "oof"
+            ]
+          },
+          "gate_unit_note": "fitted_on counts bags (n); distinct patients not gated",
+          "method": "platt"
+        },
+        "checkpoint_sha256": "1a6ad4c59e366ff397527f2078ed4e4fe12f91b70ed3a3626ca230ff61585412",
+        "code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+        "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+        "created_at_utc": "2026-10-28 04:09:02.574879",
+        "dataset_manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "encoder_id": "midnight-12k",
+        "evaluation_protocol": "dev_cv",
+        "family_id": "8e64b136a28e40f1ae5488e4ed6e2a44",
+        "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+        "finished_at_utc": "2026-10-28 04:09:40.135622",
+        "head": "meanpool_logreg",
+        "id": "a013330c16764d0c97a1de32c828fd70",
+        "identity_sha256": "fc44476f309e5f9ec08c8a2fcd0ccfe53ad7cc0a3d7357ea0ae6568eba87d9ee",
+        "job_id": "7c7b2071bb634e80bbee52b3d1db6e62",
+        "max_patches_per_slide": 256,
+        "name": "S3 \u00b7 midnight-12k \u00b7 meanpool_logreg \u00b7 train fraction 0.5 r2",
+        "oof_stale_do_not_cite": {
+          "auprc": 0.7124003900514905,
+          "auroc": 0.7015810276679841,
+          "auroc_ci": [
+            0.5443790976365364,
+            0.8445161198450671
+          ],
+          "n_bags": 45,
+          "n_patients": 35,
+          "n_unscorable": 0,
+          "note": "tuning-set estimates (threshold and calibration chosen on these OOF scores); pre-fix code",
+          "sensitivity_at_tuned_threshold": 0.7272727272727273,
+          "specificity_at_tuned_threshold": 0.7391304347826086
+        },
+        "params_sha256": "f559112e2af9048ee37776d18177b6792e0c9b95d2e1d70ade7b6f52b706353f",
+        "role": "learning_curve",
+        "sampling_strategy": "spatial",
+        "seed": 0,
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "stage": "s3",
+        "stain_normalization": "none",
+        "status": "succeeded",
+        "subset_repeat": 2,
+        "threshold": {
+          "evidence": {
+            "n_items": 45,
+            "n_patients": 35,
+            "negative_bags": 23,
+            "negatives": 19,
+            "positive_bags": 22,
+            "positives": 18,
+            "unit": "patients"
+          },
+          "rule": "youden",
+          "value": 0.8195561065685664
+        },
+        "train_patient_fraction": 0.5,
+        "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+      },
+      {
+        "abmil_fit": null,
+        "bundle_id": null,
+        "calibration": {
+          "fitted_on": {
+            "data_sha256": "2a76cfcaac6397999cc37abae0c21abbdbb85a85075228e8c3cc044a37460841",
+            "n": 45,
+            "n_negative": 23,
+            "n_positive": 22,
+            "splits": [
+              "oof"
+            ]
+          },
+          "gate_unit_note": "fitted_on counts bags (n); distinct patients not gated",
+          "method": "platt"
+        },
+        "checkpoint_sha256": "dcb59c5634a97eedf3e1199b5db3da2a8a9863ce6173db93384c1b3186821df3",
+        "code_revision": "782668ca523e0f16a8577e698651a4c8c81d34b0",
+        "code_tree_sha256": "810e32885472d72107f55dbef76791dce489ce849478ffd369eb883729197e1c",
+        "created_at_utc": "2026-10-28 04:14:21.729048",
+        "dataset_manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+        "encoder_id": "handcrafted-stain-texture-v1",
+        "evaluation_protocol": "dev_cv",
+        "family_id": "5c326ae64f9141ea98ce829d0aa3642e",
+        "feature_set_id": "2f1f57b21cbc4a31b50d26a43845aed1",
+        "finished_at_utc": "2026-10-28 04:14:22.610959",
+        "head": "meanpool_logreg",
+        "id": "6c922244db6246c8a1104f99ff5756c8",
+        "identity_sha256": "11ede435e8e05f985f830cc527b87340e1b656a6649fee1c071867230f2c8412",
+        "job_id": "3292632900b845c6937272e7a226f691",
+        "max_patches_per_slide": 256,
+        "name": "S4 a_sampling_uniform \u00b7 handcrafted-stain-texture-v1 \u00b7 meanpool_logreg",
+        "oof_stale_do_not_cite": null,
+        "params_sha256": "6c8692ff19befaf6acea26c187c71344d450a9952a10ea92f239f9d40fdf556b",
+        "role": "a_sampling_uniform",
+        "sampling_strategy": "uniform",
+        "seed": 0,
+        "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+        "stage": "s4",
+        "stain_normalization": "none",
+        "status": "succeeded",
+        "subset_repeat": 0,
+        "threshold": {
+          "evidence": {
+            "n_items": 45,
+            "n_patients": 35,
+            "negative_bags": 23,
+            "negatives": 19,
+            "positive_bags": 22,
+            "positives": 18,
+            "unit": "patients"
+          },
+          "rule": "youden",
+          "value": 0.3074784168368023
+        },
+        "train_patient_fraction": 1.0,
+        "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+      }
+    ]
+  },
+  "source_sha256": "03c3cca387b3e778aef3aafc36d942dadbe979900c26894089f56e3383783d8f"
+}

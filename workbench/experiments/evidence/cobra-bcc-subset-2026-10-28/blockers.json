@@ -1,0 +1,15 @@
+{
+  "blockers": [
+    {
+      "detail": "dev_cv: the macenko-v1 reference was fitted once on train-split slides of the dataset and is shared by every outer fold, and every development patient is held out by exactly one fold, so each fold's held-out images shaped the normalisation of its own fitting data (preprocessing leakage; label-free, effect unknown)",
+      "status": "blocked",
+      "what": "s4 b_stain_macenko handcrafted-stain-texture-v1"
+    },
+    {
+      "detail": "dev_cv: the macenko-v1 reference was fitted once on train-split slides of the dataset and is shared by every outer fold, and every development patient is held out by exactly one fold, so each fold's held-out images shaped the normalisation of its own fitting data (preprocessing leakage; label-free, effect unknown)",
+      "status": "blocked",
+      "what": "s4 b_stain_macenko midnight-12k"
+    }
+  ],
+  "note": "missing data, weights or hardware are blockers, never a reason to invent results"
+}

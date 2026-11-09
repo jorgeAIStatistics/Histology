@@ -1,0 +1,1025 @@
+{
+  "code": {
+    "driver": {
+      "file": "workbench/scripts/run_cobra_experiments.py",
+      "sha256_now": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef"
+    },
+    "engine_now": {
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "dependency_versions_sha256": "940c588a833963ec7a71e9288edeaf06d3d0d65ba62fabed553ab0ff9e5fed1a",
+      "dirty": false,
+      "dirty_diff_sha256": null,
+      "engine_code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+      "extractor_version": "dermpath.feature_sets/2"
+    },
+    "exporter": {
+      "file": "workbench/scripts/export_evidence.py",
+      "sha256": "114b9dbec26f6eb0a7758c7c6cb7d2a31638dfdd4858f344deba7500f2aac0b3"
+    },
+    "recorded_code_revisions": [
+      "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52"
+    ],
+    "repository": {
+      "branch": "dermpath-ml-engine",
+      "changed_paths": 8,
+      "dirty": true,
+      "git_head": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "scope": "workbench/ of the repository",
+      "tracked_diff_sha256": "bc42b1de946c1d8ff9c9b7f5a98f42f4c3e8f49706fbbd96209ff7d3903a88d1",
+      "untracked_paths": 5
+    }
+  },
+  "commands": {
+    "export": [
+      "export_evidence.py",
+      "--experiment-id",
+      "cobra-bcc-subset-2026-10-28",
+      "--force",
+      "--attach",
+      "sensitivity_near_duplicates.json=../experiments/reports/sensitivity_near_duplicates.json",
+      "--attach",
+      "inference_measurement.json=../experiments/reports/inference_measurement.json",
+      "--attach",
+      "pre_fix_inventory.json=path:7e6ef77aa3ea",
+      "--attach",
+      "pre_fix_inventory.md=path:0c874d75b1ed",
+      "--attach",
+      "midnight_parity.json=path:17b70115ae37",
+      "--attach",
+      "bulky_artifacts_index.json=path:b2aa1baeff59",
+      "--test-release-disclosure",
+      "path:def88243e3ee",
+      "--exclusions-supplement",
+      "path:68fe7544ace1",
+      "--readme-note",
+      "path:4819943398bf"
+    ],
+    "per_stage": {
+      "s0": [
+        "--device",
+        "mps",
+        "--seeds",
+        "0,1,2",
+        "--sampling-budget",
+        "512"
+      ],
+      "s1": [
+        "--device",
+        "mps",
+        "--seeds",
+        "0,1,2",
+        "--sampling-budget",
+        "512"
+      ],
+      "s2": [
+        "--device",
+        "mps",
+        "--seeds",
+        "0,1,2",
+        "--sampling-budget",
+        "512"
+      ],
+      "s3": [
+        "--device",
+        "mps",
+        "--seeds",
+        "0,1,2",
+        "--sampling-budget",
+        "512"
+      ],
+      "s4": [
+        "--device",
+        "mps",
+        "--seeds",
+        "0,1,2",
+        "--sampling-budget",
+        "512"
+      ],
+      "s4b": [
+        "--device",
+        "mps",
+        "--seeds",
+        "0,1,2",
+        "--sampling-budget",
+        "512"
+      ],
+      "s5": [
+        "--device",
+        "mps",
+        "--seeds",
+        "0,1,2",
+        "--sampling-budget",
+        "512"
+      ],
+      "s7": [
+        "--device",
+        "mps",
+        "--seeds",
+        "0,1,2",
+        "--sampling-budget",
+        "512"
+      ],
+      "s8": [
+        "--device",
+        "mps",
+        "--seeds",
+        "0,1,2",
+        "--sampling-budget",
+        "512"
+      ]
+    }
+  },
+  "configs": [
+    {
+      "content": {
+        "_comment": [
+          "Supervised baseline benchmark on the COBRA BCC subset (research use only; CC BY-NC-SA 4.0, non-commercial).",
+          "Prerequisites: (1) import the subset with `python -m dermpath.importers.cobra ... --project proj-cobra-bcc-subset`",
+          "and let its ingest and QC jobs finish; (2) create and freeze a dataset version of that project whose config",
+          "declares \"reference_standard\": \"imported_reference\" (COBRA labels were extracted from pathology reports by a",
+          "rule-based method; they are imported reference labels, never expert reads) with a patient-grouped random",
+          "split that keeps a test split; the most recently frozen version is used (or set \"dataset_version_id\");",
+          "(3) midnight-12k needs WB_MIDNIGHT_WEIGHTS (obtained separately; nothing is downloaded).",
+          "Protocol: dev_cv with 5 patient-grouped stratified folds over train + val; threshold (Youden), Platt calibration",
+          "and abstention are chosen on out-of-fold predictions; the final model is refitted on the development pool; the",
+          "test split is NOT read (test metrics only through a recorded test release of a declared candidate).",
+          "Learning curves: nested stratified subsets of the development patients at 25, 50 and 100 % with 3 repeats.",
+          "Seeds (pre-declared 2026-10-28, before any multi-seed result): 0, 1, 2 for every encoder x head; the outer folds",
+          "depend on the development pool and k only, so they are identical across heads and seeds. Seed repeats measure",
+          "optimisation variability on the same patients, not additional independent patients.",
+          "Run: cd workbench/api && .venv/bin/python -m dermpath.ml.cli benchmark ../experiments/configs/cobra_supervised_baseline.json"
+        ],
+        "bootstrap": {
+          "min_patients": 10,
+          "n_boot": 2000,
+          "seed": 20261026
+        },
+        "dataset": "latest_frozen",
+        "description": "Encoder effects (handcrafted-stain-texture-v1 vs midnight-12k) with the head fixed and head effects (meanpool_logreg vs abmil) with the encoder fixed, on out-of-fold predictions of one frozen manifest.",
+        "encoders": [
+          "handcrafted-stain-texture-v1",
+          "midnight-12k"
+        ],
+        "evaluation_protocol": "dev_cv",
+        "execution_mode": "supervised_experiment",
+        "head_params": {
+          "abmil": {
+            "attn_dim": 64,
+            "dropout": 0.1,
+            "hidden_dim": 128,
+            "inner_val_fraction": 0.2,
+            "lr": 0.0005,
+            "max_epochs": 60,
+            "max_instances_per_bag": 256,
+            "patience": 10,
+            "weight_decay": 0.0001
+          },
+          "meanpool_logreg": {
+            "C": 1.0
+          }
+        },
+        "heads": [
+          "meanpool_logreg",
+          "abmil"
+        ],
+        "learning_curve": {
+          "fractions": [
+            0.25,
+            0.5,
+            1.0
+          ],
+          "repeats": 3
+        },
+        "name": "COBRA supervised baseline benchmark",
+        "params": {
+          "boot_min_patients": 10,
+          "calibration": "platt",
+          "class_weight": "balanced",
+          "cv_folds": 5,
+          "max_patches_per_slide": 256,
+          "min_threshold_evidence": 10,
+          "min_tissue_fraction": 0.25,
+          "n_boot": 2000,
+          "precision": "fp32",
+          "sampling_seed": 0,
+          "sampling_strategy": "spatial",
+          "stain_normalization": "none",
+          "target_mpp": 0.5,
+          "threshold_rule": "youden"
+        },
+        "project_id": "proj-cobra-bcc-subset",
+        "report_path": "experiments/reports/cobra-supervised-baseline.json",
+        "seeds": [
+          0,
+          1,
+          2
+        ]
+      },
+      "file": "experiments/configs/cobra_supervised_baseline.json",
+      "sha256": "e4eaa9fbac98d0b21e3030e274fd350ed5ebe572a54082eb45bb130049ab95d6"
+    },
+    {
+      "content": {
+        "_comment": [
+          "Technical validation of the pixel path on the COBRA BCC subset (real_image_technical: NO label is read).",
+          "Prerequisites: (1) the COBRA subset is imported with `python -m dermpath.importers.cobra ... --project",
+          "proj-cobra-bcc-subset` and its ingest and QC jobs have finished; (2) a dataset version of that project is",
+          "frozen (the most recently frozen version is used; replace \"dataset\" with {\"name\": ..., \"version\": ...} or",
+          "\"dataset_version_id\" to pin another); (3) midnight-12k needs its weights directory in WB_MIDNIGHT_WEIGHTS",
+          "(obtained separately under the model's licence; nothing is downloaded). Without them the command stops with",
+          "encoder_unavailable. COBRA is CC BY-NC-SA 4.0: non-commercial research only.",
+          "Builds one feature set per encoder with the SAME patch and sampling policy (patch_size follows each encoder's",
+          "input size), reports coverage diagnostics and re-extracts a seeded subset to check determinism.",
+          "Run: cd workbench/api && .venv/bin/python -m dermpath.ml.cli benchmark ../experiments/configs/cobra_technical_validation.json"
+        ],
+        "dataset": "latest_frozen",
+        "description": "Extraction, coverage, determinism, throughput and memory of handcrafted-stain-texture-v1 and midnight-12k on real COBRA slides. No labels, no heads, no metrics.",
+        "encoders": [
+          "handcrafted-stain-texture-v1",
+          "midnight-12k"
+        ],
+        "execution_mode": "real_image_technical",
+        "heads": [],
+        "name": "COBRA subset technical validation",
+        "params": {
+          "max_patches_per_slide": 256,
+          "min_tissue_fraction": 0.25,
+          "precision": "fp32",
+          "sampling_seed": 0,
+          "sampling_strategy": "spatial",
+          "stain_normalization": "none",
+          "target_mpp": 0.5
+        },
+        "project_id": "proj-cobra-bcc-subset",
+        "report_path": "experiments/reports/cobra-technical-validation.json",
+        "technical_validation": {
+          "n_slides": 2,
+          "seed": 0
+        }
+      },
+      "file": "experiments/configs/cobra_technical_validation.json",
+      "sha256": "f1f33eabd5e54ee77ca6e3fd7216d1da30d5931a724dd3fa7547e896000a04b5"
+    },
+    {
+      "content": {
+        "_comment": [
+          "PIPELINE TEST - NOT PATHOLOGY VALIDATION. Exercises the benchmark harness end to end on the fictional",
+          "synthetic pipeline-test cohort that `python -m dermpath.seed` creates (project proj-synthetic-cohort).",
+          "The synthetic encoder's embeddings carry a label-derived fixture signal by construction (only in",
+          "synthetic_pipeline_test, only through ml/fixture.py), so its metrics say nothing about pathology.",
+          "Run: cd workbench/api && .venv/bin/python -m dermpath.ml.cli benchmark ../experiments/configs/synthetic_pipeline_benchmark.json"
+        ],
+        "bootstrap": {
+          "min_patients": 10,
+          "n_boot": 1000,
+          "seed": 20261026
+        },
+        "dataset": {
+          "name": "Synthetic pipeline-test cohort (no images, no histology)"
+        },
+        "description": "Head effects (meanpool_logreg vs abmil) with the synthetic encoder fixed, dev_cv on the development pool, and a small learning curve. A plumbing test of identities, folds, paired comparisons and reports.",
+        "encoders": [
+          "synthetic-deterministic-v1"
+        ],
+        "evaluation_protocol": "dev_cv",
+        "execution_mode": "synthetic_pipeline_test",
+        "head_params": {
+          "abmil": {
+            "class_weight": "balanced",
+            "inner_val_fraction": 0.2,
+            "max_epochs": 30,
+            "patience": 6
+          },
+          "meanpool_logreg": {
+            "C": 1.0,
+            "class_weight": "balanced"
+          }
+        },
+        "heads": [
+          "meanpool_logreg",
+          "abmil"
+        ],
+        "learning_curve": {
+          "fractions": [
+            0.5,
+            1.0
+          ],
+          "repeats": 2
+        },
+        "name": "Synthetic pipeline benchmark (PIPELINE TEST)",
+        "params": {
+          "calibration": "platt",
+          "cv_folds": 5,
+          "max_patches_per_slide": 32,
+          "min_threshold_evidence": 5,
+          "n_boot": 500,
+          "pixel_mode": "none",
+          "sampling_seed": 0,
+          "sampling_strategy": "spatial",
+          "threshold_rule": "youden"
+        },
+        "project_id": "proj-synthetic-cohort",
+        "report_path": "experiments/reports/synthetic-pipeline-benchmark.json",
+        "seeds": [
+          0
+        ]
+      },
+      "file": "experiments/configs/synthetic_pipeline_benchmark.json",
+      "sha256": "5ffd4644ab534721f3b52304cdd4b3e241b5ffb83de4307932f2a347cd0a64b2"
+    }
+  ],
+  "dependency_versions": {
+    "fastapi": "0.143.0",
+    "huggingface_hub": "2.2.0",
+    "machine": "arm64",
+    "numpy": "2.4.2",
+    "openslide (C library)": "4.0.1",
+    "openslide-bin": "4.0.1.2",
+    "openslide-python": "1.4.6",
+    "pillow": "12.3.0",
+    "platform": "macOS-14.5-arm64-arm-64bit-Mach-O",
+    "python": "3.14.5",
+    "python_implementation": "CPython",
+    "safetensors": "0.8.0",
+    "scikit-learn": "1.9.0",
+    "scipy": "1.17.0",
+    "sqlalchemy": "2.1.4",
+    "timm": "1.0.30",
+    "torch": "2.14.1",
+    "torch.cuda": "none",
+    "torch.cuda_available": "false",
+    "torch.git_version": "5c4886908584029761b579af026dcfb627c84070",
+    "torch.mps_available": "true",
+    "torch.mps_built": "true",
+    "torchvision": "0.29.1",
+    "transformers": "5.19.0"
+  },
+  "devices": {
+    "available": [
+      "mps",
+      "cpu"
+    ],
+    "cuda": false,
+    "mps_built": true,
+    "precision_support": {
+      "cpu": {
+        "bf16": {
+          "reason": null,
+          "supported": true
+        },
+        "fp16": {
+          "reason": null,
+          "supported": true
+        },
+        "fp32": {
+          "reason": null,
+          "supported": true
+        }
+      },
+      "mps": {
+        "bf16": {
+          "reason": null,
+          "supported": true
+        },
+        "fp16": {
+          "reason": null,
+          "supported": true
+        },
+        "fp32": {
+          "reason": null,
+          "supported": true
+        }
+      }
+    },
+    "resolved_for_midnight": "mps"
+  },
+  "export_host": {
+    "platform": "macOS-14.5-arm64-arm-64bit-Mach-O",
+    "python": "3.14.5"
+  },
+  "machine": {
+    "cpu_count": 11,
+    "machine": "arm64",
+    "memory_bytes": 19327352832,
+    "platform": "macOS-14.5-arm64-arm-64bit-Mach-O",
+    "processor": "arm",
+    "python": "3.14.5",
+    "torch_threads": 5,
+    "wb_ml_batch_size": "32 (default)",
+    "wb_ml_cpu_threads": 4
+  },
+  "stages": {
+    "s0": {
+      "budgets": {
+        "cv_folds": 5,
+        "lc_fractions": [
+          0.25,
+          0.5,
+          1.0
+        ],
+        "lc_repeats": 3,
+        "max_patches_per_slide": 256,
+        "n_boot": 2000,
+        "precision_patches": 512,
+        "sampling_budget": {
+          "current": 256,
+          "encoders": [
+            "handcrafted-stain-texture-v1",
+            "midnight-12k"
+          ],
+          "higher": 512,
+          "source": "--sampling-budget"
+        },
+        "seeds": [
+          0,
+          1,
+          2
+        ],
+        "seeds_source": "--seeds",
+        "skip_precision_downstream": false
+      },
+      "code_identity": {
+        "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+        "code_revision_source": "git",
+        "code_tree_files": 88,
+        "code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+        "dirty": false,
+        "dirty_diff_sha256": null,
+        "git_head": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+        "package": "dermpath",
+        "schema": "dermpath.code_identity/1"
+      },
+      "command_argv": [
+        "--device",
+        "mps",
+        "--seeds",
+        "0,1,2",
+        "--sampling-budget",
+        "512"
+      ],
+      "costs": {
+        "process_peak_rss_bytes": 436142080,
+        "process_peak_rss_note": "getrusage maximum resident set size of the driver process so far (monotonic over the process; includes earlier stages of this run)",
+        "stage_wall_seconds": 0.123
+      },
+      "driver_sha256": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef",
+      "dry_run": false,
+      "elapsed_seconds": 0.123,
+      "fingerprint_sha256": "03e9978b1a59eef8d1229b020862e9bc71e468b96a3fff06a2dd44becb676926",
+      "finished_at": "2026-10-28T07:24:31+00:00",
+      "implementation": {
+        "dependency_versions_sha256": "940c588a833963ec7a71e9288edeaf06d3d0d65ba62fabed553ab0ff9e5fed1a",
+        "driver_sha256": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef",
+        "engine_code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+        "extractor_version": "dermpath.feature_sets/2",
+        "fingerprint_schema": "dermpath.cobra_stage_fingerprint/1",
+        "report_schema": "dermpath.cobra_experiments/1"
+      },
+      "midnight_device": "mps",
+      "offline_status": "valid",
+      "started_at": "2026-10-28T07:24:31+00:00"
+    },
+    "s1": {
+      "budgets": {
+        "cv_folds": 5,
+        "lc_fractions": [
+          0.25,
+          0.5,
+          1.0
+        ],
+        "lc_repeats": 3,
+        "max_patches_per_slide": 256,
+        "n_boot": 2000,
+        "precision_patches": 512,
+        "sampling_budget": {
+          "current": 256,
+          "encoders": [
+            "handcrafted-stain-texture-v1",
+            "midnight-12k"
+          ],
+          "higher": 512,
+          "source": "--sampling-budget"
+        },
+        "seeds": [
+          0,
+          1,
+          2
+        ],
+        "seeds_source": "--seeds",
+        "skip_precision_downstream": false
+      },
+      "code_identity": {
+        "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+        "code_revision_source": "git",
+        "code_tree_files": 88,
+        "code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+        "dirty": false,
+        "dirty_diff_sha256": null,
+        "git_head": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+        "package": "dermpath",
+        "schema": "dermpath.code_identity/1"
+      },
+      "command_argv": [
+        "--device",
+        "mps",
+        "--seeds",
+        "0,1,2",
+        "--sampling-budget",
+        "512"
+      ],
+      "costs": {
+        "process_peak_rss_bytes": 438173696,
+        "process_peak_rss_note": "getrusage maximum resident set size of the driver process so far (monotonic over the process; includes earlier stages of this run)",
+        "stage_wall_seconds": 0.042
+      },
+      "driver_sha256": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef",
+      "dry_run": false,
+      "elapsed_seconds": 0.042,
+      "fingerprint_sha256": "63ee4f665c9e01a9fcf4c2c11e38728c388b21e0d58e4bed9adeabfbfb74f84a",
+      "finished_at": "2026-10-28T07:24:31+00:00",
+      "implementation": {
+        "dependency_versions_sha256": "940c588a833963ec7a71e9288edeaf06d3d0d65ba62fabed553ab0ff9e5fed1a",
+        "driver_sha256": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef",
+        "engine_code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+        "extractor_version": "dermpath.feature_sets/2",
+        "fingerprint_schema": "dermpath.cobra_stage_fingerprint/1",
+        "report_schema": "dermpath.cobra_experiments/1"
+      },
+      "midnight_device": "mps",
+      "offline_status": "valid",
+      "started_at": "2026-10-28T07:24:31+00:00"
+    },
+    "s2": {
+      "budgets": {
+        "cv_folds": 5,
+        "lc_fractions": [
+          0.25,
+          0.5,
+          1.0
+        ],
+        "lc_repeats": 3,
+        "max_patches_per_slide": 256,
+        "n_boot": 2000,
+        "precision_patches": 512,
+        "sampling_budget": {
+          "current": 256,
+          "encoders": [
+            "handcrafted-stain-texture-v1",
+            "midnight-12k"
+          ],
+          "higher": 512,
+          "source": "--sampling-budget"
+        },
+        "seeds": [
+          0,
+          1,
+          2
+        ],
+        "seeds_source": "--seeds",
+        "skip_precision_downstream": false
+      },
+      "code_identity": {
+        "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+        "code_revision_source": "git",
+        "code_tree_files": 88,
+        "code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+        "dirty": false,
+        "dirty_diff_sha256": null,
+        "git_head": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+        "package": "dermpath",
+        "schema": "dermpath.code_identity/1"
+      },
+      "command_argv": [
+        "--device",
+        "mps",
+        "--seeds",
+        "0,1,2",
+        "--sampling-budget",
+        "512"
+      ],
+      "costs": {
+        "process_peak_rss_bytes": 5791055872,
+        "process_peak_rss_note": "getrusage maximum resident set size of the driver process so far (monotonic over the process; includes earlier stages of this run)",
+        "stage_wall_seconds": 128.011
+      },
+      "driver_sha256": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef",
+      "dry_run": false,
+      "elapsed_seconds": 128.011,
+      "fingerprint_sha256": "adde772f7a4f01770797af138307a28e9b686f184b285e04a54713b36ad2c6d9",
+      "finished_at": "2026-10-28T07:26:39+00:00",
+      "implementation": {
+        "dependency_versions_sha256": "940c588a833963ec7a71e9288edeaf06d3d0d65ba62fabed553ab0ff9e5fed1a",
+        "driver_sha256": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef",
+        "engine_code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+        "extractor_version": "dermpath.feature_sets/2",
+        "fingerprint_schema": "dermpath.cobra_stage_fingerprint/1",
+        "report_schema": "dermpath.cobra_experiments/1"
+      },
+      "midnight_device": "mps",
+      "offline_status": "valid",
+      "started_at": "2026-10-28T07:24:31+00:00"
+    },
+    "s3": {
+      "budgets": {
+        "cv_folds": 5,
+        "lc_fractions": [
+          0.25,
+          0.5,
+          1.0
+        ],
+        "lc_repeats": 3,
+        "max_patches_per_slide": 256,
+        "n_boot": 2000,
+        "precision_patches": 512,
+        "sampling_budget": {
+          "current": 256,
+          "encoders": [
+            "handcrafted-stain-texture-v1",
+            "midnight-12k"
+          ],
+          "higher": 512,
+          "source": "--sampling-budget"
+        },
+        "seeds": [
+          0,
+          1,
+          2
+        ],
+        "seeds_source": "--seeds",
+        "skip_precision_downstream": false
+      },
+      "code_identity": {
+        "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+        "code_revision_source": "git",
+        "code_tree_files": 88,
+        "code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+        "dirty": false,
+        "dirty_diff_sha256": null,
+        "git_head": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+        "package": "dermpath",
+        "schema": "dermpath.code_identity/1"
+      },
+      "command_argv": [
+        "--device",
+        "mps",
+        "--seeds",
+        "0,1,2",
+        "--sampling-budget",
+        "512"
+      ],
+      "costs": {
+        "process_peak_rss_bytes": 5791055872,
+        "process_peak_rss_note": "getrusage maximum resident set size of the driver process so far (monotonic over the process; includes earlier stages of this run)",
+        "replaced_runs": [],
+        "runs": 24,
+        "runs_failed": 0,
+        "stage_wall_seconds": 1608.815,
+        "training_wall_seconds": 1604.119
+      },
+      "driver_sha256": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef",
+      "dry_run": false,
+      "elapsed_seconds": 1608.815,
+      "fingerprint_sha256": "3728893358bac2537c5cb9ff7f0895473cad0d860d8c0894beda965f4369ed79",
+      "finished_at": "2026-10-28T07:53:28+00:00",
+      "implementation": {
+        "dependency_versions_sha256": "940c588a833963ec7a71e9288edeaf06d3d0d65ba62fabed553ab0ff9e5fed1a",
+        "driver_sha256": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef",
+        "engine_code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+        "extractor_version": "dermpath.feature_sets/2",
+        "fingerprint_schema": "dermpath.cobra_stage_fingerprint/1",
+        "report_schema": "dermpath.cobra_experiments/1"
+      },
+      "midnight_device": "mps",
+      "offline_status": "valid",
+      "started_at": "2026-10-28T07:26:39+00:00"
+    },
+    "s4": {
+      "budgets": {
+        "cv_folds": 5,
+        "lc_fractions": [
+          0.25,
+          0.5,
+          1.0
+        ],
+        "lc_repeats": 3,
+        "max_patches_per_slide": 256,
+        "n_boot": 2000,
+        "precision_patches": 512,
+        "sampling_budget": {
+          "current": 256,
+          "encoders": [
+            "handcrafted-stain-texture-v1",
+            "midnight-12k"
+          ],
+          "higher": 512,
+          "source": "--sampling-budget"
+        },
+        "seeds": [
+          0,
+          1,
+          2
+        ],
+        "seeds_source": "--seeds",
+        "skip_precision_downstream": false
+      },
+      "code_identity": {
+        "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+        "code_revision_source": "git",
+        "code_tree_files": 88,
+        "code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+        "dirty": false,
+        "dirty_diff_sha256": null,
+        "git_head": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+        "package": "dermpath",
+        "schema": "dermpath.code_identity/1"
+      },
+      "command_argv": [
+        "--device",
+        "mps",
+        "--seeds",
+        "0,1,2",
+        "--sampling-budget",
+        "512"
+      ],
+      "costs": {
+        "process_peak_rss_bytes": 6799605760,
+        "process_peak_rss_note": "getrusage maximum resident set size of the driver process so far (monotonic over the process; includes earlier stages of this run)",
+        "stage_wall_seconds": 3166.585
+      },
+      "driver_sha256": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef",
+      "dry_run": false,
+      "elapsed_seconds": 3166.585,
+      "fingerprint_sha256": "5b1f7b973f7ed83d36b738767060455e2afc697954b991506374e6e27586b4ed",
+      "finished_at": "2026-10-28T08:46:14+00:00",
+      "implementation": {
+        "dependency_versions_sha256": "940c588a833963ec7a71e9288edeaf06d3d0d65ba62fabed553ab0ff9e5fed1a",
+        "driver_sha256": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef",
+        "engine_code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+        "extractor_version": "dermpath.feature_sets/2",
+        "fingerprint_schema": "dermpath.cobra_stage_fingerprint/1",
+        "report_schema": "dermpath.cobra_experiments/1"
+      },
+      "midnight_device": "mps",
+      "offline_status": "valid",
+      "started_at": "2026-10-28T07:53:28+00:00"
+    },
+    "s4b": {
+      "budgets": {
+        "current": 256,
+        "declared": "before any budget comparison was run (driver constant SAMPLING_BUDGET_DEFAULT, 2026-10-28) unless --sampling-budget was given",
+        "higher": 512,
+        "higher_source": "--sampling-budget"
+      },
+      "code_identity": {
+        "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+        "code_revision_source": "git",
+        "code_tree_files": 88,
+        "code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+        "dirty": false,
+        "dirty_diff_sha256": null,
+        "git_head": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+        "package": "dermpath",
+        "schema": "dermpath.code_identity/1"
+      },
+      "command_argv": [
+        "--device",
+        "mps",
+        "--seeds",
+        "0,1,2",
+        "--sampling-budget",
+        "512"
+      ],
+      "costs": {
+        "process_peak_rss_bytes": 6799605760,
+        "process_peak_rss_note": "getrusage maximum resident set size of the driver process so far (monotonic over the process; includes earlier stages of this run)",
+        "stage_wall_seconds": 6460.938
+      },
+      "driver_sha256": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef",
+      "dry_run": false,
+      "elapsed_seconds": 6460.938,
+      "fingerprint_sha256": "630b9674ba64010e524163d96dc2470e79f3f84e1bb72869166cfd52b2912757",
+      "finished_at": "2026-10-28T10:33:55+00:00",
+      "implementation": {
+        "dependency_versions_sha256": "940c588a833963ec7a71e9288edeaf06d3d0d65ba62fabed553ab0ff9e5fed1a",
+        "driver_sha256": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef",
+        "engine_code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+        "extractor_version": "dermpath.feature_sets/2",
+        "fingerprint_schema": "dermpath.cobra_stage_fingerprint/1",
+        "report_schema": "dermpath.cobra_experiments/1"
+      },
+      "midnight_device": "mps",
+      "offline_status": "valid",
+      "started_at": "2026-10-28T08:46:15+00:00"
+    },
+    "s5": {
+      "budgets": {
+        "cv_folds": 5,
+        "lc_fractions": [
+          0.25,
+          0.5,
+          1.0
+        ],
+        "lc_repeats": 3,
+        "max_patches_per_slide": 256,
+        "n_boot": 2000,
+        "precision_patches": 512,
+        "sampling_budget": {
+          "current": 256,
+          "encoders": [
+            "handcrafted-stain-texture-v1",
+            "midnight-12k"
+          ],
+          "higher": 512,
+          "source": "--sampling-budget"
+        },
+        "seeds": [
+          0,
+          1,
+          2
+        ],
+        "seeds_source": "--seeds",
+        "skip_precision_downstream": false
+      },
+      "code_identity": {
+        "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+        "code_revision_source": "git",
+        "code_tree_files": 88,
+        "code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+        "dirty": false,
+        "dirty_diff_sha256": null,
+        "git_head": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+        "package": "dermpath",
+        "schema": "dermpath.code_identity/1"
+      },
+      "command_argv": [
+        "--device",
+        "mps",
+        "--seeds",
+        "0,1,2",
+        "--sampling-budget",
+        "512"
+      ],
+      "costs": {
+        "process_peak_rss_bytes": 6799605760,
+        "process_peak_rss_note": "getrusage maximum resident set size of the driver process so far (monotonic over the process; includes earlier stages of this run)",
+        "stage_wall_seconds": 0.008
+      },
+      "driver_sha256": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef",
+      "dry_run": false,
+      "elapsed_seconds": 0.008,
+      "fingerprint_sha256": "b250655c4e73cf75d520f3db6bc42db2d26f825e904887fe47f3a0804f267dae",
+      "finished_at": "2026-10-28T10:33:56+00:00",
+      "implementation": {
+        "dependency_versions_sha256": "940c588a833963ec7a71e9288edeaf06d3d0d65ba62fabed553ab0ff9e5fed1a",
+        "driver_sha256": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef",
+        "engine_code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+        "extractor_version": "dermpath.feature_sets/2",
+        "fingerprint_schema": "dermpath.cobra_stage_fingerprint/1",
+        "report_schema": "dermpath.cobra_experiments/1"
+      },
+      "midnight_device": "mps",
+      "offline_status": "valid",
+      "started_at": "2026-10-28T10:33:56+00:00"
+    },
+    "s7": {
+      "budgets": {
+        "cv_folds": 5,
+        "lc_fractions": [
+          0.25,
+          0.5,
+          1.0
+        ],
+        "lc_repeats": 3,
+        "max_patches_per_slide": 256,
+        "n_boot": 2000,
+        "precision_patches": 512,
+        "sampling_budget": {
+          "current": 256,
+          "encoders": [
+            "handcrafted-stain-texture-v1",
+            "midnight-12k"
+          ],
+          "higher": 512,
+          "source": "--sampling-budget"
+        },
+        "seeds": [
+          0,
+          1,
+          2
+        ],
+        "seeds_source": "--seeds",
+        "skip_precision_downstream": false
+      },
+      "code_identity": {
+        "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+        "code_revision_source": "git",
+        "code_tree_files": 88,
+        "code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+        "dirty": false,
+        "dirty_diff_sha256": null,
+        "git_head": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+        "package": "dermpath",
+        "schema": "dermpath.code_identity/1"
+      },
+      "command_argv": [
+        "--device",
+        "mps",
+        "--seeds",
+        "0,1,2",
+        "--sampling-budget",
+        "512"
+      ],
+      "costs": {
+        "process_peak_rss_bytes": 6799605760,
+        "process_peak_rss_note": "getrusage maximum resident set size of the driver process so far (monotonic over the process; includes earlier stages of this run)",
+        "stage_wall_seconds": 0.099
+      },
+      "driver_sha256": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef",
+      "dry_run": false,
+      "elapsed_seconds": 0.099,
+      "fingerprint_sha256": "46b4638f9759bc8fccb4bae92bcb5257169f1448e6f44e77a763e95b92d892fe",
+      "finished_at": "2026-10-28T10:33:56+00:00",
+      "implementation": {
+        "dependency_versions_sha256": "940c588a833963ec7a71e9288edeaf06d3d0d65ba62fabed553ab0ff9e5fed1a",
+        "driver_sha256": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef",
+        "engine_code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+        "extractor_version": "dermpath.feature_sets/2",
+        "fingerprint_schema": "dermpath.cobra_stage_fingerprint/1",
+        "report_schema": "dermpath.cobra_experiments/1"
+      },
+      "midnight_device": "mps",
+      "offline_status": "valid",
+      "started_at": "2026-10-28T10:33:56+00:00"
+    },
+    "s8": {
+      "budgets": {
+        "cv_folds": 5,
+        "lc_fractions": [
+          0.25,
+          0.5,
+          1.0
+        ],
+        "lc_repeats": 3,
+        "max_patches_per_slide": 256,
+        "n_boot": 2000,
+        "precision_patches": 512,
+        "sampling_budget": {
+          "current": 256,
+          "encoders": [
+            "handcrafted-stain-texture-v1",
+            "midnight-12k"
+          ],
+          "higher": 512,
+          "source": "--sampling-budget"
+        },
+        "seeds": [
+          0,
+          1,
+          2
+        ],
+        "seeds_source": "--seeds",
+        "skip_precision_downstream": false
+      },
+      "code_identity": {
+        "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+        "code_revision_source": "git",
+        "code_tree_files": 88,
+        "code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+        "dirty": false,
+        "dirty_diff_sha256": null,
+        "git_head": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+        "package": "dermpath",
+        "schema": "dermpath.code_identity/1"
+      },
+      "command_argv": [
+        "--device",
+        "mps",
+        "--seeds",
+        "0,1,2",
+        "--sampling-budget",
+        "512"
+      ],
+      "costs": {
+        "process_peak_rss_bytes": 6799605760,
+        "process_peak_rss_note": "getrusage maximum resident set size of the driver process so far (monotonic over the process; includes earlier stages of this run)",
+        "stage_wall_seconds": 0.012
+      },
+      "driver_sha256": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef",
+      "dry_run": false,
+      "elapsed_seconds": 0.012,
+      "fingerprint_sha256": "49a9571d223808cfb5d763c38df9e8c1a1f2b4be6c0ce328fe4118ae7109eb09",
+      "finished_at": "2026-10-28T10:33:56+00:00",
+      "implementation": {
+        "dependency_versions_sha256": "940c588a833963ec7a71e9288edeaf06d3d0d65ba62fabed553ab0ff9e5fed1a",
+        "driver_sha256": "2d7715f911e57831f3790486f87830ecd2c863c1d845c181c8d7e2a6798dd8ef",
+        "engine_code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+        "extractor_version": "dermpath.feature_sets/2",
+        "fingerprint_schema": "dermpath.cobra_stage_fingerprint/1",
+        "report_schema": "dermpath.cobra_experiments/1"
+      },
+      "midnight_device": "mps",
+      "offline_status": "valid",
+      "started_at": "2026-10-28T10:33:56+00:00"
+    }
+  }
+}

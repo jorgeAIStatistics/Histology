@@ -84,7 +84,7 @@ A coded research subject. NEVER a name, MRN or birth date.
 |---|---|---|---|---|
 | `id` | VARCHAR(32) | no | PK |  |
 | `project_id` | VARCHAR(64) | no | → project.id |  |
-| `code` | VARCHAR(32) | no |  | coded id (P-0001, COBRA-P765850); never a name, MRN or birth date |
+| `code` | VARCHAR(32) | no |  | coded id (P-0001, COBRA-P000101 as an illustrative format); never a name, MRN or birth date |
 | `created_by` | VARCHAR(64) | yes |  |  |
 | `created_at` | DATETIME | no |  |  |
 

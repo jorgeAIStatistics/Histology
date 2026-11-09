@@ -1,0 +1,301 @@
+{
+  "argv": [
+    "--out",
+    "../experiments/reports/inference_measurement.json"
+  ],
+  "candidate": {
+    "checkpoint_sha256": "843bdb8044365b3c7509092ca5c19722437b69a34ebb4cf61ed4916c27e609b6",
+    "encoder": "midnight-12k",
+    "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+    "head": "abmil",
+    "matches_s3_declaration": true,
+    "rule": "the encoder x head combination with the highest mean out-of-fold AUROC point estimate over the pre-declared S3 training seeds; ties resolved toward meanpool_logreg, then handcrafted; the candidate model is that combination's run with the first pre-declared seed",
+    "run_id": "ba364f52b97843c18315d8bacbaf9180",
+    "seed": 0
+  },
+  "code": {
+    "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+    "code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+    "dirty": false
+  },
+  "cold_extraction_from_records": {
+    "device": "mps",
+    "handcrafted_spatial_256_s2": {
+      "artifact_bytes": 85985,
+      "artifact_device": "cpu",
+      "artifact_id": "7cd315c276b0433b8ca7e7bf99a6f604",
+      "artifact_precision": "fp32",
+      "cache_hit": false,
+      "embed_seconds": 2.7415,
+      "n_candidates": 8488,
+      "n_patches": 256,
+      "n_sampled": 256,
+      "original_extraction": {
+        "embed_seconds": 2.7415,
+        "n_patches": 256,
+        "patches_per_second": 56.64,
+        "read_seconds": 1.4363,
+        "total_seconds": 4.5199
+      },
+      "patches_per_second": 56.64,
+      "pixel_read_seconds": 0.5707,
+      "read_seconds": 1.4363,
+      "status": "done",
+      "total_seconds": 4.5199,
+      "write_seconds": 0.0001
+    },
+    "midnight_s2_aggregate": {
+      "embed_patches_per_second": 4.661092657703568,
+      "fresh_extractions": 60,
+      "peak_rss_bytes_max": 5880561664,
+      "seconds_per_slide": {
+        "max": 70.6098,
+        "mean": 56.657781666666665,
+        "median": 56.4717,
+        "min": 49.3332,
+        "n": 60,
+        "sum": 3399.4669
+      },
+      "slides": 60
+    },
+    "midnight_spatial_256_s2": {
+      "artifact_bytes": 3166211,
+      "artifact_device": "mps",
+      "artifact_id": "6e15f21680bc455da5b60c6c9928645c",
+      "artifact_precision": "fp32",
+      "cache_hit": false,
+      "embed_seconds": 52.9582,
+      "n_candidates": 8488,
+      "n_patches": 256,
+      "n_sampled": 256,
+      "original_extraction": {
+        "embed_seconds": 52.9582,
+        "n_patches": 256,
+        "patches_per_second": 4.66,
+        "read_seconds": 1.6653,
+        "total_seconds": 54.9599
+      },
+      "patches_per_second": 4.66,
+      "pixel_read_seconds": 0.7952,
+      "read_seconds": 1.6653,
+      "status": "done",
+      "total_seconds": 54.9599,
+      "write_seconds": 0.0005
+    },
+    "midnight_spatial_512_s4b": {
+      "artifact_bytes": 6325250,
+      "artifact_device": "mps",
+      "artifact_id": "f73a142bc56f40f8bbd131869f1027eb",
+      "artifact_precision": "fp32",
+      "cache_hit": false,
+      "embed_seconds": 95.9271,
+      "n_candidates": 8488,
+      "n_patches": 512,
+      "n_sampled": 512,
+      "original_extraction": {
+        "embed_seconds": 95.9271,
+        "n_patches": 512,
+        "patches_per_second": 5.15,
+        "read_seconds": 3.1371,
+        "total_seconds": 99.382
+      },
+      "patches_per_second": 5.15,
+      "pixel_read_seconds": 1.3849,
+      "read_seconds": 3.1371,
+      "status": "done",
+      "total_seconds": 99.382,
+      "write_seconds": 0.0006
+    },
+    "note": "total_seconds = read + embed + write of the first (cold) extraction on the recorded device; the bundle pins the s3 feature set, whose artifacts are the s2 Midnight artifacts (spatial sampling, 256 patches, stain none, fp32)",
+    "source": "per-slide extraction records of the driver's reports for THIS slide (not measured by this script)"
+  },
+  "dependency_versions": {
+    "fastapi": "0.143.0",
+    "huggingface_hub": "2.2.0",
+    "machine": "arm64",
+    "numpy": "2.4.2",
+    "openslide (C library)": "4.0.1",
+    "openslide-bin": "4.0.1.2",
+    "openslide-python": "1.4.6",
+    "pillow": "12.3.0",
+    "platform": "macOS-14.5-arm64-arm-64bit-Mach-O",
+    "python": "3.14.5",
+    "python_implementation": "CPython",
+    "safetensors": "0.8.0",
+    "scikit-learn": "1.9.0",
+    "scipy": "1.17.0",
+    "sqlalchemy": "2.1.4",
+    "timm": "1.0.30",
+    "torch": "2.14.1",
+    "torch.cuda": "none",
+    "torch.cuda_available": "false",
+    "torch.git_version": "5c4886908584029761b579af026dcfb627c84070",
+    "torch.mps_available": "true",
+    "torch.mps_built": "true",
+    "torchvision": "0.29.1",
+    "transformers": "5.19.0"
+  },
+  "finished_at": "2026-10-28T10:49:49+00:00",
+  "inputs": {
+    "s2_report_sha256": "d6a284e3b07fcbebc0f3eb96df42b2f671e5704f0bef2b9a506f524225efd3bb",
+    "s3_report_sha256": "30e44b22d67cc517af0e36ad17bba1fd942cac5086dd05003a7f6b50fa77e39b",
+    "s4b_report_sha256": "0fc59f86df716d2e06133f99aef8a9e27a3644e34cf2a5053155a8df50241aec"
+  },
+  "labels": [
+    "A CACHED extraction makes this inference fast: the slide's Midnight-12k features were already in the content-addressed feature cache (built by s2), so the measured wall time covers bundle and snapshot verification, the sampling plan and cache lookup, loading the stored embeddings and ABMIL scoring, and no patch embedding (encoder compute).",
+    "The COLD cost of a new slide (reading the patches and running the encoder) comes from the per-slide extraction records above (s2 at 256 patches; s4b at 512), not from this run.",
+    "Even on this cache hit the engine loaded the encoder before its cache lookup (dermpath.ml.feature_sets.extract_slide calls load_encoder first): 9.3 s of the 9.6 s job, and the process peak RSS rose from 294895616 to 6250971136 bytes during the load. The cache lookup itself took 0.2614 s.",
+    "One slide, one run: a resource measurement, not a throughput benchmark; peak RSS is the process high-water mark.",
+    "The slide is a development slide the final model was fitted on: no score is reported, and none would be a performance estimate."
+  ],
+  "machine": {
+    "cpu_count": 11,
+    "machine": "arm64",
+    "platform": "macOS-14.5-arm64-arm-64bit-Mach-O",
+    "python": "3.14.5"
+  },
+  "measurement": {
+    "embedding_dim": 3072,
+    "encoder_load_calls": [
+      {
+        "device": "mps",
+        "peak_rss_after": 6250971136,
+        "peak_rss_before": 294895616,
+        "precision": "fp32",
+        "seconds": 9.2964,
+        "weights_sha256_verified": true
+      }
+    ],
+    "engine_import_seconds": 0.48,
+    "extraction_call": {
+      "artifact_id": "6e15f21680bc455da5b60c6c9928645c",
+      "cache_hit": true,
+      "n_patches": 256,
+      "seconds": 9.5588,
+      "stats": {
+        "batch_size": 32,
+        "cache_hit": true,
+        "calibrated": true,
+        "device": "mps",
+        "embed_seconds": 52.9582,
+        "mask_source": "qc_screen",
+        "n_candidates": 8488,
+        "n_patches": 256,
+        "n_sampled": 256,
+        "patches_per_second": 4.66,
+        "peak_rss_bytes": 5880561664,
+        "peak_rss_delta_bytes": 0,
+        "pixel_read_seconds": 0.7952,
+        "pixels_read": true,
+        "precision": "fp32",
+        "preprocess_seconds": 0.0,
+        "read_seconds": 1.6653,
+        "stain_source_sha256": null,
+        "total_seconds": 0.2614,
+        "write_seconds": 0.0005
+      }
+    },
+    "feature_artifact_id": "6e15f21680bc455da5b60c6c9928645c",
+    "features_cache_hit": true,
+    "features_cache_hit_evidence": {
+      "extraction_call_reported_cache_hit": true,
+      "new_feature_artifact_rows": 0,
+      "same_artifact_as_s2_extraction_record": true
+    },
+    "job_attempts": 1,
+    "job_error": null,
+    "job_seconds_recorded": 9.573336,
+    "job_status": "succeeded",
+    "jobs_run_by_worker": [
+      {
+        "job_id": "9c404754075a4b43a8ef89a55161d53f",
+        "status": "succeeded",
+        "type": "infer_slide"
+      }
+    ],
+    "patch_count": 256,
+    "peak_rss_bytes": {
+      "after_engine_import": 294338560,
+      "after_inference_job": 6250971136,
+      "delta_during_job": 5956632576,
+      "note": "getrusage maximum resident set size of this process (monotonic high-water mark; includes the engine import and everything loaded before the job)",
+      "process_at_start": 28360704
+    },
+    "prediction_recorded": true,
+    "provenance_status": "complete",
+    "scored": true,
+    "time_breakdown_seconds": {
+      "encoder_load_inside_extraction": 9.2964,
+      "extraction_call": 9.5588,
+      "plan_and_cache_lookup_inside_extraction": 0.2614,
+      "rest_of_job (bundle, snapshot and object verification, scoring, recording)": 0.016,
+      "worker_job_wall": 9.5748
+    },
+    "unscorable_reason": null,
+    "worker_wall_seconds": 9.5748
+  },
+  "notice": "RESEARCH USE ONLY. Technical resource measurement; not a medical device, not a diagnosis, never a label, never routed to care. No score or decision is recorded here.",
+  "registration": {
+    "bundle_created": true,
+    "bundle_id": "593059e2f685424a98cf9198fc7974bc",
+    "bundle_label_scope": "slide",
+    "bundle_sha256": "8f1eb227dfd20d4b8002f5093d748fb6a91bd9290596e42028d3b27f25625d19",
+    "extraction_device": "mps",
+    "model_created": true,
+    "model_status": "research_candidate",
+    "model_version_id": "e19ffe37fe354845b6c36a83e2d1dfa5",
+    "precision": "fp32",
+    "wall_seconds": 0.0109
+  },
+  "request": {
+    "job_created": true,
+    "job_id": "9c404754075a4b43a8ef89a55161d53f",
+    "job_status_at_request": "queued",
+    "wall_seconds": 0.0098
+  },
+  "research_use_only": true,
+  "safety_after": {
+    "feature_artifacts": 541,
+    "inference_bundles": 1,
+    "inference_predictions": 1,
+    "model_versions": 1,
+    "sealed_patients": 0,
+    "test_access_audit_rows": 0,
+    "test_releases": 0
+  },
+  "safety_before": {
+    "feature_artifacts": 541,
+    "inference_bundles": 0,
+    "inference_predictions": 0,
+    "model_versions": 0,
+    "sealed_patients": 0,
+    "test_access_audit_rows": 0,
+    "test_releases": 0
+  },
+  "schema": "dermpath.bundle_inference_measurement/1",
+  "script_sha256": "54340db742ce02ab8ce1911eef0edf4dbb85b14e30395d483428c74fef10e436",
+  "slide": {
+    "bytes": 176894082,
+    "development_slides": 45,
+    "format": "file:910687de4a34",
+    "height": 25088,
+    "labels_read": false,
+    "levels": 7,
+    "manifest_split": "train",
+    "mpp_x": 0.4850694762547596,
+    "mpp_y": 0.4850694762547596,
+    "rank_by_pixel_area": 2,
+    "selection_rule": "largest stored image (bytes) among the development slides (split train or val) of the run's frozen manifest; ties by level-0 pixel area",
+    "slide_id": "id:ec58a21e6628",
+    "test_material_check": "not test material (engine rule test_material_reason)",
+    "width": 30208
+  },
+  "started_at": "2026-10-28T10:49:39+00:00",
+  "status": "measured",
+  "stop_reason": null,
+  "test_safety": {
+    "breaches": [],
+    "statement": "registering a bundle is not a test release; the slide is development material; no test prediction was made or read",
+    "test_release_created": false
+  }
+}

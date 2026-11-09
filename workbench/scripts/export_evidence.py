@@ -14,7 +14,10 @@ small, reviewable package under ``workbench/experiments/evidence/<experiment-id>
 * ``provenance.json``: code SHA and dirty state, driver and engine identities, configs, commands, machine and
   dependency versions, runtime and memory per stage;
 * ``dataset.json``: dataset / reference / manifest / split identities, cohort counts (documented vs actual);
-* ``identities.json``: encoders, preprocessing, feature sets, folds, runs, model / bundle identities;
+* ``identities.json``: encoders (with licence notes and caveats), preprocessing, feature sets, folds, runs (the s4
+  fp16 downstream run included), model / bundle identities (from s6, else from an attachment's ``registration``);
+  the s3 protocol's ``test`` wording is replaced by what the reports support (no run used test items, release
+  count, label-free extraction of the test slides), here and in ``results.json``;
 * ``results.json``: compact comparison, seed, learning-curve, ablation, sampling-budget and resource results with
   their uncertainty and caveats, ONLY from stages that are valid offline (see below);
 * ``artifacts_index.json``: sha256 and size of the bulky local artifacts and of the artifacts the reports pin
@@ -23,7 +26,14 @@ small, reviewable package under ``workbench/experiments/evidence/<experiment-id>
   arms that are blocked or invalid for comparison;
 * ``test_releases.json``: the test-release history (or that none was recorded);
 * ``blockers.json``: missing data, weights or accelerators, missing or failed stages, refused requests;
-* ``README.md``: a short generated guide.
+* ``README.md``: a short generated guide;
+* ``attachments/<name>`` (optional, ``--attach name=path``): supplementary JSON or Markdown records produced
+  outside the driver (e.g. a sensitivity analysis, a resource measurement, an inventory), sanitized and re-scanned
+  like every other file. ``--test-release-disclosure`` (JSON) is embedded in ``test_releases.json`` under
+  ``disclosures`` (e.g. test patients processed by throwaway dry runs), ``--exclusions-supplement`` (JSON) in
+  ``exclusions.json`` under ``supplement`` (e.g. an interrupted run the driver's reports do not describe), and
+  ``--readme-note`` (Markdown) is appended to ``README.md``. The exporter never computes numbers for these inputs;
+  it only sanitizes, indexes and hashes them.
 
 Never included: databases, slides, model weights, embeddings, per-slide or per-patient tables, patient codes, slide
 file names, local absolute paths. Patient codes, accession codes, slide / bag ids and file names that survive the
@@ -43,6 +53,9 @@ Usage (from ``workbench/api``)::
 
     .venv/bin/python ../scripts/export_evidence.py --experiment-id cobra-bcc-2026-10-28
     .venv/bin/python ../scripts/export_evidence.py --experiment-id X --reports-dir /tmp/r --out-root /tmp/evidence
+    .venv/bin/python ../scripts/export_evidence.py --experiment-id X --attach sensitivity.json=/tmp/s.json \\
+        --test-release-disclosure /tmp/disclosure.json --exclusions-supplement /tmp/supplement.json \\
+        --readme-note /tmp/note.md
 
 Exit codes: 0 written, 1 refused (a leak was detected, or the package exists without ``--force``), 2 usage.
 """
@@ -74,6 +87,7 @@ DEFAULT_OUT_ROOT = WORKBENCH / "experiments" / "evidence"
 CONFIG_DIR = WORKBENCH / "experiments" / "configs"
 EVIDENCE_SCHEMA = "dermpath.cobra_evidence/1"
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")
+ATTACH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.(?:json|md)$")
 MAX_FILE_BYTES = 2 * 1024 * 1024
 FORBIDDEN_SUFFIXES = {".db", ".sqlite", ".sqlite3", ".npy", ".npz", ".safetensors", ".pt", ".pth", ".bin", ".ckpt",
                       ".svs", ".tif", ".tiff", ".ndpi", ".mrxs", ".scn", ".bif", ".dcm", ".isyntax", ".czi",
@@ -97,10 +111,13 @@ FILE_KEYS = {"filename", "source_file", "original_filename", "source_filename", 
 ROW_ID_KEYS = {"bag_id", "bag_ids", "slide_id", "slide_ids", "train_slide_ids", "fitting_slide_ids", "case_id",
                "excluded_bags_unscorable_under_some_model"}
 ID_KEYED_MAPS = {"fold_of_patient_code", "per_slide", "patient_folds"}  # mappings whose KEYS are identifiers
+#: A token this sanitizer already produced (``pt:``/``file:``/``id:``/``path:`` + 12 hex). Re-scrubbing leaves it as
+#: it is, so a supplementary record rebuilt from an earlier package's sanitized copy keeps its tokens.
+TOKEN_RE = re.compile(r"^(?:pt|file|id|path):[0-9a-f]{12}$")
 
 
 def _identifier_like(v: str) -> bool:
-    return isinstance(v, str) and len(v) >= 6 and any(c.isdigit() for c in v)
+    return isinstance(v, str) and len(v) >= 6 and any(c.isdigit() for c in v) and not TOKEN_RE.match(v)
 
 
 class LeakDetected(RuntimeError):
@@ -140,11 +157,14 @@ class Sanitizer:
     def scrub(self, obj, key: str | None = None):
         if isinstance(obj, dict):
             if key in ID_KEYED_MAPS:  # a mapping keyed by identifiers: tokenise the keys
-                return {self.token("id", str(k)): self.scrub(v, None) for k, v in obj.items()}
+                return {(str(k) if TOKEN_RE.match(str(k)) else self.token("id", str(k))): self.scrub(v, None)
+                        for k, v in obj.items()}
             return {self.scrub_str(str(k)): self.scrub(v, str(k)) for k, v in obj.items()}
         if isinstance(obj, (list, tuple)):
             return [self.scrub(v, key) for v in obj]
         if isinstance(obj, str):
+            if TOKEN_RE.match(obj):  # already a token (idempotent re-export)
+                return obj
             if key in PATIENT_KEYS:
                 return self.token("pt", obj)
             if key in FILE_KEYS:
@@ -171,13 +191,13 @@ def collect_identifiers(obj, out: set[str], key: str | None = None) -> None:
     """Every string stored under an identifier key anywhere in the reports (to catch them inside free text)."""
     if isinstance(obj, dict):
         for k, v in obj.items():
-            if key in ID_KEYED_MAPS:
+            if key in ID_KEYED_MAPS and not TOKEN_RE.match(str(k)):
                 out.add(str(k))
             collect_identifiers(v, out, str(k))
     elif isinstance(obj, (list, tuple)):
         for v in obj:
             collect_identifiers(v, out, key)
-    elif isinstance(obj, str) and key in PATIENT_KEYS | FILE_KEYS | ROW_ID_KEYS:
+    elif isinstance(obj, str) and key in PATIENT_KEYS | FILE_KEYS | ROW_ID_KEYS and not TOKEN_RE.match(obj):
         out.add(obj)
         if key in FILE_KEYS and "." in obj:
             out.add(obj.rsplit(".", 1)[0])  # the stem appears without its extension in other places
@@ -521,14 +541,130 @@ def run_identity(rec: dict) -> dict:
             "training_summary": rec.get("training_summary")}
 
 
-def build_identities(r: Reports) -> dict:
-    s0, s2, s3 = (r.reports.get(s) if isinstance(r.reports.get(s), dict) else {} for s in ("s0", "s2", "s3"))
+# --------------------------------------------------------------------------------------------- test-split wording
+# The driver's s3 protocol calls the test split "untouched", and some notes say it is "never read". Neither is
+# accurate: the feature-set builds extract every test slide label-free, s1 records the split's composition, and
+# test patients may have been processed by throwaway dry runs (disclosed separately). The exporter states what is
+# actually true instead: no run used test items, whether a test release exists, and the label-free extraction.
+
+TEST_WORDING_NOTE = ("rewritten on export: the driver's s3 protocol text overstated the test split's separation "
+                     "(its slides are feature-extracted label-free; test_releases.json lists releases and "
+                     "disclosures)")
+NEVER_READ_FIXES = (("the test split is never read", "no test label or test prediction is used; the feature-set "
+                                                     "builds extract the test slides label-free"),
+                    ("the test split was never read", "no test label or test prediction was used; the feature-set "
+                                                      "builds extract the test slides label-free"))
+
+
+def fix_test_wording(text):
+    """Replace the 'the test split is/was never read' phrasing of a driver note (other text unchanged)."""
+    if not isinstance(text, str):
+        return text
+    for old, new in NEVER_READ_FIXES:
+        text = text.replace(old, new)
+    return text
+
+
+def test_release_files(r: Reports) -> list[Path]:
+    """Every recorded test-release report: the write-once history plus the current s6 when not already in it."""
+    hist_dir = r.dir / "test_release_history"
+    cur = r.path("s6")
+    files = sorted(hist_dir.glob("s6.*.json")) if hist_dir.is_dir() else []
+    if cur.is_file():
+        cur_sha = sha256_file(cur)
+        if not any(sha256_file(p) == cur_sha for p in files):
+            files.append(cur)
+    return files
+
+
+def test_split_statement(r: Reports, disclosed: bool = False) -> str:
+    """What the exported reports support about the test split, in the owner's required wording."""
+    s3 = r.reports.get("s3") if isinstance(r.reports.get("s3"), dict) else {}
+    s4b = r.reports.get("s4b") if isinstance(r.reports.get("s4b"), dict) else {}
+    used = [x.get("test_items_used") for x in g(s3, "runs") or [] if isinstance(x, dict)]
+    parts = []
+    if used and all(u == 0 for u in used):
+        parts.append(f"not used by any run (test_items_used 0 in all {len(used)} runs)")
+    elif used:
+        parts.append(f"test_items_used per run: {sorted({str(u) for u in used})}")
+    n_files = len(test_release_files(r))
+    scope = "this dry run" if s3.get("dry_run") else "the real study"
+    if n_files == 0:
+        parts.append(f"unreleased in {scope} and not used for model selection; test metrics exist only through a "
+                     "recorded test release (none recorded)")
+    else:
+        parts.append(f"{n_files} recorded test-release report(s) (test_releases.json); never used for model "
+                     "selection by a development run")
+    n_free = [v for v in (g(e, "resources", "test_slides_extracted_label_free")
+                          for e in (g(s4b, "encoders") or {}).values() if isinstance(e, dict))
+              if isinstance(v, int)]
+    parts.append((f"its {max(n_free)} slides were" if n_free else "its slides are")
+                 + " feature-extracted label-free by the fixed encoders (no labels read)")
+    if disclosed:
+        parts.append("see test_releases.json -> disclosures for test patients processed outside the real study "
+                     "(e.g. throwaway dry runs)")
+    return "; ".join(parts)
+
+
+def export_protocol(protocol, statement: str):
+    """The s3 protocol with its ``test`` wording replaced by ``statement``."""
+    if not isinstance(protocol, dict):
+        return protocol
+    out = dict(protocol)
+    if "test" in out:
+        out["test"] = statement
+        out["test_wording_note"] = TEST_WORDING_NOTE
+    return out
+
+
+def registration_from_attachments(attachments: dict | None) -> dict | None:
+    """A model / bundle registered outside the driver (e.g. by the inference measurement script) and recorded in an
+    attachment's ``registration``; registering a bundle is not a test release."""
+    for name, content in sorted((attachments or {}).items()):
+        reg = content.get("registration") if isinstance(content, dict) else None
+        if not (isinstance(reg, dict) and reg.get("bundle_id")):
+            continue
+        cand = content.get("candidate") if isinstance(content.get("candidate"), dict) else {}
+        return {"model_id": reg.get("model_version_id"), "model_status": reg.get("model_status"),
+                "bundle_id": reg.get("bundle_id"), "bundle_sha256": reg.get("bundle_sha256"),
+                "bundle_label_scope": reg.get("bundle_label_scope"), "precision": reg.get("precision"),
+                "checkpoint_sha256": cand.get("checkpoint_sha256"), "run_id": cand.get("run_id"),
+                "encoder": cand.get("encoder"), "head": cand.get("head"), "seed": cand.get("seed"),
+                "feature_set_id": cand.get("feature_set_id"),
+                "source": f"attachments/{name} -> registration (registered outside the driver, after s3; "
+                          "registering a bundle is not a test release)"}
+    return None
+
+
+def license_view(lic, dataset: dict) -> dict:
+    """An encoder's licence record with its notes and the caveats that sit beside ``commercial_use``."""
+    lic = lic if isinstance(lic, dict) else {}
+    out = {k: lic.get(k) for k in ("name", "commercial_use", "url", "notes")}
+    caveats = []
+    if str(lic.get("commercial_use") or "").lower() in ("yes", "true", "permitted"):
+        caveats.append("commercial_use describes the encoder weights' own licence only, not the data the encoder "
+                       "was trained on (see notes): the training data's terms are a question for counsel")
+    if dataset.get("licence") or dataset.get("license"):
+        caveats.append(f"models trained on the {dataset.get('dataset') or 'imported dataset'} data with these "
+                       f"features carry that dataset's licence ({dataset.get('licence') or dataset.get('license')}; "
+                       f"commercial use: {dataset.get('commercial_use')}); whether trained weights are adaptations "
+                       "under share-alike is unsettled: legal review before any commercial use "
+                       "(docs/license-ledger.md)")
+    if caveats:
+        out["caveats"] = caveats
+    return out
+
+
+def build_identities(r: Reports, attachments: dict | None = None, test_statement: str | None = None) -> dict:
+    s0, s1, s2, s3 = (r.reports.get(s) if isinstance(r.reports.get(s), dict) else {} for s in ("s0", "s1", "s2", "s3"))
     s4, s4b, s6 = (r.reports.get(s) if isinstance(r.reports.get(s), dict) else {} for s in ("s4", "s4b", "s6"))
+    statement = test_statement or test_split_statement(r)
+    dataset = g(s1, "public_dataset") or {}
     encs = {}
     for e, v in (g(s0, "encoders", "benchmark_encoders") or {}).items():
         encs[e] = {k: v.get(k) for k in ("status", "spec_sha256", "weights_sha256", "weights_config_sha256",
                                          "input_size", "embedding_dim")}
-        encs[e]["license"] = {k: g(v, "license", k) for k in ("name", "commercial_use", "url")}
+        encs[e]["license"] = license_view(v.get("license"), dataset)
     sets = {}
     for e, v in (g(s2, "encoders") or {}).items():
         sets[f"s2 technical {e}"] = fs_identity(v.get("feature_set"))
@@ -541,25 +677,34 @@ def build_identities(r: Reports) -> dict:
     for e, v in (g(s4b, "encoders") or {}).items():
         if isinstance(v, dict) and v.get("feature_set"):
             sets[f"s4b budget {e}"] = fs_identity(g(v, "feature_set", "feature_set"))
+    down = g(s4, "precision", "downstream_fp16") or {}  # the accepted low-precision set and its downstream run
+    down_arm = down.get("arm") or "c_precision_fp16"
+    if isinstance(down.get("feature_set"), dict) and down["feature_set"].get("feature_set"):
+        sets[f"s4 {down_arm} {down.get('encoder')}"] = fs_identity(g(down, "feature_set", "feature_set"))
     runs = [run_identity(x) for x in (g(s3, "runs") or []) if isinstance(x, dict)]
     for arm, by in (g(s4, "arms") or {}).items():
         for e, v in (by or {}).items():
             if isinstance(v, dict) and isinstance(v.get("run"), dict):
                 runs.append({**run_identity(v["run"]), "role": arm, "stage": "s4"})
+    if isinstance(down.get("run"), dict):
+        runs.append({**run_identity(down["run"]), "role": down_arm, "stage": "s4",
+                     "baseline_run_id": down.get("baseline_run_id")})
     for e, v in (g(s4b, "encoders") or {}).items():
         if isinstance(v, dict) and isinstance(v.get("run"), dict):
             runs.append({**run_identity(v["run"]), "role": "sampling_budget_higher", "stage": "s4b"})
     reg = g(s6, "registry") or {}
+    model_and_bundle = ({"model_id": g(reg, "model", "id"), "bundle_id": reg.get("bundle_id"),
+                         "bundle_sha256": g(reg, "bundle", "bundle_sha256"),
+                         "checkpoint_sha256": g(reg, "model", "checkpoint_sha256"), "source": "s6 registry"}
+                        if reg else registration_from_attachments(attachments))
     return {"encoders": encs,
             "preprocessing": {"policy": g(s2, "policy"), "policy_identity": g(s2, "policy_identity")},
             "feature_sets": sets,
-            "folds": {"protocol": g(s3, "protocol"),
+            "folds": {"protocol": export_protocol(g(s3, "protocol"), statement),
                       "note": "fold_assignment_sha256 hashes each run's patient -> fold map (the map itself contains "
                               "patient codes and is not exported)"},
             "runs": runs,
-            "model_and_bundle": {"model_id": g(reg, "model", "id"), "bundle_id": reg.get("bundle_id"),
-                                 "bundle_sha256": g(reg, "bundle", "bundle_sha256"),
-                                 "checkpoint_sha256": g(reg, "model", "checkpoint_sha256")} if reg else None,
+            "model_and_bundle": model_and_bundle,
             "offline_status": {s: r.status(s)["status"] for s in ("s0", "s2", "s3", "s4", "s4b", "s6")}}
 
 
@@ -609,7 +754,8 @@ def arm_is_evidence(v: dict) -> bool:
     return not str(g(v, "overrides", "stain_normalization") or "").startswith("macenko")
 
 
-def build_results(r: Reports) -> dict:
+def build_results(r: Reports, test_statement: str | None = None) -> dict:
+    statement = test_statement or test_split_statement(r)
     out: dict = {"notice": NOTICE, "included_stages": [s for s in r.drv.STAGES if r.valid(s)],
                  "rule": "only stages valid offline contribute numbers; everything else is in exclusions.json"}
     s2 = r.get("s2")
@@ -627,8 +773,9 @@ def build_results(r: Reports) -> dict:
     if s3:
         comps = s3.get("comparisons") or {}
         out["development_comparison"] = {
-            "protocol": {k: g(s3, "protocol", k) for k in ("evaluation_protocol", "cv_folds", "threshold_rule",
-                                                           "calibration", "seeds", "fold_consistency", "test")},
+            "protocol": export_protocol({k: g(s3, "protocol", k) for k in (
+                "evaluation_protocol", "cv_folds", "threshold_rule", "calibration", "seeds", "fold_consistency",
+                "test")}, statement),
             "runs_oof": [oof_view(x) for x in s3.get("runs") or [] if isinstance(x, dict)],
             "seed_summary": s3.get("seed_summary"),
             "comparisons_primary_seed": {k: [comparison_view(c) for c in comps.get(k) or []]
@@ -649,7 +796,9 @@ def build_results(r: Reports) -> dict:
                                             for k in ("rule", "declared_at", "seeds", "ranking", "tie")}
             | {"chosen": {k: g(s3, "pre_declared_test_candidate", "chosen", k)
                           for k in ("encoder", "head", "run_id")}},
-            "test_untouched_check": s3.get("test_untouched_check"),
+            # the driver's key is test_untouched_check; renamed because its content shows only that no run used
+            # test items (the split's slides are still feature-extracted label-free)
+            "test_items_used_check": s3.get("test_untouched_check"),
             "labels": "development metrics after threshold selection are tuning estimates (optimistic); calibration "
                       "measured on the same out-of-fold scores used to fit it is in-sample"}
     s4 = r.get("s4")
@@ -680,7 +829,7 @@ def build_results(r: Reports) -> dict:
     if s4b:
         out["sampling_budget"] = {
             "budgets": s4b.get("budgets"), "head": s4b.get("head"), "seed": s4b.get("seed"),
-            "development_only": s4b.get("development_only"), "note": s4b.get("note"),
+            "development_only": s4b.get("development_only"), "note": fix_test_wording(s4b.get("note")),
             "encoders": {e: {"status": (v or {}).get("status"), "reason": (v or {}).get("reason"),
                              "coverage": (v or {}).get("coverage"), "resources": (v or {}).get("resources"),
                              "prediction_changes": (v or {}).get("prediction_changes"),
@@ -714,14 +863,10 @@ def build_results(r: Reports) -> dict:
 
 
 def build_test_releases(r: Reports) -> dict:
-    hist_dir = r.dir / "test_release_history"
     cur = r.path("s6")
     cur_sha = sha256_file(cur) if cur.is_file() else None
     items = []
-    files = sorted(hist_dir.glob("s6.*.json")) if hist_dir.is_dir() else []
-    if cur.is_file() and not any(sha256_file(p) == cur_sha for p in files):
-        files.append(cur)
-    for p in files:
+    for p in test_release_files(r):
         rep = read_json(p) or {}
         is_cur = sha256_file(p) == cur_sha
         body = rep.get("test_evaluation") or {}
@@ -745,12 +890,16 @@ def build_test_releases(r: Reports) -> dict:
     # re-read) is never "superseded by a later release"
     r.drv.release_history_labels(items, cur_sha, r.status("s6")["status"] if cur.is_file() else None)
     return {"releases": items, "count": len(items),
-            "note": ("no test release recorded: the test split was never read by the driver" if not items else
+            "note": ("no test release recorded: no model has been evaluated on the test split and no test metric "
+                     "exists (unreleased and not used for model selection). It is not unread: s1 records its "
+                     "composition (patients and slides per label) and the feature-set builds extract its slides "
+                     "label-free" if not items else
                      "every recorded test look is listed; an obsolete release's candidate no longer matches the "
                      "current development stage, and its test patients count as already looked at")}
 
 
-def build_artifacts_index(r: Reports) -> dict:
+def build_artifacts_index(r: Reports, identities: dict | None = None) -> dict:
+    identities = identities if identities is not None else build_identities(r)
     local = []
     for p in sorted(r.dir.rglob("*")):
         if p.is_file() and p.name != "evidence_salt" and not p.name.startswith("."):
@@ -760,15 +909,19 @@ def build_artifacts_index(r: Reports) -> dict:
     if s1:
         pinned.append({"kind": "dataset_manifest", "sha256": g(s1, "dataset", "manifest_sha256"),
                        "id": g(s1, "dataset", "dataset_version_id")})
-    for x in build_identities(r)["runs"]:
+    for x in identities["runs"]:
         if x.get("checkpoint_sha256"):
             pinned.append({"kind": "checkpoint", "sha256": x["checkpoint_sha256"], "run_id": x["run_id"]})
-    for name, fs in build_identities(r)["feature_sets"].items():
+    for name, fs in identities["feature_sets"].items():
         if fs:
             pinned.append({"kind": "feature_set_spec", "sha256": fs.get("spec_sha256"),
                            "feature_set_id": fs.get("feature_set_id"), "label": name,
                            "weights_sha256": fs.get("weights_sha256"),
                            "stain_reference_sha256": fs.get("stain_reference_sha256")})
+    mb = identities.get("model_and_bundle") or {}
+    if mb.get("bundle_sha256"):
+        pinned.append({"kind": "inference_bundle", "sha256": mb["bundle_sha256"], "bundle_id": mb.get("bundle_id"),
+                       "model_id": mb.get("model_id")})
     return {"local_reports": local, "pinned_artifacts": pinned,
             "note": "hashes only: reports (which contain patient codes), databases, slides, weights and "
                     "embeddings stay local and out of Git"}
@@ -845,10 +998,20 @@ def build_blockers(r: Reports) -> dict:
     return {"blockers": out, "note": "missing data, weights or hardware are blockers, never a reason to invent results"}
 
 
-def readme(experiment_id: str, results: dict, exclusions: dict, releases: dict) -> str:
+def readme(experiment_id: str, results: dict, exclusions: dict, releases: dict, attachments: list[str] | None = None,
+           note: str | None = None) -> str:
     inc = ", ".join(results.get("included_stages") or []) or "none"
     exc = ", ".join(f"{s} ({v})" for s, v in ((k, x["status"]) for k, x in exclusions["stages"].items())
                     if v not in ("valid",)) or "none"
+    extra = []
+    if releases.get("disclosures") is not None:
+        extra.append("* Test-release disclosures: see `test_releases.json` -> `disclosures`")
+    if exclusions.get("supplement") is not None:
+        extra.append("* Exclusions not described by the driver's reports: see `exclusions.json` -> `supplement`")
+    if attachments:
+        extra.append("* Attachments (supplementary records, sanitized; numbers computed by the named scripts, not by "
+                     "this exporter): " + ", ".join(f"`attachments/{a}`" for a in attachments))
+    tail = ["## Notes", "", note.strip(), ""] if note and note.strip() else []
     return "\n".join([
         f"# Evidence package `{experiment_id}`",
         "",
@@ -859,6 +1022,7 @@ def readme(experiment_id: str, results: dict, exclusions: dict, releases: dict) 
         f"* Stages contributing numbers (valid offline): {inc}",
         f"* Stages excluded or not present: {exc}",
         f"* Test releases recorded: {releases.get('count', 0)}",
+        *extra,
         "",
         "Files: `index.json` (hashes of every file), `provenance.json`, `dataset.json`, `identities.json`,",
         "`results.json`, `artifacts_index.json`, `exclusions.json`, `test_releases.json`, `blockers.json`.",
@@ -866,6 +1030,7 @@ def readme(experiment_id: str, results: dict, exclusions: dict, releases: dict) 
         "Identifiers are salted HMAC tokens (`pt:`, `file:`, `id:`, `path:`); the salt is not in the package.",
         "No database, slide, weight, embedding, patient code or slide file name is included.",
         "",
+        *tail,
     ])
 
 
@@ -881,6 +1046,7 @@ def write_package(out_dir: Path, files: dict[str, object], sanitizer: Sanitizer,
         if isinstance(content, str):
             data = sanitizer.scrub_str(data)
         p = out_dir / name
+        p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(data, encoding="utf-8")
         entries.append({"path": name, "bytes": p.stat().st_size, "sha256": sha256_file(p)})
     index = {**meta, "files": entries}
@@ -918,7 +1084,56 @@ def build_parser() -> argparse.ArgumentParser:
                                        "<reports-dir>/_state/evidence_salt; created when absent; never exported)")
     p.add_argument("--include-dry-run", action="store_true", help="let dry-run reports contribute (flagged)")
     p.add_argument("--force", action="store_true", help="replace an existing package of the same id")
+    p.add_argument("--attach", action="append", default=[], metavar="NAME=PATH",
+                   help="add a supplementary .json or .md record as attachments/NAME (sanitized, indexed, re-scanned; "
+                        "repeatable)")
+    p.add_argument("--test-release-disclosure", metavar="PATH",
+                   help="JSON embedded in test_releases.json under 'disclosures' (e.g. dry-run test looks)")
+    p.add_argument("--exclusions-supplement", metavar="PATH",
+                   help="JSON embedded in exclusions.json under 'supplement' (experiments the reports do not cover)")
+    p.add_argument("--readme-note", metavar="PATH", help="Markdown appended to README.md under 'Notes'")
     return p
+
+
+class InputError(ValueError):
+    pass
+
+
+def load_supplements(args) -> dict:
+    """The optional supplementary inputs, validated: ``{"attachments": {name: content}, "sources": [...],
+    "disclosure": obj|None, "supplement": obj|None, "note": str|None}``. Raises :class:`InputError`."""
+    def load(path: str, kind: str):
+        p = Path(path)
+        if not p.is_file():
+            raise InputError(f"{kind}: no file {path}")
+        text = p.read_text(encoding="utf-8")
+        if kind.endswith(".md") or kind == "--readme-note":
+            return text, hashlib.sha256(text.encode()).hexdigest()
+        try:
+            return json.loads(text), hashlib.sha256(text.encode()).hexdigest()
+        except ValueError as exc:
+            raise InputError(f"{kind}: {path} is not valid JSON ({exc})") from exc
+
+    out: dict = {"attachments": {}, "sources": [], "disclosure": None, "supplement": None, "note": None}
+    for spec in args.attach or []:
+        name, sep, path = spec.partition("=")
+        if not sep or not ATTACH_RE.match(name):
+            raise InputError(f"--attach {spec!r}: expected NAME=PATH with NAME letters, digits, '.', '_' or '-' "
+                             "ending in .json or .md")
+        if name in out["attachments"]:
+            raise InputError(f"--attach: {name} given twice")
+        content, sha = load(path, name)
+        out["attachments"][name] = content
+        out["sources"].append({"attachment": f"attachments/{name}", "source_sha256": sha})
+    for key, opt in (("disclosure", "test_release_disclosure"), ("supplement", "exclusions_supplement")):
+        if getattr(args, opt):
+            content, sha = load(getattr(args, opt), "--" + opt.replace("_", "-"))
+            out[key] = content
+            out["sources"].append({opt: True, "source_sha256": sha})
+    if args.readme_note:
+        out["note"], sha = load(args.readme_note, "--readme-note")
+        out["sources"].append({"readme_note": True, "source_sha256": sha})
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -937,6 +1152,11 @@ def main(argv: list[str] | None = None) -> int:
     if final.exists() and not args.force:
         print(f"error: {final} exists; pass --force to replace it", file=sys.stderr)
         return 1
+    try:
+        sup = load_supplements(args)
+    except InputError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     drv = load_driver()
     salt = load_salt(Path(args.salt_file).resolve() if args.salt_file else reports_dir / "_state" / "evidence_salt")
     r = Reports(drv, reports_dir, args.include_dry_run, current_engine_identity())
@@ -944,22 +1164,33 @@ def main(argv: list[str] | None = None) -> int:
     for rep in list(r.reports.values()) + [read_json(p) for p in (reports_dir / "test_release_history").glob("*.json")
                                            if (reports_dir / "test_release_history").is_dir()]:
         collect_identifiers(rep, known)
+    for extra in [*sup["attachments"].values(), sup["disclosure"], sup["supplement"]]:
+        if not isinstance(extra, str):
+            collect_identifiers(extra, known)
     sanitizer = Sanitizer(salt, known)
     git = git_state()
     engine = current_engine_identity()
-    results = build_results(r)
+    statement = test_split_statement(r, disclosed=sup["disclosure"] is not None)
+    results = build_results(r, statement)
     exclusions = build_exclusions(r)
     releases = build_test_releases(r)
+    if sup["disclosure"] is not None:
+        releases["disclosures"] = sup["disclosure"]
+    if sup["supplement"] is not None:
+        exclusions["supplement"] = sup["supplement"]
+    identities = build_identities(r, sup["attachments"], statement)
     files = {
         "provenance.json": build_provenance(r, git, engine, argv),
         "dataset.json": build_dataset(r),
-        "identities.json": build_identities(r),
+        "identities.json": identities,
         "results.json": results,
-        "artifacts_index.json": build_artifacts_index(r),
+        "artifacts_index.json": build_artifacts_index(r, identities),
         "exclusions.json": exclusions,
         "test_releases.json": releases,
         "blockers.json": build_blockers(r),
-        "README.md": readme(args.experiment_id, results, exclusions, releases),
+        "README.md": readme(args.experiment_id, results, exclusions, releases, sorted(sup["attachments"]),
+                            sup["note"]),
+        **{f"attachments/{name}": content for name, content in sorted(sup["attachments"].items())},
     }
     meta = {"schema": EVIDENCE_SCHEMA, "experiment_id": args.experiment_id,
             "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
@@ -968,6 +1199,7 @@ def main(argv: list[str] | None = None) -> int:
                      "tracked_diff_sha256": git.get("tracked_diff_sha256"),
                      "engine_code_tree_sha256": engine.get("engine_code_tree_sha256")},
             "generator": {"file": "workbench/scripts/export_evidence.py", "sha256": sha256_file(SCRIPT)},
+            "supplementary_inputs": sup["sources"],
             "sanitization": {"salt_id": sanitizer.salt_id,
                              "rules": ["allowlisted fields only (no per-slide or per-patient tables)",
                                        "patient / accession codes -> pt:<hmac>", "slide file names -> file:<hmac>",

@@ -20,11 +20,12 @@ import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 
-PATIENTS = ["COBRA-P858284", "COBRA-P774819", "COBRA-P123456"]
-ACCESSION = "COBRA-P858284-S2"
+# Fictitious placeholders in COBRA's code format (checked absent from COBRA's metadata); never real patient codes.
+PATIENTS = ["COBRA-P000111", "COBRA-P000112", "COBRA-P000113"]
+ACCESSION = "COBRA-P000111-S2"
 FILES = ["RUMC-B19-8899_HE.tif", "RUMC-B20-0042_HE.tif"]
 SLIDE_IDS = ["0995f597c1d24a6e9b1f0000000000aa", "10604dc7c1d24a6e9b1f0000000000bb"]
-BARE_PATIENT_ID = "P774819"
+BARE_PATIENT_ID = "P000112"
 HOME_PATH = str(Path.home() / "Desktop" / "private-folder" / "var")
 
 
@@ -140,10 +141,12 @@ def bodies(m) -> dict:
     }
 
 
-def make_reports(drv, env, tmp_path, *, release=True) -> Path:
+def make_reports(drv, env, tmp_path, *, release=True, patch=None) -> Path:
     settings, _ = env
     reports = tmp_path / "reports"
     b = bodies(drv)
+    if patch is not None:
+        patch(b)
 
     def driver(*argv):
         args = drv.build_parser().parse_args(["--var-dir", str(settings.var_dir), "--reports-dir", str(reports),
@@ -277,7 +280,8 @@ def test_stale_invalid_and_legacy_reports_are_excluded_with_reasons(drv, exp, en
     assert exc["stages"]["s8"]["status"] == "stale"  # its upstream reports changed under it
     assert exc["stages"]["s6"]["status"] == "missing"
     rel = json.loads((pkg / "test_releases.json").read_text())
-    assert rel["count"] == 0 and "never read" in rel["note"]
+    assert rel["count"] == 0 and "no test release recorded" in rel["note"]
+    assert "never read" not in rel["note"] and "label-free" in rel["note"]
 
 
 def test_obsolete_release_history_is_kept_and_marked(drv, exp, env, tmp_path):
@@ -336,3 +340,152 @@ def test_export_refuses_overwrite_bad_ids_and_aborts_on_leaks(drv, exp, env, tmp
                    "--salt-file", str(tmp_path / "salt")])
     assert rc == 1
     assert not (out_root / "leaky").exists() and not any(out_root.glob(".tmp-*"))
+
+
+# --------------------------------------------------------------------------- supplementary inputs (attachments)
+
+
+def test_attachments_disclosures_and_notes_are_sanitized_and_indexed(drv, exp, env, tmp_path):
+    reports = make_reports(drv, env, tmp_path, release=False)
+    src = tmp_path / "supplements"
+    src.mkdir()
+    (src / "sens.json").write_text(json.dumps({
+        "runs": [{"encoder": drv.HANDCRAFTED, "auroc": {"value": 0.77, "ci": [0.6, 0.9]}}],
+        "pairs": [{"slide_id": SLIDE_IDS[0], "patient_code": PATIENTS[0], "note": f"{FILES[0]} of {PATIENTS[1]}"}],
+        "where": f"{HOME_PATH}/reports"}))
+    (src / "inventory.md").write_text(f"# Inventory\n\nslide {FILES[1]} of {PATIENTS[2]} at {HOME_PATH}\n")
+    (src / "disclosure.json").write_text(json.dumps({"dry_runs": {"test_patients_processed": 4,
+                                                                   "example": PATIENTS[0]}}))
+    (src / "supplement.json").write_text(json.dumps({"interrupted_run": {"reason": "stopped during s4",
+                                                                         "log": f"{HOME_PATH}/_full_run.log"}}))
+    (src / "note.md").write_text(f"Test split never released. Dry runs touched {PATIENTS[1]}.\n")
+    rc, pkg = export(exp, reports, tmp_path, "--attach", f"sensitivity.json={src / 'sens.json'}",
+                     "--attach", f"inventory.md={src / 'inventory.md'}",
+                     "--test-release-disclosure", str(src / "disclosure.json"),
+                     "--exclusions-supplement", str(src / "supplement.json"), "--readme-note", str(src / "note.md"))
+    assert rc == 0
+    text = all_text(pkg)
+    for needle in (*PATIENTS, *FILES, SLIDE_IDS[0], "COBRA-P", ".tif", str(Path.home())):
+        assert needle not in text, needle
+    sens = json.loads((pkg / "attachments" / "sensitivity.json").read_text())
+    assert sens["runs"][0]["auroc"] == {"value": 0.77, "ci": [0.6, 0.9]}  # numbers pass through unchanged
+    assert sens["pairs"][0]["patient_code"].startswith("pt:") and sens["pairs"][0]["slide_id"].startswith("id:")
+    assert (pkg / "attachments" / "inventory.md").read_text().startswith("# Inventory")
+    rel = json.loads((pkg / "test_releases.json").read_text())
+    assert rel["count"] == 0 and rel["disclosures"]["dry_runs"]["test_patients_processed"] == 4
+    exc = json.loads((pkg / "exclusions.json").read_text())
+    assert exc["supplement"]["interrupted_run"]["reason"] == "stopped during s4"
+    readme = (pkg / "README.md").read_text()
+    assert "attachments/sensitivity.json" in readme and "Test split never released." in readme
+    index = json.loads((pkg / "index.json").read_text())
+    listed = {f["path"]: f["sha256"] for f in index["files"]}
+    assert {"attachments/sensitivity.json", "attachments/inventory.md"} <= set(listed)
+    for path, sha in listed.items():
+        assert hashlib.sha256((pkg / path).read_bytes()).hexdigest() == sha
+    assert len(index["supplementary_inputs"]) == 5
+
+
+def test_bad_supplementary_inputs_are_refused(drv, exp, env, tmp_path):
+    reports = make_reports(drv, env, tmp_path, release=False)
+    good = tmp_path / "a.json"
+    good.write_text("{}")
+    bad = tmp_path / "b.json"
+    bad.write_text("{not json")
+    for extra in (["--attach", f"../escape.json={good}"], ["--attach", f"noext={good}"],
+                  ["--attach", f"x.json={tmp_path / 'missing.json'}"], ["--attach", f"x.json={bad}"],
+                  ["--attach", f"x.json={good}", "--attach", f"x.json={good}"],
+                  ["--test-release-disclosure", str(bad)]):
+        assert export(exp, reports, tmp_path, *extra)[0] == 2, extra
+    assert not (tmp_path / "evidence" / "cobra-test-1").exists()
+
+
+# --------------------------------------------------------------------------- test-split wording, identities
+
+
+def _realistic_s3_s4(b):
+    """The driver's own wording and the identity records the real reports carry."""
+    b["s3"]["protocol"]["test"] = "untouched (only a recorded test release reads it)"
+    b["s3"]["test_untouched_check"] = {"every_run_scored_only_train_and_oof": True, "test_items_used": [0]}
+    for run in b["s3"]["runs"]:
+        run["test_items_used"] = 0
+    b["s4b"]["note"] = "development data only (out-of-fold predictions; the test split is never read)."
+    b["s4b"]["encoders"]["handcrafted-stain-texture-v1"]["resources"] = {"test_slides_extracted_label_free": 15}
+    b["s0"]["encoders"]["benchmark_encoders"]["midnight-12k"]["license"] = {
+        "name": "MIT", "commercial_use": "yes", "url": "https://huggingface.co/kaiko-ai/midnight",
+        "notes": "trained on public TCGA FFPE slides, whose terms are a question for counsel"}
+    b["s1"]["public_dataset"] = {"dataset": "COBRA", "licence": "CC BY-NC-SA 4.0", "commercial_use": "not permitted"}
+    b["s4"]["precision"] = {"status": "succeeded", "downstream_fp16": {
+        "arm": "c_precision_fp16", "encoder": "midnight-12k", "status": "succeeded", "baseline_run_id": "run-base",
+        "run": {"run_id": "run-fp16", "encoder": "midnight-12k", "head": "meanpool_logreg", "seed": 0,
+                "status": "succeeded", "checkpoint": {"sha256": "d" * 64}, "feature_set_id": "fs-fp16"},
+        "feature_set": {"feature_set": {"feature_set": {"feature_set_id": "fs-fp16", "spec_sha256": "e" * 64,
+                                                        "precision": "fp16"}}}}}
+
+
+def test_test_split_wording_is_rewritten_on_export(drv, exp, env, tmp_path):
+    """The driver calls the test split 'untouched' and 'never read'; its slides are feature-extracted label-free, so
+    the package states what the reports support, in the required wording, and never the word 'untouched'."""
+    reports = make_reports(drv, env, tmp_path, release=False, patch=_realistic_s3_s4)
+    src = tmp_path / "disclosure.json"
+    src.write_text(json.dumps({"dry_runs": {"test_patients_processed": 4}}))
+    rc, pkg = export(exp, reports, tmp_path, "--test-release-disclosure", str(src))
+    assert rc == 0
+    ident = json.loads((pkg / "identities.json").read_text())
+    res = json.loads((pkg / "results.json").read_text())
+    for stmt in (ident["folds"]["protocol"]["test"], res["development_comparison"]["protocol"]["test"]):
+        assert "unreleased in the real study and not used for model selection" in stmt
+        assert "test_items_used 0" in stmt and "15 slides were feature-extracted label-free" in stmt
+        assert "disclosures" in stmt
+    assert res["development_comparison"]["test_items_used_check"]["test_items_used"] == [0]
+    assert "never read" not in res["sampling_budget"]["note"] and "label-free" in res["sampling_budget"]["note"]
+    rel = json.loads((pkg / "test_releases.json").read_text())
+    assert rel["count"] == 0 and "never read" not in rel["note"]
+    assert "untouched" not in all_text(pkg).lower()
+
+
+def test_test_split_wording_counts_a_recorded_release(drv, exp, env, tmp_path):
+    reports = make_reports(drv, env, tmp_path, release=True, patch=_realistic_s3_s4)
+    rc, pkg = export(exp, reports, tmp_path)
+    assert rc == 0
+    stmt = json.loads((pkg / "identities.json").read_text())["folds"]["protocol"]["test"]
+    assert "recorded test-release report" in stmt and "unreleased" not in stmt and "untouched" not in stmt
+
+
+def test_identities_carry_fp16_run_registered_bundle_and_licence_caveats(drv, exp, env, tmp_path):
+    reports = make_reports(drv, env, tmp_path, release=False, patch=_realistic_s3_s4)
+    meas = tmp_path / "inference.json"
+    meas.write_text(json.dumps({
+        "registration": {"model_version_id": "mv-1", "bundle_id": "bundle-1", "bundle_sha256": "b" * 64,
+                         "bundle_label_scope": "slide", "model_status": "research_candidate", "precision": "fp32"},
+        "candidate": {"run_id": "run-cand", "checkpoint_sha256": "c" * 64, "encoder": "midnight-12k",
+                      "head": "abmil", "seed": 0}}))
+    rc, pkg = export(exp, reports, tmp_path, "--attach", f"inference_measurement.json={meas}")
+    assert rc == 0
+    ident = json.loads((pkg / "identities.json").read_text())
+    fp16 = [x for x in ident["runs"] if x["run_id"] == "run-fp16"]
+    assert len(fp16) == 1 and fp16[0]["role"] == "c_precision_fp16" and fp16[0]["baseline_run_id"] == "run-base"
+    assert ident["feature_sets"]["s4 c_precision_fp16 midnight-12k"]["feature_set_id"] == "fs-fp16"
+    mb = ident["model_and_bundle"]
+    assert mb["bundle_id"] == "bundle-1" and mb["model_id"] == "mv-1" and mb["checkpoint_sha256"] == "c" * 64
+    assert "not a test release" in mb["source"]
+    lic = ident["encoders"]["midnight-12k"]["license"]
+    assert lic["commercial_use"] == "yes" and "TCGA" in lic["notes"]
+    assert any("training data" in c for c in lic["caveats"])
+    assert any("CC BY-NC-SA 4.0" in c and "not permitted" in c for c in lic["caveats"])
+    art = json.loads((pkg / "artifacts_index.json").read_text())
+    assert any(a["kind"] == "inference_bundle" and a["sha256"] == "b" * 64 for a in art["pinned_artifacts"])
+    assert any(a["kind"] == "checkpoint" and a.get("run_id") == "run-fp16" for a in art["pinned_artifacts"])
+
+
+def test_rescrubbing_a_sanitized_record_is_idempotent(exp):
+    """A supplementary record rebuilt from an earlier package's sanitized copy keeps its tokens on re-export."""
+    raw = {"patient_code": PATIENTS[0], "slide_id": SLIDE_IDS[0], "fold_of_patient_code": {PATIENTS[1]: 2},
+           "note": f"{FILES[0]} of {PATIENTS[2]} at {HOME_PATH}"}
+    known: set[str] = set()
+    exp.collect_identifiers(raw, known)
+    once = exp.Sanitizer(b"s" * 64, known).scrub(raw)
+    known2: set[str] = set()
+    exp.collect_identifiers(once, known2)
+    assert not known2  # tokens are not collected as identifiers again
+    twice = exp.Sanitizer(b"s" * 64, known2).scrub(once)
+    assert twice == once

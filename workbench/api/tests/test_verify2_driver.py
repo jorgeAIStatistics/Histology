@@ -21,8 +21,8 @@ from types import SimpleNamespace
 import pytest
 
 SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
-COBRA_CODE = "COBRA-P858284"
-COBRA_ACCESSION = "COBRA-P858284-S2"
+COBRA_CODE = "COBRA-P000111"  # fictitious placeholder in COBRA's code format; never a real patient code
+COBRA_ACCESSION = "COBRA-P000111-S2"
 SLIDE_FILE = "RUMC-B19-8899_HE.tif"
 
 

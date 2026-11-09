@@ -1,0 +1,121 @@
+{
+  "acknowledged_warnings": null,
+  "audit_summary": {
+    "class_absent": [],
+    "mixed_label_patients": 2,
+    "patients_in_more_than_one_split": [],
+    "status": "frozen"
+  },
+  "cohort_reconciliation": {
+    "actual": {
+      "patients": 50,
+      "slide_labels": {
+        "bcc_absent_not_benign": 30,
+        "bcc_present": 30
+      },
+      "slides": 60
+    },
+    "documented": {
+      "patients": 50,
+      "slide_labels": {
+        "bcc_absent_not_benign": 30,
+        "bcc_present": 30
+      },
+      "slides": 60,
+      "source": "workbench/docs/public-datasets.md (COBRA BCC subset)"
+    },
+    "matches": true
+  },
+  "counts": {
+    "blocks": 56,
+    "cases": 56,
+    "patients": 50,
+    "slides": 60
+  },
+  "development_pool_patients": 35,
+  "exclusions_count": 0,
+  "identity": {
+    "data_mode": "real",
+    "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+    "frozen_at": "2026-10-28T03:05:12.194513+00:00",
+    "lineage_id": "ffe262d92b5b403e95466db19e5ec8c5",
+    "manifest_sha256": "a73bfa56a3532e36d48111d7e0da0de832dce57ff48432662ee5e713f74ca902",
+    "manifest_verified": true,
+    "name": "COBRA BCC benchmark (run_cobra_experiments)",
+    "patient_label_rule": "any_positive",
+    "positive_class": "bcc_present",
+    "split_family_id": "bc569b2976a640d0a7715af772c07399",
+    "split_fingerprint": "19676e29764f1c18610553c58ba449648db47d394adc0ba68c53f8a690247df2",
+    "status": "frozen",
+    "version": 1
+  },
+  "label_display": {
+    "bcc_absent_not_benign": "BCC absent (may include other malignancy, inflammation or mimics). BCC absent is NOT the same as benign.",
+    "bcc_present": "BCC present"
+  },
+  "labels_note": "task labels are bcc_present / bcc_absent_not_benign; BCC absent is never 'benign'",
+  "near_duplicate_decisions_count": 0,
+  "offline_status": "valid",
+  "public_dataset": {
+    "attribution_required": true,
+    "commercial_use": "not permitted",
+    "dataset": "COBRA",
+    "documentation": "workbench/docs/public-datasets.md",
+    "full_name": "COBRA (Classification Of Basal cell carcinoma, Risky skin tumours and Abnormalities)",
+    "label_mapping": {
+      "0": "bcc_absent_not_benign",
+      "1": "bcc_present"
+    },
+    "licence": "CC BY-NC-SA 4.0",
+    "license": null
+  },
+  "reference_standard": "imported_reference",
+  "reference_standard_notice": "IMPORTED REFERENCE LABELS: taken from an external dataset's own reference standard (see each label's provenance), not expert reads in this workbench. Results on this dataset measure agreement with that reference, not clinical performance.",
+  "split_request": {
+    "partition": "random",
+    "patient_label_rule": "any_positive",
+    "ratios": {
+      "test": 0.3,
+      "train": 0.7,
+      "val": 0.0
+    },
+    "seed": 20261027
+  },
+  "split_table": {
+    "development_pool (train \u222a val)": {
+      "patients": {
+        "bcc_absent_not_benign": 17,
+        "bcc_present": 18
+      },
+      "slides": {
+        "bcc_absent_not_benign": 23,
+        "bcc_present": 22
+      }
+    },
+    "test": {
+      "patients": {
+        "bcc_absent_not_benign": 7,
+        "bcc_present": 8
+      },
+      "slides": {
+        "bcc_absent_not_benign": 7,
+        "bcc_present": 8
+      }
+    },
+    "train": {
+      "patients": {
+        "bcc_absent_not_benign": 17,
+        "bcc_present": 18
+      },
+      "slides": {
+        "bcc_absent_not_benign": 23,
+        "bcc_present": 22
+      }
+    },
+    "val": {
+      "patients": {},
+      "slides": {}
+    }
+  },
+  "test_patients": 15
+}
