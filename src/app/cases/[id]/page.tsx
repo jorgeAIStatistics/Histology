@@ -1,23 +1,20 @@
 import { FreshnessWatcher } from "@/components/worklist/freshness-watcher";
 import { getDb } from "@/server/db/db";
-import { getActor } from "@/server/session";
+import { requireView } from "@/server/auth/guard";
 import { getCase, safeDecode } from "@/server/queries/case";
-import { ButtonLink, EmptyState, PageBody, PageHeader, Tabs } from "@/components/ui";
-import { IdentityBar, ReadOnlyTag, StaleBanner } from "@/components/domain";
+import { ButtonLink, EmptyState, PageBody, PageHeader } from "@/components/ui";
+import { IdentityBar, IdText, ReadOnlyTag, StaleBanner } from "@/components/domain";
+import { CaseBand } from "@/components/case/case-band";
 import { CaseOverview } from "@/components/case/case-overview";
 import { CaseMaterial } from "@/components/case/case-material";
 import { CaseSources } from "@/components/case/case-sources";
 import { CaseTasks } from "@/components/case/case-tasks";
 import { CaseHistory } from "@/components/case/case-history";
 import { shortScope } from "@/components/worklist/cells";
+import { caseReadiness, partDescription } from "@/components/case/format";
+import { PartLocator } from "@/components/case/part-locator";
 
 export const dynamic = "force-dynamic";
-
-/** "2026-10-14" → "Wed Oct 14" (the lab day, no time zone shift). */
-function fmtDay(day: string): string {
-  const d = new Date(`${day}T12:00:00Z`);
-  return Number.isNaN(d.getTime()) ? day : new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "short", month: "short", day: "numeric" }).format(d);
-}
 
 const TABS = ["overview", "material", "source", "tasks", "history"] as const;
 type CaseTab = (typeof TABS)[number];
@@ -41,6 +38,8 @@ export default async function CasePage({
   params: Promise<{ id: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  // The one guard: signed in (or the demo role), with this screen's view permission, before any data is read.
+  const actor = await requireView("view.cases");
   const { id } = await params;
   const sp = await searchParams;
   const one = (k: string) => (Array.isArray(sp[k]) ? (sp[k] as string[])[0] : (sp[k] as string | undefined));
@@ -51,7 +50,6 @@ export default async function CasePage({
   const key = safeDecode(id).trim().slice(0, 64);
 
   const db = getDb();
-  const actor = await getActor();
   const c = getCase(db, key);
 
   if (!c) {
@@ -59,14 +57,18 @@ export default async function CasePage({
       <PageBody>
         <PageHeader title="Case not found" />
         <EmptyState
-          title={`No case ${key} in this demo`}
+          title={
+            <>
+              No case <span className="id-mono">{key}</span> in this demo
+            </>
+          }
           action={
             <ButtonLink href="/worklist" variant="secondary" size="sm">
               Open the worklist
             </ButtonLink>
           }
         >
-          Check the number or scan the label again. Accession numbers look like D26-04817; provisional intake items (INT-...) are not cases yet and open in Intake.
+          <IdText text="Check the number or scan the label again. Accession numbers look like D26-04817; provisional intake items (INT-...) are not cases yet and open in Intake." />
         </EmptyState>
       </PageBody>
     );
@@ -90,7 +92,7 @@ export default async function CasePage({
     <>
       <IdentityBar
         identity={{ kind: "accession", accession: c.identity.accessionNumber, namespace: c.identity.namespace }}
-        part={part ? { letter: part.designation, description: [part.site, part.procedure].filter(Boolean).join(", ") } : null}
+        part={part ? { letter: part.designation, description: partDescription(part.site, part.laterality, part.procedure) } : null}
         patient={{ name: c.identity.patientLabel, mrn: c.identity.mrn, tenant: c.identity.tenantName }}
         office={c.identity.officeName}
         doctor={c.people.assignedPathologist ? { name: c.people.assignedPathologist.name, color: c.people.assignedPathologist.colorToken } : null}
@@ -99,21 +101,14 @@ export default async function CasePage({
         actions={readOnly ? <ReadOnlyTag /> : undefined}
       />
       <FreshnessWatcher freshness={c.freshness} />
+      <CaseBand
+        c={c}
+        tabs={TABS.map((t) => ({ key: t, label: tabLabel(t), count: counts[t] ?? null, href: tabHref(t) }))}
+        activeTab={tab}
+        readiness={caseReadiness(c.parts, c.summary.isComplete)}
+        worklistHref={`/worklist?view=operations&scope=all&selected=${encodeURIComponent(c.identity.accessionId)}`}
+      />
       <PageBody>
-        <PageHeader
-          title={`Case ${c.identity.accessionNumber}`}
-          description={
-            <>
-              {c.parts.length} {c.parts.length === 1 ? "part" : "parts"} from {c.sourceDocuments.length} source {c.sourceDocuments.length === 1 ? "order" : "orders"}, received{" "}
-              {fmtDay(c.identity.receivedDay)}. Accession issued by {c.identity.issuedBySystem.replace(/^Authoritative source simulator \((.+)\)$/, "$1")} (simulated source), source case <span className="id-mono">{c.identity.sourceCaseId}</span>.{c.identity.priority === "rush" ? " Rush." : ""}
-            </>
-          }
-          actions={
-            <ButtonLink href={`/worklist?view=operations&scope=all&selected=${encodeURIComponent(c.identity.accessionId)}`} variant="secondary" size="sm">
-              Show on worklist
-            </ButtonLink>
-          }
-        />
         {c.freshness.sources
           .filter((s) => s.stale && s.state === "offline")
           .map((s) => (
@@ -125,17 +120,11 @@ export default async function CasePage({
               detail="Source documents show the versions imported before the outage. Local work on this case still updates."
             />
           ))}
-        <Tabs
-          items={TABS.map((t) => ({ key: t, label: tabLabel(t), count: counts[t] ?? null, href: tabHref(t) }))}
-          active={tab}
-          label="Case sections"
-        />
-        {tab === "overview" ? <CaseOverview c={c} focusPart={part?.designation ?? null} /> : null}
+        {tab === "overview" ? <CaseOverview c={c} focusPart={part?.designation ?? null} readOnly={readOnly} /> : null}
         {tab === "material" ? <CaseMaterial c={c} /> : null}
+        {tab === "material" && part ? <PartLocator targetId={`material-${part.designation}`} /> : null}
         {tab === "source" ? <CaseSources c={c} /> : null}
-        {tab === "tasks" ? (
-          <CaseTasks c={c} actor={{ id: actor.id, role: actor.role }} />
-        ) : null}
+        {tab === "tasks" ? <CaseTasks c={c} actor={{ id: actor.id, role: actor.role }} /> : null}
         {tab === "history" ? <CaseHistory events={c.history} filters={c.historyFilters} now={now} /> : null}
       </PageBody>
     </>

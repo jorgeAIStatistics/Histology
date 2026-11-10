@@ -332,7 +332,13 @@ export function requestPrint(ctx: Ctx, input: RequestPrintInput): PrintResult {
   }
 
   const printer = pickPrinter(ctx.db, input.kind, input.printerId);
-  const purpose = input.purpose === "additional_work" ? "additional_work" : "initial";
+  // An additional slide entered by staff on request (workorder.ts) is additional work whatever the client sent.
+  const staffEntered =
+    input.targetType === "slide" &&
+    !!ctx.db
+      .prepare("SELECT 1 FROM slide s JOIN work_order wo ON wo.id = s.work_order_id WHERE s.id = ? AND wo.authorization_source = 'staff_entered_request'")
+      .get(input.targetId);
+  const purpose = input.purpose === "additional_work" || staffEntered ? "additional_work" : "initial";
   const job = insertJob(ctx, { printer, kind: input.kind, targetType: input.targetType, targetId: input.targetId, accessionId: target.accessionId, payload: target.payload, purpose });
   const d = dispatch(ctx, job.id, null);
   audit(ctx, {
@@ -355,13 +361,33 @@ export function requestPrint(ctx: Ctx, input: RequestPrintInput): PrintResult {
   };
 }
 
-/** Release a job kept in the queue while the printer was unavailable. */
+/** Read-only checks repeated before a queued job is sent (throws; writes nothing). */
+function assertReleasable(db: DB, job: PrintJobRow): ResolvedTarget {
+  const target = resolveTarget(db, job.target_type, job.target_id, job.kind);
+  if (target.payload !== job.payload) {
+    throw new DomainError(
+      "BLOCKED",
+      `${job.display_id} was queued with label data that no longer matches ${target.human}. It was not sent; cancel it and print the current label.`,
+      { printJobId: job.id, queuedPayload: job.payload, currentPayload: target.payload },
+    );
+  }
+  assertNotHeld(db, "print", target.scopes, `Releasing ${job.display_id} (label ${target.human})`);
+  return target;
+}
+
+/**
+ * Release a job kept in the queue while the printer was unavailable. The job may have waited a while:
+ * before it goes to the printer, the target is resolved again (slide/block still active, work order
+ * still authorized, label payload unchanged) and the "print" hold check is repeated, exactly as for a
+ * new request. A refused release changes nothing; the job stays queued for a person to cancel or retry.
+ */
 export function releaseJob(ctx: Ctx, printJobId: string): PrintResult {
   const job = mustJob(ctx.db, printJobId);
   const human = labelTextOf(job);
   if (job.state !== "queued" && job.state !== "planned") {
     return { ...duplicateResult(job, human), message: `${job.display_id} is ${PRINT_STATE[job.state]}, not waiting in the queue. Nothing changed.` };
   }
+  assertReleasable(ctx.db, job);
   const d = dispatch(ctx, job.id, replacedLabelFor(ctx.db, job));
   audit(ctx, {
     action: "print.released",
@@ -369,6 +395,8 @@ export function releaseJob(ctx: Ctx, printJobId: string): PrintResult {
     entityId: job.id,
     accessionId: job.accession_id,
     summary: `${job.display_id} released from the queue for ${human}: ${PRINT_STATE[d.state]}`,
+    before: { state: job.state },
+    after: { state: d.state, printer: job.printer_id, recheckedTarget: { type: job.target_type, id: job.target_id }, holdCheck: "print" },
   });
   return {
     outcome: "created",
@@ -382,18 +410,36 @@ export function releaseJob(ctx: Ctx, printJobId: string): PrintResult {
   };
 }
 
-/** Release every queued job for one printer (after it is back). */
-export function releaseQueuedForPrinter(ctx: Ctx, printerId: string): { released: PrintResult[]; message: string } {
-  const jobs = ctx.db.prepare("SELECT id FROM print_job WHERE printer_id = ? AND state IN ('planned','queued') ORDER BY created_at").all(printerId) as { id: string }[];
-  const released = jobs.map((j) => releaseJob(ctx, j.id));
+/**
+ * Release every queued job for one printer (after it is back). A job whose target is now held, void or
+ * no longer authorized is not sent (releaseJob refuses it before anything is written) and stays queued;
+ * it is listed in `notReleased` with the reason.
+ */
+export function releaseQueuedForPrinter(ctx: Ctx, printerId: string): { released: PrintResult[]; notReleased: { printJobId: string; displayId: string; reason: string }[]; message: string } {
+  const jobs = ctx.db.prepare("SELECT id, display_id FROM print_job WHERE printer_id = ? AND state IN ('planned','queued') ORDER BY created_at").all(printerId) as { id: string; display_id: string }[];
+  const released: PrintResult[] = [];
+  const notReleased: { printJobId: string; displayId: string; reason: string }[] = [];
+  for (const j of jobs) {
+    try {
+      // Only the read-only pre-dispatch checks are caught here, so a refusal can never leave a half-written job.
+      assertReleasable(ctx.db, mustJob(ctx.db, j.id));
+    } catch (e) {
+      if (!(e instanceof DomainError)) throw e;
+      notReleased.push({ printJobId: j.id, displayId: j.display_id, reason: e.message });
+      continue;
+    }
+    released.push(releaseJob(ctx, j.id));
+  }
   const stillQueued = released.filter((r) => r.state === "queued").length;
+  const skipped = notReleased.length ? ` Not sent (still queued): ${notReleased.map((n) => n.reason).join(" ")}` : "";
   return {
     released,
+    notReleased,
     message: !jobs.length
       ? "No queued jobs for this printer."
       : stillQueued
-        ? `${stillQueued} of ${jobs.length} job(s) still queued: the printer is still unavailable (simulated).`
-        : `${jobs.length} queued job(s) released to the printer (simulated).`,
+        ? `${stillQueued} of ${jobs.length} ${jobs.length === 1 ? "job" : "jobs"} still queued: the printer is still unavailable (simulated).${skipped}`
+        : `${released.length} queued ${released.length === 1 ? "job" : "jobs"} released to the printer (simulated).${skipped}`,
   };
 }
 

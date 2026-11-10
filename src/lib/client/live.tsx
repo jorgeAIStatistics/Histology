@@ -2,6 +2,7 @@
 
 import { createContext, startTransition, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { mayRefreshForPageActor, reportAuthFailure } from "./session";
 import type { LivePayload } from "./types";
 
 /**
@@ -10,6 +11,13 @@ import type { LivePayload } from "./types";
  * counters move, it calls router.refresh() so server components re-render with
  * the latest data; client state (form drafts, scroll, selection) is kept.
  * The latest payload is available through useLive() / useDemoNow().
+ *
+ * Secured mode: polling never counts as activity on the server. A session
+ * failure (locked, ended) is handed to the session screens
+ * (src/lib/client/session.ts), and a change is only refreshed into the page
+ * while the staff member this page was opened for is still the one signed in,
+ * so a hand-over never silently re-renders an open screen for someone else.
+ * `enabled={false}` (plain sign-in pages, no actor) does not poll at all.
  */
 
 interface LiveState {
@@ -40,10 +48,13 @@ const LiveActionsContext = createContext<LiveActions | null>(null);
 export function LiveRefresh({
   initial,
   intervalMs = 2500,
+  enabled = true,
   children,
 }: {
   initial: LivePayload;
   intervalMs?: number;
+  /** False: no polling (a plain page with no signed-in actor has nothing to keep fresh). */
+  enabled?: boolean;
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -68,12 +79,19 @@ export function LiveRefresh({
       const p = (async () => {
         try {
           const res = await fetch("/api/live", { cache: "no-store", headers: { Accept: "application/json" } });
-          if (!res.ok) throw new Error(`Live status returned HTTP ${res.status}`);
+          if (!res.ok) {
+            // Secured mode: a locked or ended session goes to the session screens (no-op in the synthetic demo).
+            if (res.status === 401 || res.status === 409) {
+              const body = (await res.json().catch(() => null)) as { error?: { code?: string; details?: { reason?: string } } } | null;
+              reportAuthFailure(body?.error?.code, { reason: body?.error?.details?.reason });
+            }
+            throw new Error(`Live status returned HTTP ${res.status}`);
+          }
           const data = (await res.json()) as LivePayload;
           const changed = data.auditSeq !== baseline.current.audit || data.worklistSeq !== baseline.current.worklist;
           baseline.current = { audit: data.auditSeq, worklist: data.worklistSeq };
           setState({ data, receivedAt: Date.now(), ok: true, lastError: null });
-          if (changed && refreshOnChange) startTransition(() => router.refresh());
+          if (changed && refreshOnChange && (await mayRefreshForPageActor())) startTransition(() => router.refresh());
         } catch (e) {
           setState((s) => ({ ...s, ok: false, lastError: e instanceof Error ? e.message : String(e) }));
         } finally {
@@ -87,6 +105,7 @@ export function LiveRefresh({
   );
 
   useEffect(() => {
+    if (!enabled) return;
     const tick = () => {
       if (typeof document !== "undefined" && document.hidden) return;
       void poll(true);
@@ -100,7 +119,7 @@ export function LiveRefresh({
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [poll, intervalMs]);
+  }, [poll, intervalMs, enabled]);
 
   const sync = useCallback(() => poll(false), [poll]);
   const pollNow = useCallback(() => poll(true), [poll]);

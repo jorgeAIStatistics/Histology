@@ -1,9 +1,11 @@
+import { ChevronRight } from "lucide-react";
 import type { MetricDefinition } from "@/server/queries/insights";
 
 /**
  * "Definition" disclosure (design-spec §6.8): numerator, denominator, start
  * and end events, exclusions, still-open and missing rules, data source.
- * Native <details> so it works without JavaScript and with the keyboard.
+ * Native <details> so it works without JavaScript and with the keyboard. It
+ * sits in the footer of its chart sheet, under a hairline, not in a box.
  */
 export function DefinitionDisclosure({ def }: { def: MetricDefinition }) {
   const rows: [string, string][] = [
@@ -19,11 +21,13 @@ export function DefinitionDisclosure({ def }: { def: MetricDefinition }) {
     ["Relates to", def.relatesTo],
   ];
   return (
-    <details className="group rounded-sm border border-line bg-surface-subtle text-sm">
-      <summary className="cursor-pointer select-none px-3 py-1.5 font-medium text-ink-secondary hover:text-ink">
-        Definition{def.id.startsWith("M") ? ` (${def.id})` : ""}
+    <details className="group text-sm">
+      <summary className="-mx-1 flex min-h-[max(2rem,var(--hlo-target-min))] cursor-pointer list-none items-center gap-1.5 rounded-sm px-1 font-medium text-ink-secondary select-none hover:text-ink [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="size-4 shrink-0 text-ink-muted transition-transform duration-[var(--hlo-duration-fast)] group-open:rotate-90" aria-hidden />
+        Definition: {def.name}
+        {def.id.startsWith("M") ? <span className="font-normal text-ink-muted">({def.id})</span> : null}
       </summary>
-      <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] gap-x-4 gap-y-1.5 border-t border-line px-3 py-2.5">
+      <dl className="mt-1 mb-2 grid max-w-[110ch] grid-cols-[minmax(7.5rem,auto)_minmax(0,1fr)] gap-x-4 gap-y-1.5 pl-6">
         {rows.map(([k, v]) => (
           <div key={k} className="contents">
             <dt className="text-ink-muted">{k}</dt>

@@ -150,6 +150,12 @@ export interface ConfirmDialogProps {
   pendingLabel?: string;
   /** Extra content (e.g. a required reason field) placed above the buttons. */
   confirmDisabled?: boolean;
+  /**
+   * Why the confirmed action failed (e.g. a CommandError, role="alert"), shown inside the dialog: while it is
+   * open everything behind it is inert, so an error shown there is neither seen nor announced. Focus stays on
+   * the confirm button, which points to it, so the person can try again or cancel.
+   */
+  error?: ReactNode;
 }
 
 export function ConfirmDialog({
@@ -164,8 +170,10 @@ export function ConfirmDialog({
   pending,
   pendingLabel,
   confirmDisabled,
+  error,
 }: ConfirmDialogProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const errorId = useId();
   return (
     <Dialog
       open={open}
@@ -186,13 +194,23 @@ export function ConfirmDialog({
             loading={pending}
             loadingLabel={pendingLabel}
             disabled={confirmDisabled}
+            aria-describedby={error ? errorId : undefined}
           >
             {confirmLabel}
           </Button>
         </>
       }
     >
-      {children}
+      {children || error ? (
+        <>
+          {children}
+          {error ? (
+            <div id={errorId} className={children ? "mt-3" : undefined}>
+              {error}
+            </div>
+          ) : null}
+        </>
+      ) : null}
     </Dialog>
   );
 }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Popover } from "radix-ui";
 import { Clock, FastForward, Pause, Play, RotateCcw, Truck } from "lucide-react";
 import { LAB_TZ, labDay, labLocalToIso } from "@/lib/time";
 import { useCommand } from "@/lib/client/command";
@@ -27,13 +26,22 @@ export function fmtDemoClock(iso: string): string {
   return `${get("weekday")} ${get("month")} ${get("day")}, ${get("hour")}:${get("minute")} ${get("dayPeriod")} ET`;
 }
 
+/** Demo clock state for labels: "11:00 AM ET" plus running/paused. */
+export function useDemoClockLabel(): { time: string; full: string; running: boolean } {
+  const { data } = useLive();
+  const now = useDemoNow();
+  const full = fmtDemoClock(now);
+  return { time: full.replace(/^.*?, /, ""), full, running: data.clock.running };
+}
+
 /**
- * Demo clock control (spec §5.1). Always labeled "Demo clock" so it never
- * looks like real time. Popover: Advance 5 min, Jump to courier arrival
- * (11:00), Pause/Resume, Reset to 10:52. Runs demo commands (see
- * src/lib/client/demo-commands.ts for the names).
+ * Demo clock controls (spec §5.1), on the presenter console (Role and clock).
+ * Always labeled "Demo clock" so it never looks like real time: Advance 5 min,
+ * Jump to courier arrival (11:00), Pause/Resume, Reset to 10:52. Runs demo
+ * commands (see src/lib/client/demo-commands.ts for the names).
  */
-export function DemoClock() {
+export function DemoClockPanel({ headingLevel = 3 }: { headingLevel?: 2 | 3 } = {}) {
+  const H = `h${headingLevel}` as const;
   const { data } = useLive();
   const now = useDemoNow();
   const running = data.clock.running;
@@ -52,98 +60,72 @@ export function DemoClock() {
   const busy = (key: string) => clock.pending && active === key;
 
   return (
-    <Popover.Root>
-      <Popover.Trigger asChild>
-        <button
-          type="button"
-          className="flex h-10 shrink-0 items-center gap-2 rounded-md px-2 text-left hover:bg-surface-subtle"
-          aria-label={`Demo clock: ${fmtDemoClock(now)}${running ? "" : ", paused"}. Show demo clock controls`}
+    <section aria-labelledby="demo-clock-title">
+      <H id="demo-clock-title" className={headingLevel === 2 ? "flex items-center gap-1.5 text-md font-bold tracking-[-0.01em]" : "flex items-center gap-1.5 font-semibold"}>
+        <Clock className="size-4 text-ink-muted" aria-hidden />
+        Demo clock
+      </H>
+      <p className="mt-0.5 text-sm text-ink-secondary">
+        <span className="num-tabular font-medium text-ink">{fmtDemoClock(now)}</span>,{" "}
+        {running ? "running at normal speed until paused." : "paused: it moves only when you advance or jump it."} Demo time, not the wall clock.
+      </p>
+      <div className="mt-2 grid grid-cols-2 gap-1.5">
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={<FastForward />}
+          className="justify-start"
+          loading={busy("advance")}
+          loadingLabel="Advancing..."
+          disabled={clock.pending && active !== "advance"}
+          onClick={() => void go("advance", { advanceMinutes: 5 })}
         >
-          <Clock className="size-4 shrink-0 text-ink-muted" aria-hidden />
-          <span className="flex flex-col leading-tight">
-            <span className="text-xs text-ink-muted">
-              Demo clock{running ? "" : <span className="font-medium text-ink-secondary"> · Paused</span>}
-            </span>
-            <span className="num-tabular whitespace-nowrap text-sm font-medium text-ink">
-              <span className="max-xl:hidden">{fmtDemoClock(now)}</span>
-              <span className="xl:hidden">{fmtDemoClock(now).replace(/^.*?, /, "")}</span>
-            </span>
-          </span>
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          align="end"
-          sideOffset={6}
-          collisionPadding={8}
-          className="animate-fade-in z-50 w-[300px] rounded-lg border border-line bg-surface p-3 text-sm text-ink shadow-2"
+          Advance 5 min
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={running ? <Pause /> : <Play />}
+          className="justify-start"
+          loading={busy("running")}
+          loadingLabel={running ? "Pausing..." : "Resuming..."}
+          disabled={clock.pending && active !== "running"}
+          onClick={() => void go("running", { running: !running })}
         >
-          <p className="font-semibold">Demo clock</p>
-          <p className="mt-0.5 text-xs text-ink-secondary">
-            {fmtDemoClock(now)} · {running ? "Running: advances at normal speed until paused." : "Paused: moves only when you advance or jump it."} Demo time, not the
-            wall clock.
+          {running ? "Pause clock" : "Resume clock"}
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={<Truck />}
+          className="col-span-2 justify-start"
+          loading={busy("courier")}
+          loadingLabel="Moving clock..."
+          disabled={pastCourier || (clock.pending && active !== "courier")}
+          reasonId={pastCourier ? "demo-clock-courier-reason" : undefined}
+          onClick={() => void go("courier", { iso: courierAt })}
+        >
+          Jump to courier arrival (11:00)
+        </Button>
+        {pastCourier ? (
+          <p id="demo-clock-courier-reason" className="col-span-2 -mt-1 text-xs text-ink-muted">
+            Already past 11:00 on the demo clock.
           </p>
-          <div className="mt-3 grid grid-cols-1 gap-1.5">
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={<FastForward />}
-              className="justify-start"
-              loading={busy("advance")}
-              loadingLabel="Advancing..."
-              disabled={clock.pending && active !== "advance"}
-              onClick={() => void go("advance", { advanceMinutes: 5 })}
-            >
-              Advance 5 min
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={<Truck />}
-              className="justify-start"
-              loading={busy("courier")}
-              loadingLabel="Moving clock..."
-              disabled={pastCourier || (clock.pending && active !== "courier")}
-              reasonId={pastCourier ? "demo-clock-courier-reason" : undefined}
-              onClick={() => void go("courier", { iso: courierAt })}
-            >
-              Jump to courier arrival (11:00)
-            </Button>
-            {pastCourier ? (
-              <p id="demo-clock-courier-reason" className="-mt-1 text-xs text-ink-muted">
-                Already past 11:00 on the demo clock.
-              </p>
-            ) : null}
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={running ? <Pause /> : <Play />}
-              className="justify-start"
-              loading={busy("running")}
-              loadingLabel={running ? "Pausing..." : "Resuming..."}
-              disabled={clock.pending && active !== "running"}
-              onClick={() => void go("running", { running: !running })}
-            >
-              {running ? "Pause clock" : "Resume clock"}
-            </Button>
-            <Button
-              size="sm"
-              variant="quiet"
-              icon={<RotateCcw />}
-              className="justify-start"
-              loading={busy("reset")}
-              loadingLabel="Resetting..."
-              disabled={clock.pending && active !== "reset"}
-              onClick={() => setConfirmReset(true)}
-            >
-              Reset clock to 10:52
-            </Button>
-          </div>
-          <CommandError error={clock.error} className="mt-2" />
-          <p className="mt-2 text-xs text-ink-muted">Resetting the clock does not reset demo data. Use Settings, Demo scenarios for a full reset.</p>
-          <Popover.Arrow className="fill-surface" width={12} height={6} />
-        </Popover.Content>
-      </Popover.Portal>
+        ) : null}
+        <Button
+          size="sm"
+          variant="quiet"
+          icon={<RotateCcw />}
+          className="col-span-2 justify-start"
+          loading={busy("reset")}
+          loadingLabel="Resetting..."
+          disabled={clock.pending && active !== "reset"}
+          onClick={() => setConfirmReset(true)}
+        >
+          Reset clock to 10:52
+        </Button>
+      </div>
+      <CommandError error={clock.error} className="mt-2" />
       <ConfirmDialog
         open={confirmReset}
         title="Reset the demo clock to 10:52?"
@@ -156,9 +138,9 @@ export function DemoClock() {
       >
         <p>
           Only the clock moves back. Events already recorded after 10:52 will look as if they happen in the future. To start the
-          demonstration again, use Reset demo data in Settings, Demo scenarios.
+          demonstration again, use Reset demo data on the presenter console (Outages and reset).
         </p>
       </ConfirmDialog>
-    </Popover.Root>
+    </section>
   );
 }

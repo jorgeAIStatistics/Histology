@@ -1,0 +1,151 @@
+{
+  "code": {
+    "dirty": true,
+    "engine_code_tree_sha256": "0947a51c8d1f16bf2a14e176b47f5f2c4610cdd04e148b53ba61a1bbf73c0c9d",
+    "git_head": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+    "tracked_diff_sha256": "bc42b1de946c1d8ff9c9b7f5a98f42f4c3e8f49706fbbd96209ff7d3903a88d1"
+  },
+  "created_at": "2026-11-09T14:12:51+00:00",
+  "experiment_id": "cobra-bcc-subset-2026-10-28",
+  "files": [
+    {
+      "bytes": 36099,
+      "path": "provenance.json",
+      "sha256": "2855c16c3bdffff661268133ddcefe26eb7c07a8f542eaa96d6ae3aec736730c"
+    },
+    {
+      "bytes": 3505,
+      "path": "dataset.json",
+      "sha256": "2323d33b9a9fc15d8004f54360e2a4c8c8e1272ee8dd1b3c67621fd405adf73b"
+    },
+    {
+      "bytes": 84888,
+      "path": "identities.json",
+      "sha256": "4cb7d3b3ef3cc7a7ca7104e9e5a38719e459594a4976d983e28640a7394b6016"
+    },
+    {
+      "bytes": 327212,
+      "path": "results.json",
+      "sha256": "7eca9ed767cf0891ca4528b240adb7d91dab03ec460130c27f04a67dee8f6cdd"
+    },
+    {
+      "bytes": 14307,
+      "path": "artifacts_index.json",
+      "sha256": "57752a0fb590b43f810054520bb84016e8cb374c090f7823831a087fb30d8de9"
+    },
+    {
+      "bytes": 12878,
+      "path": "exclusions.json",
+      "sha256": "16f1027542696c6cf3440134276eadf87cb4b62c429ef94ef135c8de312bae2e"
+    },
+    {
+      "bytes": 4994,
+      "path": "test_releases.json",
+      "sha256": "7486e8696b4af8876141fda6fde461fcd921b738e34d319359da1f41b6086d9e"
+    },
+    {
+      "bytes": 979,
+      "path": "blockers.json",
+      "sha256": "61032148669b27fa1149a8af6dd4cab88fac2eca85052a89c9d1a54dca17c7b9"
+    },
+    {
+      "bytes": 7131,
+      "path": "README.md",
+      "sha256": "45c9a63da1a1c0907adc454d9a64bb976db3857f34f298f62f77cdf6eb19d9da"
+    },
+    {
+      "bytes": 24199,
+      "path": "attachments/bulky_artifacts_index.json",
+      "sha256": "8aa0da5ba7a521bbc4d18fd72743c1a7f96c60c9454d25495955c0551e9b1290"
+    },
+    {
+      "bytes": 11039,
+      "path": "attachments/inference_measurement.json",
+      "sha256": "420042f466f41e96c5c95a3ea34ac7e75b22f2e89003b5226b9fecc4fdb33800"
+    },
+    {
+      "bytes": 1591,
+      "path": "attachments/midnight_parity.json",
+      "sha256": "27b36f548a42491ef7dd01872f8fcbfcd59c2aad2524564be1dcb7808aedb148"
+    },
+    {
+      "bytes": 154655,
+      "path": "attachments/pre_fix_inventory.json",
+      "sha256": "858770fe2df66ff0e47b9a3286f607d8ae5d97e2bfcdfa251b1e24c4ae2953f8"
+    },
+    {
+      "bytes": 18469,
+      "path": "attachments/pre_fix_inventory.md",
+      "sha256": "1f3fe4dad43a5b7720cab7c3d31a0ce5993b49b4d0036ded8f7de099fda1ef9b"
+    },
+    {
+      "bytes": 133408,
+      "path": "attachments/sensitivity_near_duplicates.json",
+      "sha256": "993bdccdff2e53ab6a4ab9ef25f663df2df926e25e484b8ec42eb05e18ef4ca7"
+    }
+  ],
+  "generator": {
+    "file": "workbench/scripts/export_evidence.py",
+    "sha256": "114b9dbec26f6eb0a7758c7c6cb7d2a31638dfdd4858f344deba7500f2aac0b3"
+  },
+  "notice": "RESEARCH USE ONLY. Not a medical device; nothing here is a diagnosis or a clinical performance claim. Labels are COBRA's report-derived imported reference labels (not expert reads in this workbench): metrics measure agreement with that reference. 'BCC absent' is not 'benign'.",
+  "research_use_only": true,
+  "sanitization": {
+    "excluded": [
+      "databases",
+      "slides",
+      "model weights",
+      "embeddings",
+      "feature arrays",
+      "raw reports"
+    ],
+    "rules": [
+      "allowlisted fields only (no per-slide or per-patient tables)",
+      "patient / accession codes -> pt:<hmac>",
+      "slide file names -> file:<hmac>",
+      "slide, bag and case ids -> id:<hmac>",
+      "local absolute paths -> <workbench>, <repo>, <home> or path:<hmac>",
+      "every file re-scanned after writing; any leak aborts the export"
+    ],
+    "salt_id": "63f69e48f64f"
+  },
+  "schema": "dermpath.cobra_evidence/1",
+  "supplementary_inputs": [
+    {
+      "attachment": "attachments/sensitivity_near_duplicates.json",
+      "source_sha256": "993bdccdff2e53ab6a4ab9ef25f663df2df926e25e484b8ec42eb05e18ef4ca7"
+    },
+    {
+      "attachment": "attachments/inference_measurement.json",
+      "source_sha256": "7d8796556bd915c5179732f1f2eb74cf4f453078b787e1d133758d73918eeb78"
+    },
+    {
+      "attachment": "attachments/pre_fix_inventory.json",
+      "source_sha256": "858770fe2df66ff0e47b9a3286f607d8ae5d97e2bfcdfa251b1e24c4ae2953f8"
+    },
+    {
+      "attachment": "attachments/pre_fix_inventory.md",
+      "source_sha256": "1f3fe4dad43a5b7720cab7c3d31a0ce5993b49b4d0036ded8f7de099fda1ef9b"
+    },
+    {
+      "attachment": "attachments/midnight_parity.json",
+      "source_sha256": "27b36f548a42491ef7dd01872f8fcbfcd59c2aad2524564be1dcb7808aedb148"
+    },
+    {
+      "attachment": "attachments/bulky_artifacts_index.json",
+      "source_sha256": "8aa0da5ba7a521bbc4d18fd72743c1a7f96c60c9454d25495955c0551e9b1290"
+    },
+    {
+      "source_sha256": "f6d86fafae458a7fb1d597526d4506f672e92ac0c923d284c813aee2bdc3baea",
+      "test_release_disclosure": true
+    },
+    {
+      "exclusions_supplement": true,
+      "source_sha256": "2a724b274d44216100f153b8c5dcbb8fa358f49544a69978ba31925716eb247c"
+    },
+    {
+      "readme_note": true,
+      "source_sha256": "2a157934174141109edc3115e242213a626d23f722855eeacfd43ca48f0230e6"
+    }
+  ]
+}

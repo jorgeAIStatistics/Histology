@@ -21,6 +21,7 @@ import {
 } from "../sim/courier";
 import { computeAndStoreRouting } from "./routing";
 import { detectRelatedForIntake } from "./related";
+import { isIdentityField, withheld } from "./privacy";
 
 /**
  * Intake (pre-accession) domain: receiving a courier delivery, unpacking a
@@ -484,18 +485,15 @@ export interface CoveringClarification {
   display_id: string;
   state: string;
   category: string;
+  /** Set once resolved (confirmed_observed | confirmed_order | source_amended | other). */
+  resolution_code?: string | null;
+  resolved_at?: string | null;
 }
 
-/**
- * The clarification that covers a finding on this container / order part:
- * matching category, and either still open, or resolved after the finding was
- * recorded. `resolvedOnly` (patient identity): only a resolved one counts.
- */
-export function clarificationCovering(
-  db: DB,
-  refs: { containerId?: string | null; orderPartId?: string | null; intakeItemId?: string | null },
-  opts: { categories: string[]; since?: string | null; resolvedOnly?: boolean },
-): CoveringClarification | null {
+type ClarificationRefs = { containerId?: string | null; orderPartId?: string | null; intakeItemId?: string | null };
+
+/** SQL conditions matching clarifications raised on these refs (container, order part, or the item itself). */
+function refConditions(refs: ClarificationRefs): { conds: string[]; params: unknown[] } {
   const conds: string[] = [];
   const params: unknown[] = [];
   if (refs.containerId) {
@@ -510,14 +508,29 @@ export function clarificationCovering(
     conds.push("(intake_item_id = ? AND container_id IS NULL AND order_part_id IS NULL)");
     params.push(refs.intakeItemId);
   }
+  return { conds, params };
+}
+
+/**
+ * The clarification that covers a finding on this container / order part:
+ * matching category, and either still open, or resolved after the finding was
+ * recorded. `resolvedOnly`: only a resolved one counts. The row carries its
+ * resolution code. Patient identity uses identityCoverage() instead.
+ */
+export function clarificationCovering(
+  db: DB,
+  refs: ClarificationRefs,
+  opts: { categories: string[]; since?: string | null; resolvedOnly?: boolean },
+): CoveringClarification | null {
+  const { conds, params } = refConditions(refs);
   if (!conds.length || !opts.categories.length) return null;
   const cats = opts.categories.map(() => "?").join(",");
   const rows = db
     .prepare(
-      `SELECT id, display_id, state, category, resolved_at FROM clarification
+      `SELECT id, display_id, state, category, resolution_code, resolved_at FROM clarification
         WHERE state <> 'canceled' AND category IN (${cats}) AND (${conds.join(" OR ")}) ORDER BY created_at DESC`,
     )
-    .all(...opts.categories, ...params) as (CoveringClarification & { resolved_at: string | null })[];
+    .all(...opts.categories, ...params) as CoveringClarification[];
   for (const r of rows) {
     const resolved = r.state === "resolved";
     if (opts.resolvedOnly && !resolved) continue;
@@ -525,6 +538,64 @@ export function clarificationCovering(
     if (!opts.since || (r.resolved_at ?? "") >= opts.since) return r;
   }
   return null;
+}
+
+/**
+ * Patient identity (name, birth date, MRN) at accession: the only answer that
+ * lets the specimen be accessioned under the order's patient is an
+ * `identity_conflict` clarification resolved by a lead as `confirmed_order`
+ * (the office confirmed the order's patient is correct), resolved after the
+ * finding, and not followed by a later identity decision that says otherwise.
+ * An open question, a hold, another category or another code never covers it:
+ *  - confirmed_observed: the bottle is right, so the order names a different
+ *    patient. Accession waits for a corrected order and a new check of the
+ *    container; the recorded mismatch closes only on that re-check, when the
+ *    order's patient details match the bottle (verifyContainer). Nothing is
+ *    relinked or changed automatically.
+ *  - source_amended: the amended order has to arrive and be checked first.
+ *  - other: not a decision about the patient.
+ */
+export const IDENTITY_COVERING = { category: "identity_conflict", resolutionCode: "confirmed_order" } as const;
+
+const IDENTITY_NOT_COVERING_WHY: Record<string, string> = {
+  confirmed_observed: "resolved as 'container is correct': the order names a different patient; accession waits for the corrected order and a new check of the container",
+  source_amended: "resolved as 'order amended in the source': accession waits for the amended order version to arrive and a new check of the container",
+  other: "resolved as 'other', which is not a confirmation of the order's patient; only 'office confirmed the order is correct' covers a patient identity difference",
+};
+
+export interface IdentityCoverage {
+  covering: CoveringClarification | null;
+  /** The identity decision (or other-category answer) that does NOT cover the finding, with the reason (for the blocker message). */
+  notCovering: { clarification: CoveringClarification; why: string } | null;
+}
+
+export function identityCoverage(db: DB, refs: ClarificationRefs, since: string | null): IdentityCoverage {
+  const { conds, params } = refConditions(refs);
+  if (!conds.length) return { covering: null, notCovering: null };
+  // Resolved after the finding, newest decision first: a later identity decision replaces an earlier one.
+  const rows = (
+    db
+      .prepare(
+        `SELECT id, display_id, state, category, resolution_code, resolved_at FROM clarification
+          WHERE state = 'resolved' AND category IN (?, 'other') AND (${conds.join(" OR ")}) ORDER BY resolved_at DESC, rowid DESC`,
+      )
+      .all(IDENTITY_COVERING.category, ...params) as CoveringClarification[]
+  ).filter((r) => !since || (r.resolved_at ?? "") >= since);
+  const decision = rows.find((r) => r.category === IDENTITY_COVERING.category);
+  if (decision?.resolution_code === IDENTITY_COVERING.resolutionCode) return { covering: decision, notCovering: null };
+  if (decision) {
+    const why = IDENTITY_NOT_COVERING_WHY[decision.resolution_code ?? ""] ?? `resolved as '${decision.resolution_code ?? "unknown"}', which does not confirm the order's patient`;
+    return { covering: null, notCovering: { clarification: decision, why } };
+  }
+  const other = rows[0];
+  if (!other) return { covering: null, notCovering: null };
+  return {
+    covering: null,
+    notCovering: {
+      clarification: other,
+      why: `resolved in category '${other.category.replace(/_/g, " ")}'; only an identity clarification resolved as 'office confirmed the order is correct' covers a patient identity difference`,
+    },
+  };
 }
 
 /** An open (not resolved, not canceled) clarification about this container or order part, whatever its category. */
@@ -594,13 +665,41 @@ function openDiscrepancy(
 }
 
 /** Close an open discrepancy. Values stay as found; the closing decision is recorded beside them. */
+const DISCREPANCY_KIND_WORDS: Record<DiscrepancyRow["kind"], string> = {
+  field_mismatch: "mismatch",
+  missing_container: "missing-container flag",
+  extra_container: "extra-container flag",
+  unmatched_container: "unmatched-container flag",
+  order_not_linked: "unlinked-order flag",
+};
+
+/** Close an open discrepancy. Values stay as found; the closing decision is recorded beside them, with its own audit row. */
 function closeDiscrepancy(ctx: Ctx, d: DiscrepancyRow, status: "resolved" | "withdrawn", kind: ResolutionKind, note: string): void {
-  ctx.db
+  const res = ctx.db
     .prepare(
       `UPDATE intake_discrepancy SET status = ?, resolved_at = ?, resolved_by = ?, resolution_note = ?, resolution_kind = ?, version = version + 1
         WHERE id = ? AND status = 'open'`,
     )
     .run(status, ctx.now, ctx.actor.id, note, kind, d.id);
+  if (res.changes !== 1) return; // already closed: nothing changed, nothing to record
+  const what = d.kind === "field_mismatch" ? `${(COMPARE_FIELD_LABEL[d.field as CompareField] ?? d.field ?? "field").toLowerCase()} mismatch` : DISCREPANCY_KIND_WORDS[d.kind];
+  audit(ctx, {
+    action: "intake.discrepancy_closed",
+    entityType: "intake_discrepancy",
+    entityId: d.id,
+    intakeItemId: d.intake_item_id,
+    summary: `Recorded ${what} ${status === "withdrawn" ? "withdrawn" : "closed"} (${kind.replace(/_/g, " ")}): ${note}. Values kept as found.`,
+    before: { status: d.status, version: d.version },
+    after: {
+      status,
+      version: d.version + 1,
+      resolutionKind: kind,
+      kind: d.kind,
+      field: d.field,
+      containerId: d.container_id,
+      orderPartId: d.order_part_id,
+    },
+  });
 }
 
 function openRows(db: DB, where: { intakeItemId?: string; containerId?: string; orderPartId?: string; kind: DiscrepancyRow["kind"] }): DiscrepancyRow[] {
@@ -974,10 +1073,17 @@ export function recordObservation(
     entityId: containerId,
     intakeItemId: it.id,
     summary: `${it.display_id} container ${c.seq}: observation edited by ${ctx.actor.name} (${[...changed, ...(conditionChanged ? ["condition_note"] : [])].join(", ")})${changed.length && wasVerified ? ". Earlier verification cleared — verify again against the physical container." : ""}`,
-    before: Object.fromEntries(changed.map((k) => [k, before[k] ?? null])),
-    after: Object.fromEntries(changed.map((k) => [k, next[k] ?? null])),
+    // Patient name, date of birth and MRN as read from the bottle are withheld (field name and a fingerprint
+    // scoped to this container and field; src/server/domain/privacy.ts). The container record keeps the values.
+    before: Object.fromEntries(changed.map((k) => [k, auditValue(containerId, k, before[k] ?? null)])),
+    after: Object.fromEntries(changed.map((k) => [k, auditValue(containerId, k, next[k] ?? null)])),
   });
   return updated;
+}
+
+/** An observation value as the audit trail records it: identity fields withheld, other fields as written. */
+function auditValue<T>(containerId: string, key: string, value: T): T | string | null {
+  return isIdentityField(key) ? withheld(`container:${containerId}:${key}`, value) : value;
 }
 
 function touchItem(ctx: Ctx, it: IntakeItemRow, status?: string): void {
@@ -1112,7 +1218,8 @@ export function verifyContainer(ctx: Ctx, containerId: string, expectedVersion: 
   touchItem(ctx, it, "in_review");
   closeTasks(ctx, "container_verification", "container", containerId);
   const parts: string[] = [];
-  if (discrepancies.length) parts.push(`recorded a discrepancy — ${discrepancies.map((d) => `${d.label}: order "${d.orderValue ?? "not stated"}", bottle "${d.observedValue ?? "not on label"}"`).join("; ")}. Both values kept`);
+  // Patient identity differences are named by field only in the audit summary (the discrepancy record keeps both values).
+  if (discrepancies.length) parts.push(`recorded a discrepancy — ${discrepancies.map((d) => (isIdentityField(d.field) ? `${d.label}: order and bottle differ` : `${d.label}: order "${d.orderValue ?? "not stated"}", bottle "${d.observedValue ?? "not on label"}"`)).join("; ")}. Both values kept`);
   if (stillOpen.length) parts.push(`recorded mismatch still open — ${stillOpen.map((s) => `${s.label}: ${s.reason}`).join("; ")}`);
   if (accepted.length) parts.push(`${accepted.map((a) => a.label.toLowerCase()).join(", ")} differ as already accepted by a lead`);
   audit(ctx, {
@@ -1190,7 +1297,7 @@ export function acceptDiscrepancy(ctx: Ctx, discrepancyId: string, expectedVersi
     intakeItemId: it.id,
     summary:
       d.kind === "field_mismatch"
-        ? `${it.display_id}${c ? ` container ${c.seq}` : ""}: ${ctx.actor.name} accepted the recorded ${label.toLowerCase()} mismatch (order "${v.order?.original ?? "not stated"}", bottle "${v.observed?.original ?? "not on label"}"). Values kept as found.${containerState === "verified" ? " Container counts as verified." : ""}`
+        ? `${it.display_id}${c ? ` container ${c.seq}` : ""}: ${ctx.actor.name} accepted the recorded ${label.toLowerCase()} mismatch (${isIdentityField(d.field) ? "values on the discrepancy record" : `order "${v.order?.original ?? "not stated"}", bottle "${v.observed?.original ?? "not on label"}"`}). Values kept as found.${containerState === "verified" ? " Container counts as verified." : ""}`
         : `${it.display_id}: ${ctx.actor.name} accepted more containers than expected (${(JSON.parse(d.values_json) as { detail?: string }).detail ?? "count differs"}).`,
     reason: reason.trim(),
     before: { status: "open" },

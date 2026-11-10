@@ -1,0 +1,2186 @@
+{
+  "encoders": {
+    "handcrafted-stain-texture-v1": {
+      "embedding_dim": 64,
+      "input_size": 224,
+      "license": {
+        "caveats": [
+          "models trained on the COBRA data with these features carry that dataset's licence (CC BY-NC-SA 4.0; commercial use: not permitted); whether trained weights are adaptations under share-alike is unsettled: legal review before any commercial use (docs/license-ledger.md)"
+        ],
+        "commercial_use": "unknown",
+        "name": "Project code (no third-party weights)",
+        "notes": "No model weights exist. The workbench's own licence terms apply to the code.",
+        "url": null
+      },
+      "spec_sha256": "8e4d14d0f79eaafbb7f2e2bfb1289fa543f2201abe94f5cfcc0d46096e80c1ed",
+      "status": "available",
+      "weights_config_sha256": null,
+      "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+    },
+    "midnight-12k": {
+      "embedding_dim": 3072,
+      "input_size": 224,
+      "license": {
+        "caveats": [
+          "commercial_use describes the encoder weights' own licence only, not the data the encoder was trained on (see notes): the training data's terms are a question for counsel",
+          "models trained on the COBRA data with these features carry that dataset's licence (CC BY-NC-SA 4.0; commercial use: not permitted); whether trained weights are adaptations under share-alike is unsettled: legal review before any commercial use (docs/license-ledger.md)"
+        ],
+        "commercial_use": "yes",
+        "name": "MIT",
+        "notes": "The weights licence (MIT) permits commercial use; the model was trained on public TCGA FFPE slides, whose terms are a question for counsel. The workbench never downloads it and uses it for research only.",
+        "url": "https://huggingface.co/kaiko-ai/midnight"
+      },
+      "spec_sha256": "36d2e01f76b332c8df3b5d95203abba4c903f7064d3563ad452f8b59c592ebdc",
+      "status": "available",
+      "weights_config_sha256": "0362e014a3f3b1ad2f2faf115d21cbc05ed48b3a6114bdb4ddec897bc83cc0fd",
+      "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+    }
+  },
+  "feature_sets": {
+    "s2 technical handcrafted-stain-texture-v1": {
+      "counts": {
+        "done": 60,
+        "failed": 0,
+        "pending": 0,
+        "slides": 60
+      },
+      "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+      "device_class": "cpu",
+      "encoder_id": "handcrafted-stain-texture-v1",
+      "encoder_spec_sha256": "8e4d14d0f79eaafbb7f2e2bfb1289fa543f2201abe94f5cfcc0d46096e80c1ed",
+      "execution_mode": "real_image_technical",
+      "extraction": {
+        "batch_size": 32,
+        "cpu_threads": null,
+        "device": "cpu",
+        "extractor_version": "dermpath.feature_sets/2",
+        "pixel_mode": "read"
+      },
+      "extraction_env_sha256": "d43dccd91de265c4ab133a7d85f5921a371663f0a31cf4686b98a4fca6e92d23",
+      "feature_set_id": "527f9080dfb74e2f95c46cfd5138fa06",
+      "input_snapshot_sha256": "15a5c6b0e4d099f943d389c723dd5190f8d18ccc0f007924a06f0eb8053860cf",
+      "name": "S2 technical \u00b7 handcrafted-stain-texture-v1",
+      "patch_policy": {
+        "allow_uncalibrated": false,
+        "anisotropy_tolerance": 0.1,
+        "background_fill": "slide",
+        "edge_mode": "shift_inward",
+        "fragment_rescue_min_area_um2": 2000.0,
+        "max_read_ratio": 4.0,
+        "max_upsample_ratio": 1.05,
+        "min_tissue_fraction": 0.25,
+        "patch_size": 224,
+        "quality_version": "dermpath.patch-quality/1",
+        "read_filters": {
+          "background_at_read": true,
+          "blur_flag": true,
+          "blur_reject_below": null,
+          "pen_marks": true,
+          "pen_max_fraction": 0.25,
+          "rescue_min_tissue_fraction": 0.02
+        },
+        "resize_filter": "bilinear",
+        "sampling": {
+          "all_safety_cap": 50000,
+          "lesion_fraction": 0.5,
+          "max_patches": 256,
+          "seed": 0,
+          "strategy": "spatial",
+          "version": "dermpath.sampling/1"
+        },
+        "stride_fraction": 1.0,
+        "target_mpp": 0.5,
+        "uncalibrated_downsample": 4.0,
+        "version": "dermpath.patching/2"
+      },
+      "policy_sha256": "cefdf1652950adc92b73e942f5f636013be21525700a7f1cfac1d044df4218f9",
+      "precision": "fp32",
+      "qc_source": "dataset_manifest",
+      "spec_sha256": "1e5969dfee9245c11aaf766d67726e995f5dde7790e68cb2ab0e3fef01338e74",
+      "stain_policy": {
+        "fitted_on": null,
+        "fitting_slides": 0,
+        "method": "none",
+        "reference_sha256": null
+      },
+      "stain_policy_sha256": "5975f29b774a9b85fc350439527ff0db2b487c8c26127a2c02c2e629278ea14f",
+      "stain_reference_sha256": null,
+      "status": "ready",
+      "weights_config_sha256": null,
+      "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+    },
+    "s2 technical midnight-12k": {
+      "counts": {
+        "done": 60,
+        "failed": 0,
+        "pending": 0,
+        "slides": 60
+      },
+      "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+      "device_class": "mps",
+      "encoder_id": "midnight-12k",
+      "encoder_spec_sha256": "36d2e01f76b332c8df3b5d95203abba4c903f7064d3563ad452f8b59c592ebdc",
+      "execution_mode": "real_image_technical",
+      "extraction": {
+        "batch_size": 32,
+        "cpu_threads": null,
+        "device": "mps",
+        "extractor_version": "dermpath.feature_sets/2",
+        "pixel_mode": "read"
+      },
+      "extraction_env_sha256": "e90c2b64cb34bac89923729b40d1d5c48339f492fcdf895278c0458dd454c70a",
+      "feature_set_id": "b3b75db25fd945ab9ba079b9e4244738",
+      "input_snapshot_sha256": "15a5c6b0e4d099f943d389c723dd5190f8d18ccc0f007924a06f0eb8053860cf",
+      "name": "S2 technical \u00b7 midnight-12k",
+      "patch_policy": {
+        "allow_uncalibrated": false,
+        "anisotropy_tolerance": 0.1,
+        "background_fill": "slide",
+        "edge_mode": "shift_inward",
+        "fragment_rescue_min_area_um2": 2000.0,
+        "max_read_ratio": 4.0,
+        "max_upsample_ratio": 1.05,
+        "min_tissue_fraction": 0.25,
+        "patch_size": 224,
+        "quality_version": "dermpath.patch-quality/1",
+        "read_filters": {
+          "background_at_read": true,
+          "blur_flag": true,
+          "blur_reject_below": null,
+          "pen_marks": true,
+          "pen_max_fraction": 0.25,
+          "rescue_min_tissue_fraction": 0.02
+        },
+        "resize_filter": "bilinear",
+        "sampling": {
+          "all_safety_cap": 50000,
+          "lesion_fraction": 0.5,
+          "max_patches": 256,
+          "seed": 0,
+          "strategy": "spatial",
+          "version": "dermpath.sampling/1"
+        },
+        "stride_fraction": 1.0,
+        "target_mpp": 0.5,
+        "uncalibrated_downsample": 4.0,
+        "version": "dermpath.patching/2"
+      },
+      "policy_sha256": "cefdf1652950adc92b73e942f5f636013be21525700a7f1cfac1d044df4218f9",
+      "precision": "fp32",
+      "qc_source": "dataset_manifest",
+      "spec_sha256": "6162aaf482108f1683a58e52482d00c643ae7f28fe425cbd40b6b5e3832e0049",
+      "stain_policy": {
+        "fitted_on": null,
+        "fitting_slides": 0,
+        "method": "none",
+        "reference_sha256": null
+      },
+      "stain_policy_sha256": "5975f29b774a9b85fc350439527ff0db2b487c8c26127a2c02c2e629278ea14f",
+      "stain_reference_sha256": null,
+      "status": "ready",
+      "weights_config_sha256": "0362e014a3f3b1ad2f2faf115d21cbc05ed48b3a6114bdb4ddec897bc83cc0fd",
+      "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+    },
+    "s3 supervised handcrafted-stain-texture-v1": {
+      "counts": {
+        "done": 60,
+        "failed": 0,
+        "pending": 0,
+        "slides": 60
+      },
+      "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+      "device_class": "cpu",
+      "encoder_id": "handcrafted-stain-texture-v1",
+      "encoder_spec_sha256": "8e4d14d0f79eaafbb7f2e2bfb1289fa543f2201abe94f5cfcc0d46096e80c1ed",
+      "execution_mode": "supervised_experiment",
+      "extraction": {
+        "batch_size": 32,
+        "cpu_threads": null,
+        "device": "cpu",
+        "extractor_version": "dermpath.feature_sets/2",
+        "pixel_mode": "read"
+      },
+      "extraction_env_sha256": "d43dccd91de265c4ab133a7d85f5921a371663f0a31cf4686b98a4fca6e92d23",
+      "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+      "input_snapshot_sha256": "15a5c6b0e4d099f943d389c723dd5190f8d18ccc0f007924a06f0eb8053860cf",
+      "name": "S3 supervised \u00b7 handcrafted-stain-texture-v1",
+      "patch_policy": {
+        "allow_uncalibrated": false,
+        "anisotropy_tolerance": 0.1,
+        "background_fill": "slide",
+        "edge_mode": "shift_inward",
+        "fragment_rescue_min_area_um2": 2000.0,
+        "max_read_ratio": 4.0,
+        "max_upsample_ratio": 1.05,
+        "min_tissue_fraction": 0.25,
+        "patch_size": 224,
+        "quality_version": "dermpath.patch-quality/1",
+        "read_filters": {
+          "background_at_read": true,
+          "blur_flag": true,
+          "blur_reject_below": null,
+          "pen_marks": true,
+          "pen_max_fraction": 0.25,
+          "rescue_min_tissue_fraction": 0.02
+        },
+        "resize_filter": "bilinear",
+        "sampling": {
+          "all_safety_cap": 50000,
+          "lesion_fraction": 0.5,
+          "max_patches": 256,
+          "seed": 0,
+          "strategy": "spatial",
+          "version": "dermpath.sampling/1"
+        },
+        "stride_fraction": 1.0,
+        "target_mpp": 0.5,
+        "uncalibrated_downsample": 4.0,
+        "version": "dermpath.patching/2"
+      },
+      "policy_sha256": "cefdf1652950adc92b73e942f5f636013be21525700a7f1cfac1d044df4218f9",
+      "precision": "fp32",
+      "qc_source": "dataset_manifest",
+      "spec_sha256": "7a6177a760422eabd2f005c064ec463c5a158ee153076fee8a0d7f684c536f75",
+      "stain_policy": {
+        "fitted_on": null,
+        "fitting_slides": 0,
+        "method": "none",
+        "reference_sha256": null
+      },
+      "stain_policy_sha256": "5975f29b774a9b85fc350439527ff0db2b487c8c26127a2c02c2e629278ea14f",
+      "stain_reference_sha256": null,
+      "status": "ready",
+      "weights_config_sha256": null,
+      "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+    },
+    "s3 supervised midnight-12k": {
+      "counts": {
+        "done": 60,
+        "failed": 0,
+        "pending": 0,
+        "slides": 60
+      },
+      "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+      "device_class": "mps",
+      "encoder_id": "midnight-12k",
+      "encoder_spec_sha256": "36d2e01f76b332c8df3b5d95203abba4c903f7064d3563ad452f8b59c592ebdc",
+      "execution_mode": "supervised_experiment",
+      "extraction": {
+        "batch_size": 32,
+        "cpu_threads": null,
+        "device": "mps",
+        "extractor_version": "dermpath.feature_sets/2",
+        "pixel_mode": "read"
+      },
+      "extraction_env_sha256": "e90c2b64cb34bac89923729b40d1d5c48339f492fcdf895278c0458dd454c70a",
+      "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+      "input_snapshot_sha256": "15a5c6b0e4d099f943d389c723dd5190f8d18ccc0f007924a06f0eb8053860cf",
+      "name": "S3 supervised \u00b7 midnight-12k",
+      "patch_policy": {
+        "allow_uncalibrated": false,
+        "anisotropy_tolerance": 0.1,
+        "background_fill": "slide",
+        "edge_mode": "shift_inward",
+        "fragment_rescue_min_area_um2": 2000.0,
+        "max_read_ratio": 4.0,
+        "max_upsample_ratio": 1.05,
+        "min_tissue_fraction": 0.25,
+        "patch_size": 224,
+        "quality_version": "dermpath.patch-quality/1",
+        "read_filters": {
+          "background_at_read": true,
+          "blur_flag": true,
+          "blur_reject_below": null,
+          "pen_marks": true,
+          "pen_max_fraction": 0.25,
+          "rescue_min_tissue_fraction": 0.02
+        },
+        "resize_filter": "bilinear",
+        "sampling": {
+          "all_safety_cap": 50000,
+          "lesion_fraction": 0.5,
+          "max_patches": 256,
+          "seed": 0,
+          "strategy": "spatial",
+          "version": "dermpath.sampling/1"
+        },
+        "stride_fraction": 1.0,
+        "target_mpp": 0.5,
+        "uncalibrated_downsample": 4.0,
+        "version": "dermpath.patching/2"
+      },
+      "policy_sha256": "cefdf1652950adc92b73e942f5f636013be21525700a7f1cfac1d044df4218f9",
+      "precision": "fp32",
+      "qc_source": "dataset_manifest",
+      "spec_sha256": "3928575dd84f3c2145fceaa52e8853262b24e1a8ea308fd6d69dfc41ceafc0a3",
+      "stain_policy": {
+        "fitted_on": null,
+        "fitting_slides": 0,
+        "method": "none",
+        "reference_sha256": null
+      },
+      "stain_policy_sha256": "5975f29b774a9b85fc350439527ff0db2b487c8c26127a2c02c2e629278ea14f",
+      "stain_reference_sha256": null,
+      "status": "ready",
+      "weights_config_sha256": "0362e014a3f3b1ad2f2faf115d21cbc05ed48b3a6114bdb4ddec897bc83cc0fd",
+      "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+    },
+    "s4 a_sampling_uniform handcrafted-stain-texture-v1": {
+      "counts": {
+        "done": 60,
+        "failed": 0,
+        "pending": 0,
+        "slides": 60
+      },
+      "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+      "device_class": "cpu",
+      "encoder_id": "handcrafted-stain-texture-v1",
+      "encoder_spec_sha256": "8e4d14d0f79eaafbb7f2e2bfb1289fa543f2201abe94f5cfcc0d46096e80c1ed",
+      "execution_mode": "supervised_experiment",
+      "extraction": {
+        "batch_size": 32,
+        "cpu_threads": null,
+        "device": "cpu",
+        "extractor_version": "dermpath.feature_sets/2",
+        "pixel_mode": "read"
+      },
+      "extraction_env_sha256": "d43dccd91de265c4ab133a7d85f5921a371663f0a31cf4686b98a4fca6e92d23",
+      "feature_set_id": "2f1f57b21cbc4a31b50d26a43845aed1",
+      "input_snapshot_sha256": "15a5c6b0e4d099f943d389c723dd5190f8d18ccc0f007924a06f0eb8053860cf",
+      "name": "S4 a_sampling_uniform \u00b7 handcrafted-stain-texture-v1",
+      "patch_policy": {
+        "allow_uncalibrated": false,
+        "anisotropy_tolerance": 0.1,
+        "background_fill": "slide",
+        "edge_mode": "shift_inward",
+        "fragment_rescue_min_area_um2": 2000.0,
+        "max_read_ratio": 4.0,
+        "max_upsample_ratio": 1.05,
+        "min_tissue_fraction": 0.25,
+        "patch_size": 224,
+        "quality_version": "dermpath.patch-quality/1",
+        "read_filters": {
+          "background_at_read": true,
+          "blur_flag": true,
+          "blur_reject_below": null,
+          "pen_marks": true,
+          "pen_max_fraction": 0.25,
+          "rescue_min_tissue_fraction": 0.02
+        },
+        "resize_filter": "bilinear",
+        "sampling": {
+          "all_safety_cap": 50000,
+          "lesion_fraction": 0.5,
+          "max_patches": 256,
+          "seed": 0,
+          "strategy": "uniform",
+          "version": "dermpath.sampling/1"
+        },
+        "stride_fraction": 1.0,
+        "target_mpp": 0.5,
+        "uncalibrated_downsample": 4.0,
+        "version": "dermpath.patching/2"
+      },
+      "policy_sha256": "7c2475a91d37f7466b877c7d1354887c05e134ab8c19ddb4e1ff54e94c47163a",
+      "precision": "fp32",
+      "qc_source": "dataset_manifest",
+      "spec_sha256": "a3a5b981e273d779f5aa0774caf14d1dc0ff10aacbe0c5021aaa490e51bf148c",
+      "stain_policy": {
+        "fitted_on": null,
+        "fitting_slides": 0,
+        "method": "none",
+        "reference_sha256": null
+      },
+      "stain_policy_sha256": "5975f29b774a9b85fc350439527ff0db2b487c8c26127a2c02c2e629278ea14f",
+      "stain_reference_sha256": null,
+      "status": "ready",
+      "weights_config_sha256": null,
+      "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+    },
+    "s4 a_sampling_uniform midnight-12k": {
+      "counts": {
+        "done": 60,
+        "failed": 0,
+        "pending": 0,
+        "slides": 60
+      },
+      "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+      "device_class": "mps",
+      "encoder_id": "midnight-12k",
+      "encoder_spec_sha256": "36d2e01f76b332c8df3b5d95203abba4c903f7064d3563ad452f8b59c592ebdc",
+      "execution_mode": "supervised_experiment",
+      "extraction": {
+        "batch_size": 32,
+        "cpu_threads": null,
+        "device": "mps",
+        "extractor_version": "dermpath.feature_sets/2",
+        "pixel_mode": "read"
+      },
+      "extraction_env_sha256": "e90c2b64cb34bac89923729b40d1d5c48339f492fcdf895278c0458dd454c70a",
+      "feature_set_id": "0ad3a2dddabc43c59078904b1e2605fd",
+      "input_snapshot_sha256": "15a5c6b0e4d099f943d389c723dd5190f8d18ccc0f007924a06f0eb8053860cf",
+      "name": "S4 a_sampling_uniform \u00b7 midnight-12k",
+      "patch_policy": {
+        "allow_uncalibrated": false,
+        "anisotropy_tolerance": 0.1,
+        "background_fill": "slide",
+        "edge_mode": "shift_inward",
+        "fragment_rescue_min_area_um2": 2000.0,
+        "max_read_ratio": 4.0,
+        "max_upsample_ratio": 1.05,
+        "min_tissue_fraction": 0.25,
+        "patch_size": 224,
+        "quality_version": "dermpath.patch-quality/1",
+        "read_filters": {
+          "background_at_read": true,
+          "blur_flag": true,
+          "blur_reject_below": null,
+          "pen_marks": true,
+          "pen_max_fraction": 0.25,
+          "rescue_min_tissue_fraction": 0.02
+        },
+        "resize_filter": "bilinear",
+        "sampling": {
+          "all_safety_cap": 50000,
+          "lesion_fraction": 0.5,
+          "max_patches": 256,
+          "seed": 0,
+          "strategy": "uniform",
+          "version": "dermpath.sampling/1"
+        },
+        "stride_fraction": 1.0,
+        "target_mpp": 0.5,
+        "uncalibrated_downsample": 4.0,
+        "version": "dermpath.patching/2"
+      },
+      "policy_sha256": "7c2475a91d37f7466b877c7d1354887c05e134ab8c19ddb4e1ff54e94c47163a",
+      "precision": "fp32",
+      "qc_source": "dataset_manifest",
+      "spec_sha256": "3c6a6f6e8dc65bd002ec170408304a3998b1c1cde4d41154d96f46d04e38d8d4",
+      "stain_policy": {
+        "fitted_on": null,
+        "fitting_slides": 0,
+        "method": "none",
+        "reference_sha256": null
+      },
+      "stain_policy_sha256": "5975f29b774a9b85fc350439527ff0db2b487c8c26127a2c02c2e629278ea14f",
+      "stain_reference_sha256": null,
+      "status": "ready",
+      "weights_config_sha256": "0362e014a3f3b1ad2f2faf115d21cbc05ed48b3a6114bdb4ddec897bc83cc0fd",
+      "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+    },
+    "s4 c_precision_fp16 midnight-12k": {
+      "counts": {
+        "done": 60,
+        "failed": 0,
+        "pending": 0,
+        "slides": 60
+      },
+      "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+      "device_class": "mps",
+      "encoder_id": "midnight-12k",
+      "encoder_spec_sha256": "36d2e01f76b332c8df3b5d95203abba4c903f7064d3563ad452f8b59c592ebdc",
+      "execution_mode": "supervised_experiment",
+      "extraction": {
+        "batch_size": 32,
+        "cpu_threads": null,
+        "device": "mps",
+        "extractor_version": "dermpath.feature_sets/2",
+        "pixel_mode": "read"
+      },
+      "extraction_env_sha256": "21d4ace83d76a8d770d3fe74a3c102da8de49f5d465d26bf605f23d196e95fe8",
+      "feature_set_id": "6c43b5f6ba3242d8b8ca6a5f4842bdd4",
+      "input_snapshot_sha256": "15a5c6b0e4d099f943d389c723dd5190f8d18ccc0f007924a06f0eb8053860cf",
+      "name": "S4 c_precision_fp16 \u00b7 midnight-12k",
+      "patch_policy": {
+        "allow_uncalibrated": false,
+        "anisotropy_tolerance": 0.1,
+        "background_fill": "slide",
+        "edge_mode": "shift_inward",
+        "fragment_rescue_min_area_um2": 2000.0,
+        "max_read_ratio": 4.0,
+        "max_upsample_ratio": 1.05,
+        "min_tissue_fraction": 0.25,
+        "patch_size": 224,
+        "quality_version": "dermpath.patch-quality/1",
+        "read_filters": {
+          "background_at_read": true,
+          "blur_flag": true,
+          "blur_reject_below": null,
+          "pen_marks": true,
+          "pen_max_fraction": 0.25,
+          "rescue_min_tissue_fraction": 0.02
+        },
+        "resize_filter": "bilinear",
+        "sampling": {
+          "all_safety_cap": 50000,
+          "lesion_fraction": 0.5,
+          "max_patches": 256,
+          "seed": 0,
+          "strategy": "spatial",
+          "version": "dermpath.sampling/1"
+        },
+        "stride_fraction": 1.0,
+        "target_mpp": 0.5,
+        "uncalibrated_downsample": 4.0,
+        "version": "dermpath.patching/2"
+      },
+      "policy_sha256": "cefdf1652950adc92b73e942f5f636013be21525700a7f1cfac1d044df4218f9",
+      "precision": "fp16",
+      "qc_source": "dataset_manifest",
+      "spec_sha256": "5a8a48cf36816101cf084799415f2a91e6b7442a8c9b538425f1db5415403abf",
+      "stain_policy": {
+        "fitted_on": null,
+        "fitting_slides": 0,
+        "method": "none",
+        "reference_sha256": null
+      },
+      "stain_policy_sha256": "5975f29b774a9b85fc350439527ff0db2b487c8c26127a2c02c2e629278ea14f",
+      "stain_reference_sha256": null,
+      "status": "ready",
+      "weights_config_sha256": "0362e014a3f3b1ad2f2faf115d21cbc05ed48b3a6114bdb4ddec897bc83cc0fd",
+      "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+    },
+    "s4b budget handcrafted-stain-texture-v1": {
+      "counts": {
+        "done": 60,
+        "failed": 0,
+        "pending": 0,
+        "slides": 60
+      },
+      "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+      "device_class": "cpu",
+      "encoder_id": "handcrafted-stain-texture-v1",
+      "encoder_spec_sha256": "8e4d14d0f79eaafbb7f2e2bfb1289fa543f2201abe94f5cfcc0d46096e80c1ed",
+      "execution_mode": "supervised_experiment",
+      "extraction": {
+        "batch_size": 32,
+        "cpu_threads": null,
+        "device": "cpu",
+        "extractor_version": "dermpath.feature_sets/2",
+        "pixel_mode": "read"
+      },
+      "extraction_env_sha256": "d43dccd91de265c4ab133a7d85f5921a371663f0a31cf4686b98a4fca6e92d23",
+      "feature_set_id": "9849f5432e604da7a81db0577cec3d83",
+      "input_snapshot_sha256": "15a5c6b0e4d099f943d389c723dd5190f8d18ccc0f007924a06f0eb8053860cf",
+      "name": "S4b budget 512 \u00b7 handcrafted-stain-texture-v1",
+      "patch_policy": {
+        "allow_uncalibrated": false,
+        "anisotropy_tolerance": 0.1,
+        "background_fill": "slide",
+        "edge_mode": "shift_inward",
+        "fragment_rescue_min_area_um2": 2000.0,
+        "max_read_ratio": 4.0,
+        "max_upsample_ratio": 1.05,
+        "min_tissue_fraction": 0.25,
+        "patch_size": 224,
+        "quality_version": "dermpath.patch-quality/1",
+        "read_filters": {
+          "background_at_read": true,
+          "blur_flag": true,
+          "blur_reject_below": null,
+          "pen_marks": true,
+          "pen_max_fraction": 0.25,
+          "rescue_min_tissue_fraction": 0.02
+        },
+        "resize_filter": "bilinear",
+        "sampling": {
+          "all_safety_cap": 50000,
+          "lesion_fraction": 0.5,
+          "max_patches": 512,
+          "seed": 0,
+          "strategy": "spatial",
+          "version": "dermpath.sampling/1"
+        },
+        "stride_fraction": 1.0,
+        "target_mpp": 0.5,
+        "uncalibrated_downsample": 4.0,
+        "version": "dermpath.patching/2"
+      },
+      "policy_sha256": "7c1387f2a949f78448fc066927218ea1e729ac68c0a8dab6204ba611a0937e8a",
+      "precision": "fp32",
+      "qc_source": "dataset_manifest",
+      "spec_sha256": "cc587380313639b7bf9e8aab13cb477778cb02b4b7d981a09069b499a44a674a",
+      "stain_policy": {
+        "fitted_on": null,
+        "fitting_slides": 0,
+        "method": "none",
+        "reference_sha256": null
+      },
+      "stain_policy_sha256": "5975f29b774a9b85fc350439527ff0db2b487c8c26127a2c02c2e629278ea14f",
+      "stain_reference_sha256": null,
+      "status": "ready",
+      "weights_config_sha256": null,
+      "weights_sha256": "handcrafted:1:234035d1ddda76088198df882252b19dd200defdbff72035257f73af020f49c6"
+    },
+    "s4b budget midnight-12k": {
+      "counts": {
+        "done": 60,
+        "failed": 0,
+        "pending": 0,
+        "slides": 60
+      },
+      "dataset_version_id": "1868803e54c045eba4df9c7a9fd53a7b",
+      "device_class": "mps",
+      "encoder_id": "midnight-12k",
+      "encoder_spec_sha256": "36d2e01f76b332c8df3b5d95203abba4c903f7064d3563ad452f8b59c592ebdc",
+      "execution_mode": "supervised_experiment",
+      "extraction": {
+        "batch_size": 32,
+        "cpu_threads": null,
+        "device": "mps",
+        "extractor_version": "dermpath.feature_sets/2",
+        "pixel_mode": "read"
+      },
+      "extraction_env_sha256": "e90c2b64cb34bac89923729b40d1d5c48339f492fcdf895278c0458dd454c70a",
+      "feature_set_id": "8f57bde35aad412180e3b9e8630ad875",
+      "input_snapshot_sha256": "15a5c6b0e4d099f943d389c723dd5190f8d18ccc0f007924a06f0eb8053860cf",
+      "name": "S4b budget 512 \u00b7 midnight-12k",
+      "patch_policy": {
+        "allow_uncalibrated": false,
+        "anisotropy_tolerance": 0.1,
+        "background_fill": "slide",
+        "edge_mode": "shift_inward",
+        "fragment_rescue_min_area_um2": 2000.0,
+        "max_read_ratio": 4.0,
+        "max_upsample_ratio": 1.05,
+        "min_tissue_fraction": 0.25,
+        "patch_size": 224,
+        "quality_version": "dermpath.patch-quality/1",
+        "read_filters": {
+          "background_at_read": true,
+          "blur_flag": true,
+          "blur_reject_below": null,
+          "pen_marks": true,
+          "pen_max_fraction": 0.25,
+          "rescue_min_tissue_fraction": 0.02
+        },
+        "resize_filter": "bilinear",
+        "sampling": {
+          "all_safety_cap": 50000,
+          "lesion_fraction": 0.5,
+          "max_patches": 512,
+          "seed": 0,
+          "strategy": "spatial",
+          "version": "dermpath.sampling/1"
+        },
+        "stride_fraction": 1.0,
+        "target_mpp": 0.5,
+        "uncalibrated_downsample": 4.0,
+        "version": "dermpath.patching/2"
+      },
+      "policy_sha256": "7c1387f2a949f78448fc066927218ea1e729ac68c0a8dab6204ba611a0937e8a",
+      "precision": "fp32",
+      "qc_source": "dataset_manifest",
+      "spec_sha256": "61fcccf0d261fd88c3976fdf79cfac808fff142ad682a9150c0499289427a9d0",
+      "stain_policy": {
+        "fitted_on": null,
+        "fitting_slides": 0,
+        "method": "none",
+        "reference_sha256": null
+      },
+      "stain_policy_sha256": "5975f29b774a9b85fc350439527ff0db2b487c8c26127a2c02c2e629278ea14f",
+      "stain_reference_sha256": null,
+      "status": "ready",
+      "weights_config_sha256": "0362e014a3f3b1ad2f2faf115d21cbc05ed48b3a6114bdb4ddec897bc83cc0fd",
+      "weights_sha256": "52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1"
+    }
+  },
+  "folds": {
+    "note": "fold_assignment_sha256 hashes each run's patient -> fold map (the map itself contains patient codes and is not exported)",
+    "protocol": {
+      "calibration": "platt",
+      "class_weight": "balanced",
+      "cv_folds": 5,
+      "evaluation_protocol": "dev_cv",
+      "fold_consistency": {
+        "distinct": 1,
+        "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+        "identical": true,
+        "rule": "folds depend on the development pool and k only, never on the head or the training seed",
+        "runs": 24,
+        "runs_without_fold_record": []
+      },
+      "folds": "patient-grouped stratified over the development pool (train \u222a val); they depend on the pool and k only, so every run (every head, encoder and seed) shares them",
+      "learning_curve_seed": 0,
+      "seed": 0,
+      "seeds": [
+        0,
+        1,
+        2
+      ],
+      "seeds_source": "--seeds",
+      "test": "not used by any run (test_items_used 0 in all 24 runs); unreleased in the real study and not used for model selection; test metrics exist only through a recorded test release (none recorded); its 15 slides were feature-extracted label-free by the fixed encoders (no labels read); see test_releases.json -> disclosures for test patients processed outside the real study (e.g. throwaway dry runs)",
+      "test_wording_note": "rewritten on export: the driver's s3 protocol text overstated the test split's separation (its slides are feature-extracted label-free; test_releases.json lists releases and disclosures)",
+      "threshold_rule": "youden"
+    }
+  },
+  "model_and_bundle": {
+    "bundle_id": "593059e2f685424a98cf9198fc7974bc",
+    "bundle_label_scope": "slide",
+    "bundle_sha256": "8f1eb227dfd20d4b8002f5093d748fb6a91bd9290596e42028d3b27f25625d19",
+    "checkpoint_sha256": "843bdb8044365b3c7509092ca5c19722437b69a34ebb4cf61ed4916c27e609b6",
+    "encoder": "midnight-12k",
+    "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+    "head": "abmil",
+    "model_id": "e19ffe37fe354845b6c36a83e2d1dfa5",
+    "model_status": "research_candidate",
+    "precision": "fp32",
+    "run_id": "ba364f52b97843c18315d8bacbaf9180",
+    "seed": 0,
+    "source": "attachments/inference_measurement.json -> registration (registered outside the driver, after s3; registering a bundle is not a test release)"
+  },
+  "offline_status": {
+    "s0": "valid",
+    "s2": "valid",
+    "s3": "valid",
+    "s4": "valid",
+    "s4b": "valid",
+    "s6": "missing"
+  },
+  "preprocessing": {
+    "policy": {
+      "max_patches_per_slide": 256,
+      "min_tissue_fraction": 0.25,
+      "precision": "fp32",
+      "sampling_seed": 0,
+      "sampling_strategy": "spatial",
+      "stain_normalization": "none",
+      "target_mpp": 0.5
+    },
+    "policy_identity": {
+      "identical_except_patch_size": true,
+      "patch_size": {
+        "handcrafted-stain-texture-v1": 224,
+        "midnight-12k": 224
+      },
+      "policy_sha256": {
+        "handcrafted-stain-texture-v1": "cefdf1652950adc92b73e942f5f636013be21525700a7f1cfac1d044df4218f9",
+        "midnight-12k": "cefdf1652950adc92b73e942f5f636013be21525700a7f1cfac1d044df4218f9"
+      }
+    }
+  },
+  "runs": [
+    {
+      "checkpoint_sha256": "70e9dc419e1d3d4091ede899978f469b797c00ffe1fad267e79ff87315a4ae81",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "handcrafted-stain-texture-v1",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 1.0,
+      "head": "meanpool_logreg",
+      "identity_sha256": "2c911f9f7444e56a32445a11a30c70d05aede80e8d0d486db8a78242a1954403",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 0,
+      "role": "grid",
+      "run_id": "da0e15429d254469a88c05aa815a606e",
+      "seed": 0,
+      "status": "succeeded",
+      "threshold": 0.3421709860571548,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val)",
+        "head": "meanpool_logreg",
+        "n_iter": 27,
+        "train_bags": 45
+      }
+    },
+    {
+      "checkpoint_sha256": "ec375dd8c42b8ba314818ba3755c4c275b6d64bb1ec491a4331914a5857d1b19",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "handcrafted-stain-texture-v1",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 1.0,
+      "head": "abmil",
+      "identity_sha256": "ea5737487012850b83b428b1bf4819620b35f4b9cb40f61e0bf193926c08b7d3",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 0,
+      "role": "grid",
+      "run_id": "5d2d00e3232e43e3b74a78c5a9fda417",
+      "seed": 0,
+      "status": "succeeded",
+      "threshold": 0.6489242911338806,
+      "training_summary": {
+        "best_epoch": 4,
+        "best_inner_holdout_loss": 0.636969,
+        "early_stopping": "epoch count selected on an inner patient-grouped stratified hold-out of the training bags (weighted BCE; validation never seen); the final model was reinitialised and fitted on every training bag for that many epochs",
+        "epoch_selection": {
+          "best_epoch": 4,
+          "epochs_run": 14,
+          "fit": {
+            "bags": 34,
+            "bags_by_class": {
+              "negative": 17,
+              "positive": 17
+            },
+            "patients": 28,
+            "patients_by_class": {
+              "negative": 15,
+              "positive": 14
+            }
+          },
+          "holdout": {
+            "bags": 11,
+            "bags_by_class": {
+              "negative": 6,
+              "positive": 5
+            },
+            "patients": 7,
+            "patients_by_class": {
+              "negative": 4,
+              "positive": 4
+            }
+          },
+          "status": "selected"
+        },
+        "epochs_run": 14,
+        "final_fit": {
+          "bags": 45,
+          "bags_by_class": {
+            "negative": 23,
+            "positive": 22
+          },
+          "early_stopping": "none (fixed epoch count selected on the inner hold-out)",
+          "epochs": 4,
+          "patients": 35,
+          "patients_by_class": {
+            "negative": 19,
+            "positive": 18
+          }
+        },
+        "final_fit_epochs": 4,
+        "final_model": "refitted on the whole development pool (train \u222a val); ABMIL: epoch count selected on an inner patient-grouped hold-out of that pool, then a fresh model fitted on every bag of it for that count",
+        "fit_bags": 45,
+        "fit_semantics": "epoch count selected by early stopping on an inner patient-grouped stratified hold-out of the permitted fitting patients (never validation, an outer held-out fold or test); the model is then reinitialised with the same seed and fitted on EVERY permitted fitting bag for exactly that many epochs, with no early stopping; input normalisation and class weights come from every fitting bag",
+        "head": "abmil",
+        "inner_holdout": {
+          "fit": {
+            "bags_by_class": {
+              "negative": 17,
+              "positive": 17
+            },
+            "patients_by_class": {
+              "negative": 14,
+              "positive": 14
+            },
+            "units_by_class": {
+              "negative": 14,
+              "positive": 14
+            }
+          },
+          "fit_bags": 34,
+          "fit_patients": 28,
+          "fraction": 0.2,
+          "held_out": {
+            "bags_by_class": {
+              "negative": 6,
+              "positive": 5
+            },
+            "patients_by_class": {
+              "negative": 3,
+              "positive": 4
+            },
+            "units_by_class": {
+              "negative": 3,
+              "positive": 4
+            }
+          },
+          "holdout_bag_ids": [
+            "id:b24877a4c4fc",
+            "id:c9c4d956f10a",
+            "id:bc9d0e3e9139",
+            "id:6dd951fe4110",
+            "id:afbb763433bd",
+            "id:bdf1e8568589",
+            "id:4511aff3dd9f",
+            "id:5a870d328aa4",
+            "id:f2691e0043b6",
+            "id:0b012175b6fc",
+            "id:59dc92603965"
+          ],
+          "holdout_bags": 11,
+          "holdout_patients": 7,
+          "method": "patient-grouped stratified inner hold-out",
+          "salt": "a4b8881969029a8254dcce3bab16daa9|inner|0",
+          "warnings": []
+        },
+        "train_bags": 45
+      }
+    },
+    {
+      "checkpoint_sha256": "0bc4b77ab205130d96c96f82cd7f02f5a57f93ecc1f2d906e3aca9a4cca18cdb",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "midnight-12k",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 1.0,
+      "head": "meanpool_logreg",
+      "identity_sha256": "de423655683c43103332642e3ec5e718f4d29a9721c7b6f672502aacd4984564",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 0,
+      "role": "grid",
+      "run_id": "b7abc046747a49e6ac834cccb09b6802",
+      "seed": 0,
+      "status": "succeeded",
+      "threshold": 0.26472640198830916,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val)",
+        "head": "meanpool_logreg",
+        "n_iter": 40,
+        "train_bags": 45
+      }
+    },
+    {
+      "checkpoint_sha256": "843bdb8044365b3c7509092ca5c19722437b69a34ebb4cf61ed4916c27e609b6",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "midnight-12k",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 1.0,
+      "head": "abmil",
+      "identity_sha256": "b785246ae761fc85439a693ea792694d149eb0fcfebc5255647a4c7b0a0a6745",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 0,
+      "role": "grid",
+      "run_id": "ba364f52b97843c18315d8bacbaf9180",
+      "seed": 0,
+      "status": "succeeded",
+      "threshold": 0.8432302474975586,
+      "training_summary": {
+        "best_epoch": 7,
+        "best_inner_holdout_loss": 0.140314,
+        "early_stopping": "epoch count selected on an inner patient-grouped stratified hold-out of the training bags (weighted BCE; validation never seen); the final model was reinitialised and fitted on every training bag for that many epochs",
+        "epoch_selection": {
+          "best_epoch": 7,
+          "epochs_run": 17,
+          "fit": {
+            "bags": 34,
+            "bags_by_class": {
+              "negative": 17,
+              "positive": 17
+            },
+            "patients": 28,
+            "patients_by_class": {
+              "negative": 15,
+              "positive": 14
+            }
+          },
+          "holdout": {
+            "bags": 11,
+            "bags_by_class": {
+              "negative": 6,
+              "positive": 5
+            },
+            "patients": 7,
+            "patients_by_class": {
+              "negative": 4,
+              "positive": 4
+            }
+          },
+          "status": "selected"
+        },
+        "epochs_run": 17,
+        "final_fit": {
+          "bags": 45,
+          "bags_by_class": {
+            "negative": 23,
+            "positive": 22
+          },
+          "early_stopping": "none (fixed epoch count selected on the inner hold-out)",
+          "epochs": 7,
+          "patients": 35,
+          "patients_by_class": {
+            "negative": 19,
+            "positive": 18
+          }
+        },
+        "final_fit_epochs": 7,
+        "final_model": "refitted on the whole development pool (train \u222a val); ABMIL: epoch count selected on an inner patient-grouped hold-out of that pool, then a fresh model fitted on every bag of it for that count",
+        "fit_bags": 45,
+        "fit_semantics": "epoch count selected by early stopping on an inner patient-grouped stratified hold-out of the permitted fitting patients (never validation, an outer held-out fold or test); the model is then reinitialised with the same seed and fitted on EVERY permitted fitting bag for exactly that many epochs, with no early stopping; input normalisation and class weights come from every fitting bag",
+        "head": "abmil",
+        "inner_holdout": {
+          "fit": {
+            "bags_by_class": {
+              "negative": 17,
+              "positive": 17
+            },
+            "patients_by_class": {
+              "negative": 14,
+              "positive": 14
+            },
+            "units_by_class": {
+              "negative": 14,
+              "positive": 14
+            }
+          },
+          "fit_bags": 34,
+          "fit_patients": 28,
+          "fraction": 0.2,
+          "held_out": {
+            "bags_by_class": {
+              "negative": 6,
+              "positive": 5
+            },
+            "patients_by_class": {
+              "negative": 3,
+              "positive": 4
+            },
+            "units_by_class": {
+              "negative": 3,
+              "positive": 4
+            }
+          },
+          "holdout_bag_ids": [
+            "id:b24877a4c4fc",
+            "id:c9c4d956f10a",
+            "id:bc9d0e3e9139",
+            "id:6dd951fe4110",
+            "id:afbb763433bd",
+            "id:bdf1e8568589",
+            "id:4511aff3dd9f",
+            "id:5a870d328aa4",
+            "id:f2691e0043b6",
+            "id:0b012175b6fc",
+            "id:59dc92603965"
+          ],
+          "holdout_bags": 11,
+          "holdout_patients": 7,
+          "method": "patient-grouped stratified inner hold-out",
+          "salt": "a4b8881969029a8254dcce3bab16daa9|inner|0",
+          "warnings": []
+        },
+        "train_bags": 45
+      }
+    },
+    {
+      "checkpoint_sha256": "fa866248a5ffbf9c268c717dcb769c7e4408017b2e82c40e64c13b17d19a3ef2",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "handcrafted-stain-texture-v1",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 1.0,
+      "head": "meanpool_logreg",
+      "identity_sha256": "3d027ebcd41326ae7c4757e1fc190b3a0e65cf0241edf9ff5f36881a19c42f5a",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 0,
+      "role": "grid",
+      "run_id": "39aae3d495af4701b655d92aaae1a618",
+      "seed": 1,
+      "status": "succeeded",
+      "threshold": 0.3421709860571548,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val)",
+        "head": "meanpool_logreg",
+        "n_iter": 27,
+        "train_bags": 45
+      }
+    },
+    {
+      "checkpoint_sha256": "2a6e3b27794b33635ed5e8ce88b44d011b3c3aebed30046bbb2aa300729ba73d",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "handcrafted-stain-texture-v1",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 1.0,
+      "head": "abmil",
+      "identity_sha256": "7a63acff9c87cbd4a7fc0aa0d63122b17ced4e293cba9b596dc0d813839620be",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 0,
+      "role": "grid",
+      "run_id": "e53e958230ac4290885bb13f5b9f1991",
+      "seed": 1,
+      "status": "succeeded",
+      "threshold": 0.45791488885879517,
+      "training_summary": {
+        "best_epoch": 10,
+        "best_inner_holdout_loss": 0.465893,
+        "early_stopping": "epoch count selected on an inner patient-grouped stratified hold-out of the training bags (weighted BCE; validation never seen); the final model was reinitialised and fitted on every training bag for that many epochs",
+        "epoch_selection": {
+          "best_epoch": 10,
+          "epochs_run": 20,
+          "fit": {
+            "bags": 37,
+            "bags_by_class": {
+              "negative": 20,
+              "positive": 17
+            },
+            "patients": 28,
+            "patients_by_class": {
+              "negative": 16,
+              "positive": 14
+            }
+          },
+          "holdout": {
+            "bags": 8,
+            "bags_by_class": {
+              "negative": 3,
+              "positive": 5
+            },
+            "patients": 7,
+            "patients_by_class": {
+              "negative": 3,
+              "positive": 4
+            }
+          },
+          "status": "selected"
+        },
+        "epochs_run": 20,
+        "final_fit": {
+          "bags": 45,
+          "bags_by_class": {
+            "negative": 23,
+            "positive": 22
+          },
+          "early_stopping": "none (fixed epoch count selected on the inner hold-out)",
+          "epochs": 10,
+          "patients": 35,
+          "patients_by_class": {
+            "negative": 19,
+            "positive": 18
+          }
+        },
+        "final_fit_epochs": 10,
+        "final_model": "refitted on the whole development pool (train \u222a val); ABMIL: epoch count selected on an inner patient-grouped hold-out of that pool, then a fresh model fitted on every bag of it for that count",
+        "fit_bags": 45,
+        "fit_semantics": "epoch count selected by early stopping on an inner patient-grouped stratified hold-out of the permitted fitting patients (never validation, an outer held-out fold or test); the model is then reinitialised with the same seed and fitted on EVERY permitted fitting bag for exactly that many epochs, with no early stopping; input normalisation and class weights come from every fitting bag",
+        "head": "abmil",
+        "inner_holdout": {
+          "fit": {
+            "bags_by_class": {
+              "negative": 20,
+              "positive": 17
+            },
+            "patients_by_class": {
+              "negative": 14,
+              "positive": 14
+            },
+            "units_by_class": {
+              "negative": 14,
+              "positive": 14
+            }
+          },
+          "fit_bags": 37,
+          "fit_patients": 28,
+          "fraction": 0.2,
+          "held_out": {
+            "bags_by_class": {
+              "negative": 3,
+              "positive": 5
+            },
+            "patients_by_class": {
+              "negative": 3,
+              "positive": 4
+            },
+            "units_by_class": {
+              "negative": 3,
+              "positive": 4
+            }
+          },
+          "holdout_bag_ids": [
+            "id:a7bf4b131d89",
+            "id:f5e50dc08cab",
+            "id:8c53e0e7de79",
+            "id:2db7b7dd722a",
+            "id:ab50fff38eb1",
+            "id:59dc92603965",
+            "id:45a952077970",
+            "id:be1cf9abff8a"
+          ],
+          "holdout_bags": 8,
+          "holdout_patients": 7,
+          "method": "patient-grouped stratified inner hold-out",
+          "salt": "a4b8881969029a8254dcce3bab16daa9|inner|1",
+          "warnings": []
+        },
+        "train_bags": 45
+      }
+    },
+    {
+      "checkpoint_sha256": "f8fad4074b007e9a24250f03955de24d8c83b66df53c40a9e75bc44d30c301db",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "midnight-12k",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 1.0,
+      "head": "meanpool_logreg",
+      "identity_sha256": "bfe812321498728ac12712721e1cc8afe76052e8eb386b8325239a790008abd7",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 0,
+      "role": "grid",
+      "run_id": "71a27f33c1354a878e23a0f3ae5cc351",
+      "seed": 1,
+      "status": "succeeded",
+      "threshold": 0.26472640198830916,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val)",
+        "head": "meanpool_logreg",
+        "n_iter": 40,
+        "train_bags": 45
+      }
+    },
+    {
+      "checkpoint_sha256": "3dfc957dadfdb9c6e368e8b1378fd82a952fdfd0dea1cc2a5e6b823cabb16fbc",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "midnight-12k",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 1.0,
+      "head": "abmil",
+      "identity_sha256": "4be10b60b2b783d9aef82837c550c038e3c553374bf3518bffb78a7c287786c1",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 0,
+      "role": "grid",
+      "run_id": "3b5b5a14a77841deba019377c3eec0b0",
+      "seed": 1,
+      "status": "succeeded",
+      "threshold": 0.7647593021392822,
+      "training_summary": {
+        "best_epoch": 4,
+        "best_inner_holdout_loss": 0.96084,
+        "early_stopping": "epoch count selected on an inner patient-grouped stratified hold-out of the training bags (weighted BCE; validation never seen); the final model was reinitialised and fitted on every training bag for that many epochs",
+        "epoch_selection": {
+          "best_epoch": 4,
+          "epochs_run": 14,
+          "fit": {
+            "bags": 37,
+            "bags_by_class": {
+              "negative": 20,
+              "positive": 17
+            },
+            "patients": 28,
+            "patients_by_class": {
+              "negative": 16,
+              "positive": 14
+            }
+          },
+          "holdout": {
+            "bags": 8,
+            "bags_by_class": {
+              "negative": 3,
+              "positive": 5
+            },
+            "patients": 7,
+            "patients_by_class": {
+              "negative": 3,
+              "positive": 4
+            }
+          },
+          "status": "selected"
+        },
+        "epochs_run": 14,
+        "final_fit": {
+          "bags": 45,
+          "bags_by_class": {
+            "negative": 23,
+            "positive": 22
+          },
+          "early_stopping": "none (fixed epoch count selected on the inner hold-out)",
+          "epochs": 4,
+          "patients": 35,
+          "patients_by_class": {
+            "negative": 19,
+            "positive": 18
+          }
+        },
+        "final_fit_epochs": 4,
+        "final_model": "refitted on the whole development pool (train \u222a val); ABMIL: epoch count selected on an inner patient-grouped hold-out of that pool, then a fresh model fitted on every bag of it for that count",
+        "fit_bags": 45,
+        "fit_semantics": "epoch count selected by early stopping on an inner patient-grouped stratified hold-out of the permitted fitting patients (never validation, an outer held-out fold or test); the model is then reinitialised with the same seed and fitted on EVERY permitted fitting bag for exactly that many epochs, with no early stopping; input normalisation and class weights come from every fitting bag",
+        "head": "abmil",
+        "inner_holdout": {
+          "fit": {
+            "bags_by_class": {
+              "negative": 20,
+              "positive": 17
+            },
+            "patients_by_class": {
+              "negative": 14,
+              "positive": 14
+            },
+            "units_by_class": {
+              "negative": 14,
+              "positive": 14
+            }
+          },
+          "fit_bags": 37,
+          "fit_patients": 28,
+          "fraction": 0.2,
+          "held_out": {
+            "bags_by_class": {
+              "negative": 3,
+              "positive": 5
+            },
+            "patients_by_class": {
+              "negative": 3,
+              "positive": 4
+            },
+            "units_by_class": {
+              "negative": 3,
+              "positive": 4
+            }
+          },
+          "holdout_bag_ids": [
+            "id:a7bf4b131d89",
+            "id:f5e50dc08cab",
+            "id:8c53e0e7de79",
+            "id:2db7b7dd722a",
+            "id:ab50fff38eb1",
+            "id:59dc92603965",
+            "id:45a952077970",
+            "id:be1cf9abff8a"
+          ],
+          "holdout_bags": 8,
+          "holdout_patients": 7,
+          "method": "patient-grouped stratified inner hold-out",
+          "salt": "a4b8881969029a8254dcce3bab16daa9|inner|1",
+          "warnings": []
+        },
+        "train_bags": 45
+      }
+    },
+    {
+      "checkpoint_sha256": "313acb37615487a8fd93bbe6277d31ac59867fc2d48e418a39ea5ece896f3302",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "handcrafted-stain-texture-v1",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 1.0,
+      "head": "meanpool_logreg",
+      "identity_sha256": "4ebd26a0a9f4c4ffc52b0fba805baded854cf6eb54388fe0dbd2a5e223c04bbf",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 0,
+      "role": "grid",
+      "run_id": "8da8058dcc1a4e8086a65caee8099a12",
+      "seed": 2,
+      "status": "succeeded",
+      "threshold": 0.3421709860571548,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val)",
+        "head": "meanpool_logreg",
+        "n_iter": 27,
+        "train_bags": 45
+      }
+    },
+    {
+      "checkpoint_sha256": "de644d4b86c2746112d3b1099e6a92e0a5f9a6506353421722e0cc02dfb280eb",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "handcrafted-stain-texture-v1",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 1.0,
+      "head": "abmil",
+      "identity_sha256": "7d5a97d02fce7f23ae5aaf57d79b3b2b5b216ffb7cf773e742de76e0c7e717ec",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 0,
+      "role": "grid",
+      "run_id": "e6a98325ba9b4eeea5d7ab2b9affc92e",
+      "seed": 2,
+      "status": "succeeded",
+      "threshold": 0.6739190220832825,
+      "training_summary": {
+        "best_epoch": 16,
+        "best_inner_holdout_loss": 0.270493,
+        "early_stopping": "epoch count selected on an inner patient-grouped stratified hold-out of the training bags (weighted BCE; validation never seen); the final model was reinitialised and fitted on every training bag for that many epochs",
+        "epoch_selection": {
+          "best_epoch": 16,
+          "epochs_run": 26,
+          "fit": {
+            "bags": 38,
+            "bags_by_class": {
+              "negative": 20,
+              "positive": 18
+            },
+            "patients": 28,
+            "patients_by_class": {
+              "negative": 16,
+              "positive": 14
+            }
+          },
+          "holdout": {
+            "bags": 7,
+            "bags_by_class": {
+              "negative": 3,
+              "positive": 4
+            },
+            "patients": 7,
+            "patients_by_class": {
+              "negative": 3,
+              "positive": 4
+            }
+          },
+          "status": "selected"
+        },
+        "epochs_run": 26,
+        "final_fit": {
+          "bags": 45,
+          "bags_by_class": {
+            "negative": 23,
+            "positive": 22
+          },
+          "early_stopping": "none (fixed epoch count selected on the inner hold-out)",
+          "epochs": 16,
+          "patients": 35,
+          "patients_by_class": {
+            "negative": 19,
+            "positive": 18
+          }
+        },
+        "final_fit_epochs": 16,
+        "final_model": "refitted on the whole development pool (train \u222a val); ABMIL: epoch count selected on an inner patient-grouped hold-out of that pool, then a fresh model fitted on every bag of it for that count",
+        "fit_bags": 45,
+        "fit_semantics": "epoch count selected by early stopping on an inner patient-grouped stratified hold-out of the permitted fitting patients (never validation, an outer held-out fold or test); the model is then reinitialised with the same seed and fitted on EVERY permitted fitting bag for exactly that many epochs, with no early stopping; input normalisation and class weights come from every fitting bag",
+        "head": "abmil",
+        "inner_holdout": {
+          "fit": {
+            "bags_by_class": {
+              "negative": 20,
+              "positive": 18
+            },
+            "patients_by_class": {
+              "negative": 14,
+              "positive": 14
+            },
+            "units_by_class": {
+              "negative": 14,
+              "positive": 14
+            }
+          },
+          "fit_bags": 38,
+          "fit_patients": 28,
+          "fraction": 0.2,
+          "held_out": {
+            "bags_by_class": {
+              "negative": 3,
+              "positive": 4
+            },
+            "patients_by_class": {
+              "negative": 3,
+              "positive": 4
+            },
+            "units_by_class": {
+              "negative": 3,
+              "positive": 4
+            }
+          },
+          "holdout_bag_ids": [
+            "id:d1efa1dcb5ff",
+            "id:5c71024af22f",
+            "id:0934cbf868a6",
+            "id:bdf1e8568589",
+            "id:5a870d328aa4",
+            "id:59dc92603965",
+            "id:45a952077970"
+          ],
+          "holdout_bags": 7,
+          "holdout_patients": 7,
+          "method": "patient-grouped stratified inner hold-out",
+          "salt": "a4b8881969029a8254dcce3bab16daa9|inner|2",
+          "warnings": []
+        },
+        "train_bags": 45
+      }
+    },
+    {
+      "checkpoint_sha256": "bc8919669a1211e876849ceefdaeb2519a070003a7132cc9a0f3495ff6626677",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "midnight-12k",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 1.0,
+      "head": "meanpool_logreg",
+      "identity_sha256": "46ffd7ce735eb8e013dac32acbb3f9180667647692014eef5f2652ae3be64db5",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 0,
+      "role": "grid",
+      "run_id": "cec621cea0d74770acc511492731a0eb",
+      "seed": 2,
+      "status": "succeeded",
+      "threshold": 0.26472640198830916,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val)",
+        "head": "meanpool_logreg",
+        "n_iter": 40,
+        "train_bags": 45
+      }
+    },
+    {
+      "checkpoint_sha256": "d0a88abb2909b001ec1c6b95cd0057679246f405c4a0296a7846d15e46c8693b",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "midnight-12k",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 1.0,
+      "head": "abmil",
+      "identity_sha256": "4855bee5e3242965d3170dc9cc181a1dddfb2973d75b4b227e4cee7e70194ada",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 0,
+      "role": "grid",
+      "run_id": "8b10d7b3b5c3436983c04aa0e9890a7b",
+      "seed": 2,
+      "status": "succeeded",
+      "threshold": 0.6956360936164856,
+      "training_summary": {
+        "best_epoch": 2,
+        "best_inner_holdout_loss": 0.211308,
+        "early_stopping": "epoch count selected on an inner patient-grouped stratified hold-out of the training bags (weighted BCE; validation never seen); the final model was reinitialised and fitted on every training bag for that many epochs",
+        "epoch_selection": {
+          "best_epoch": 2,
+          "epochs_run": 12,
+          "fit": {
+            "bags": 38,
+            "bags_by_class": {
+              "negative": 20,
+              "positive": 18
+            },
+            "patients": 28,
+            "patients_by_class": {
+              "negative": 16,
+              "positive": 14
+            }
+          },
+          "holdout": {
+            "bags": 7,
+            "bags_by_class": {
+              "negative": 3,
+              "positive": 4
+            },
+            "patients": 7,
+            "patients_by_class": {
+              "negative": 3,
+              "positive": 4
+            }
+          },
+          "status": "selected"
+        },
+        "epochs_run": 12,
+        "final_fit": {
+          "bags": 45,
+          "bags_by_class": {
+            "negative": 23,
+            "positive": 22
+          },
+          "early_stopping": "none (fixed epoch count selected on the inner hold-out)",
+          "epochs": 2,
+          "patients": 35,
+          "patients_by_class": {
+            "negative": 19,
+            "positive": 18
+          }
+        },
+        "final_fit_epochs": 2,
+        "final_model": "refitted on the whole development pool (train \u222a val); ABMIL: epoch count selected on an inner patient-grouped hold-out of that pool, then a fresh model fitted on every bag of it for that count",
+        "fit_bags": 45,
+        "fit_semantics": "epoch count selected by early stopping on an inner patient-grouped stratified hold-out of the permitted fitting patients (never validation, an outer held-out fold or test); the model is then reinitialised with the same seed and fitted on EVERY permitted fitting bag for exactly that many epochs, with no early stopping; input normalisation and class weights come from every fitting bag",
+        "head": "abmil",
+        "inner_holdout": {
+          "fit": {
+            "bags_by_class": {
+              "negative": 20,
+              "positive": 18
+            },
+            "patients_by_class": {
+              "negative": 14,
+              "positive": 14
+            },
+            "units_by_class": {
+              "negative": 14,
+              "positive": 14
+            }
+          },
+          "fit_bags": 38,
+          "fit_patients": 28,
+          "fraction": 0.2,
+          "held_out": {
+            "bags_by_class": {
+              "negative": 3,
+              "positive": 4
+            },
+            "patients_by_class": {
+              "negative": 3,
+              "positive": 4
+            },
+            "units_by_class": {
+              "negative": 3,
+              "positive": 4
+            }
+          },
+          "holdout_bag_ids": [
+            "id:d1efa1dcb5ff",
+            "id:5c71024af22f",
+            "id:0934cbf868a6",
+            "id:bdf1e8568589",
+            "id:5a870d328aa4",
+            "id:59dc92603965",
+            "id:45a952077970"
+          ],
+          "holdout_bags": 7,
+          "holdout_patients": 7,
+          "method": "patient-grouped stratified inner hold-out",
+          "salt": "a4b8881969029a8254dcce3bab16daa9|inner|2",
+          "warnings": []
+        },
+        "train_bags": 45
+      }
+    },
+    {
+      "checkpoint_sha256": "fc5a094215e52855eac9c994ae2825481b34c40dfcfe69e86effd26fe1d9bc8a",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "handcrafted-stain-texture-v1",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 0.25,
+      "head": "meanpool_logreg",
+      "identity_sha256": "d9619ef40d2fdcfe6d72c7795d48c4c32045827fb824781c56ddcb0c21452a09",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 0,
+      "role": "learning_curve",
+      "run_id": "b778cbddcc774c06bb31a6c2375695fb",
+      "seed": 0,
+      "status": "succeeded",
+      "threshold": 0.12972829734489638,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val), restricted to its learning-curve subset",
+        "head": "meanpool_logreg",
+        "n_iter": 22,
+        "train_bags": 11
+      }
+    },
+    {
+      "checkpoint_sha256": "adaa2d6b35d9a55925901317861cd9502181e1bdf6ef6a5341a1622cb6f7e3cd",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "handcrafted-stain-texture-v1",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 0.25,
+      "head": "meanpool_logreg",
+      "identity_sha256": "5ad37c01521863d54997a2593346fe9b64bb10397b2ab8490d330ab1e4ac81a0",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 1,
+      "role": "learning_curve",
+      "run_id": "59f211407bd741a59b147cd1c6ac1a66",
+      "seed": 0,
+      "status": "succeeded",
+      "threshold": 0.9421543612125829,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val), restricted to its learning-curve subset",
+        "head": "meanpool_logreg",
+        "n_iter": 18,
+        "train_bags": 10
+      }
+    },
+    {
+      "checkpoint_sha256": "c67275bb74173a7e5e3dc73b749160fb9ac0a37e1eae5518a441c704e8374313",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "handcrafted-stain-texture-v1",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 0.25,
+      "head": "meanpool_logreg",
+      "identity_sha256": "6c6bfe46c90f248d47f432ba4e88fcb1636020e273b4f5717c7c70a189b9c5d2",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 2,
+      "role": "learning_curve",
+      "run_id": "12e00261c5034c69aeff384b9e3bfad0",
+      "seed": 0,
+      "status": "succeeded",
+      "threshold": 0.8661745088150066,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val), restricted to its learning-curve subset",
+        "head": "meanpool_logreg",
+        "n_iter": 14,
+        "train_bags": 10
+      }
+    },
+    {
+      "checkpoint_sha256": "29165f83b79d342eb216b6c97522ef37053bd92204a3de3c4939bd87dbc616de",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "handcrafted-stain-texture-v1",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 0.5,
+      "head": "meanpool_logreg",
+      "identity_sha256": "c057d12bc124014b3f3bb1421f77be955d0d5f4180e23e5f5f50e00cafcb9d1c",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 0,
+      "role": "learning_curve",
+      "run_id": "9caa11208bfa4b4c821a85e87c6f60eb",
+      "seed": 0,
+      "status": "succeeded",
+      "threshold": 0.45065541699523226,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val), restricted to its learning-curve subset",
+        "head": "meanpool_logreg",
+        "n_iter": 22,
+        "train_bags": 23
+      }
+    },
+    {
+      "checkpoint_sha256": "9c738c480eefe26d3fb1a851314b792c804c4efb5e31967840e55aef25b7efb2",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "handcrafted-stain-texture-v1",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 0.5,
+      "head": "meanpool_logreg",
+      "identity_sha256": "862ba718817bf53aa7ca08e9ff5b88244abc5a77c8880009e12ff71ebdbafb2c",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 1,
+      "role": "learning_curve",
+      "run_id": "524c4dd6d78f47d1ae51ef31bdd94d4d",
+      "seed": 0,
+      "status": "succeeded",
+      "threshold": 0.6348638263554413,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val), restricted to its learning-curve subset",
+        "head": "meanpool_logreg",
+        "n_iter": 22,
+        "train_bags": 21
+      }
+    },
+    {
+      "checkpoint_sha256": "1af6baab5b7d4bc7a7f2b72b385931d5da2c18a062397960120c10dc3d5e4964",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "handcrafted-stain-texture-v1",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c2aa86f4871c4554a88f2bbe73f123ed",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 0.5,
+      "head": "meanpool_logreg",
+      "identity_sha256": "befcad3dee8a2a4e2535b64cd81acc7d8985b0fb2325ed52e8988297c646838c",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 2,
+      "role": "learning_curve",
+      "run_id": "e0f89e6043034975b154784ee05349d0",
+      "seed": 0,
+      "status": "succeeded",
+      "threshold": 0.5458762627349468,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val), restricted to its learning-curve subset",
+        "head": "meanpool_logreg",
+        "n_iter": 20,
+        "train_bags": 23
+      }
+    },
+    {
+      "checkpoint_sha256": "575d5d19d668341f27d8f95be5d53d9ac2a2c8a5efc67889738ce73fbebe0a7b",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "midnight-12k",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 0.25,
+      "head": "meanpool_logreg",
+      "identity_sha256": "0af1e06e3f9fb4d0c9c777d01134a0e4454248c8b380cd1702ee24895c9aaf8a",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 0,
+      "role": "learning_curve",
+      "run_id": "fb96949a6af64ae0836ec201a1c75d7a",
+      "seed": 0,
+      "status": "succeeded",
+      "threshold": 0.314651419050058,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val), restricted to its learning-curve subset",
+        "head": "meanpool_logreg",
+        "n_iter": 31,
+        "train_bags": 11
+      }
+    },
+    {
+      "checkpoint_sha256": "5446367b405bca516423256fbe3aa86a4554433a41aeecf0710e56eeb9028b57",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "midnight-12k",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 0.25,
+      "head": "meanpool_logreg",
+      "identity_sha256": "2cd2f5fae2c02713c7aca4aa181332fc38faf1430add71f6d656ab39eac2de80",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 1,
+      "role": "learning_curve",
+      "run_id": "26838350303b415ebbfa9cf4a947a703",
+      "seed": 0,
+      "status": "succeeded",
+      "threshold": 0.8548386472741308,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val), restricted to its learning-curve subset",
+        "head": "meanpool_logreg",
+        "n_iter": 23,
+        "train_bags": 10
+      }
+    },
+    {
+      "checkpoint_sha256": "be97b78575dbf864eadf9890362bd8af2cd4eb892dfab4d6aad9b6c43bd9cafd",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "midnight-12k",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 0.25,
+      "head": "meanpool_logreg",
+      "identity_sha256": "b29c791ce3e1aa18adf88fc0da9705a64120b9028abb0f3f4068655c14fcd9de",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 2,
+      "role": "learning_curve",
+      "run_id": "2b710c8a83034d05aff0aae5cd835d53",
+      "seed": 0,
+      "status": "succeeded",
+      "threshold": 0.19889750310263024,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val), restricted to its learning-curve subset",
+        "head": "meanpool_logreg",
+        "n_iter": 14,
+        "train_bags": 10
+      }
+    },
+    {
+      "checkpoint_sha256": "767875b71755c23a43a83a9177c769057df2f1ff9dc2fc76ba8e1f7b6a6b59e9",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "midnight-12k",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 0.5,
+      "head": "meanpool_logreg",
+      "identity_sha256": "e546b460ec64ea53ee1f2ae587b4304bee191ca8d5732ef0258f2c1491c7d96a",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 0,
+      "role": "learning_curve",
+      "run_id": "aa0c6b43eb6c4024bda3de447a321b70",
+      "seed": 0,
+      "status": "succeeded",
+      "threshold": 0.7645123824278173,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val), restricted to its learning-curve subset",
+        "head": "meanpool_logreg",
+        "n_iter": 30,
+        "train_bags": 23
+      }
+    },
+    {
+      "checkpoint_sha256": "1331836f8ace15788e7a659c1db9a7cefd4f6259a6901115d5c45209168b28ad",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "midnight-12k",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 0.5,
+      "head": "meanpool_logreg",
+      "identity_sha256": "e53715fbe59d54e9ceb80380c2b2a261b4325f58fd28a058be976b01f5a26fee",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 1,
+      "role": "learning_curve",
+      "run_id": "7a8b03c9f73f4e67adfae9ee1d9dd396",
+      "seed": 0,
+      "status": "succeeded",
+      "threshold": 0.9497983574547161,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val), restricted to its learning-curve subset",
+        "head": "meanpool_logreg",
+        "n_iter": 38,
+        "train_bags": 21
+      }
+    },
+    {
+      "checkpoint_sha256": "01ce019f8313f7200c64325d1b72c820d7dbf58a4f637196d52327be5785c802",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "midnight-12k",
+      "family_id": "822304061d24431cb755765cf85bdf55",
+      "feature_set_id": "c74591ee84e74c74934b0cbc28610769",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": 0.5,
+      "head": "meanpool_logreg",
+      "identity_sha256": "39cc791536ccfe4d0fddaed0aebbcd22f0556a7d4c896a9b96d1f07bb30c94b6",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": 2,
+      "role": "learning_curve",
+      "run_id": "30162ac941164b128d2f1a372ca106a2",
+      "seed": 0,
+      "status": "succeeded",
+      "threshold": 0.735596443627195,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val), restricted to its learning-curve subset",
+        "head": "meanpool_logreg",
+        "n_iter": 31,
+        "train_bags": 23
+      }
+    },
+    {
+      "checkpoint_sha256": "f2b04cbd5ccac504136bfad3431f303982cfc1faf9bcbd4adacaf4744b98beac",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "handcrafted-stain-texture-v1",
+      "family_id": "85e19ccf028b4c678e3064569abfeceb",
+      "feature_set_id": "2f1f57b21cbc4a31b50d26a43845aed1",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": null,
+      "head": "meanpool_logreg",
+      "identity_sha256": "206f9c921f39904866b314513582ea6f22b729f07202f13dca1d602205d918a6",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": null,
+      "role": "a_sampling_uniform",
+      "run_id": "bf135d2011eb4b80965f810b9117826d",
+      "seed": 0,
+      "stage": "s4",
+      "status": "succeeded",
+      "threshold": 0.3074784168368023,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val)",
+        "head": "meanpool_logreg",
+        "n_iter": 24,
+        "train_bags": 45
+      }
+    },
+    {
+      "checkpoint_sha256": "07ba783648dc74e806733a0782bd00ee8559394c42c7f460abdf1ed8262f79a7",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "midnight-12k",
+      "family_id": "85e19ccf028b4c678e3064569abfeceb",
+      "feature_set_id": "0ad3a2dddabc43c59078904b1e2605fd",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": null,
+      "head": "meanpool_logreg",
+      "identity_sha256": "2803795a30408cea3c7d672a15e3a4b4790d307bef782036229494a275ffb256",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": null,
+      "role": "a_sampling_uniform",
+      "run_id": "8319c6fe22b840be84b911a1d4415d6f",
+      "seed": 0,
+      "stage": "s4",
+      "status": "succeeded",
+      "threshold": 0.9289402004246482,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val)",
+        "head": "meanpool_logreg",
+        "n_iter": 41,
+        "train_bags": 45
+      }
+    },
+    {
+      "baseline_run_id": "b7abc046747a49e6ac834cccb09b6802",
+      "checkpoint_sha256": "f18142bf8a395f1543dd900c4a9fae31aed24651306c7b94ab551dd7ad4e58e8",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "midnight-12k",
+      "family_id": "85e19ccf028b4c678e3064569abfeceb",
+      "feature_set_id": "6c43b5f6ba3242d8b8ca6a5f4842bdd4",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": null,
+      "head": "meanpool_logreg",
+      "identity_sha256": "1663268fe069a83dd67f923b00f12a0134f037c76ed7af24d7f0e18e8593a36a",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": null,
+      "role": "c_precision_fp16",
+      "run_id": "4efbd45eaa624143b6a61b75841d5600",
+      "seed": 0,
+      "stage": "s4",
+      "status": "succeeded",
+      "threshold": 0.8212873810548312,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val)",
+        "head": "meanpool_logreg",
+        "n_iter": 40,
+        "train_bags": 45
+      }
+    },
+    {
+      "checkpoint_sha256": "2147cf351756531e66ab40c98eabfda91a4a18fd82ea78c6b272a3070c4d0586",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "handcrafted-stain-texture-v1",
+      "family_id": "472e0c0af1e349d09aaab872c08157d0",
+      "feature_set_id": "9849f5432e604da7a81db0577cec3d83",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": null,
+      "head": "meanpool_logreg",
+      "identity_sha256": "93c7b3e325de8ef4a09b7620b1e8caf1569e52ba45439ff8683adac1c0e1ddac",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": null,
+      "role": "sampling_budget_higher",
+      "run_id": "905e6fa334aa4e6386709bdb1678175d",
+      "seed": 0,
+      "stage": "s4b",
+      "status": "succeeded",
+      "threshold": 0.4716529416543591,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val)",
+        "head": "meanpool_logreg",
+        "n_iter": 27,
+        "train_bags": 45
+      }
+    },
+    {
+      "checkpoint_sha256": "6eef4e4c5042b6adeb112efe152d8c343bc80b68d1b497ee718be88e0f19c6a9",
+      "code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "encoder": "midnight-12k",
+      "family_id": "472e0c0af1e349d09aaab872c08157d0",
+      "feature_set_id": "8f57bde35aad412180e3b9e8630ad875",
+      "fold_assignment_sha256": "579ae8c69076c9e8d90484a4a44c7ab2e0a0d9543782c72c49ecd75dcec0a032",
+      "fraction": null,
+      "head": "meanpool_logreg",
+      "identity_sha256": "1002e048d6d0d668f19a021e91c9f789689b7762c4193cce451c88379f83c7a8",
+      "preprocessing_fold_safety": {
+        "status": "no_learned_preprocessing",
+        "valid_for_cv_comparison": true
+      },
+      "repeat": null,
+      "role": "sampling_budget_higher",
+      "run_id": "7350cf840747441fb50feb719734a635",
+      "seed": 0,
+      "stage": "s4b",
+      "status": "succeeded",
+      "threshold": 0.16413636339855944,
+      "training_summary": {
+        "converged": true,
+        "early_stopping": "not applicable (convex fit)",
+        "final_model": "refitted on the whole development pool (train \u222a val)",
+        "head": "meanpool_logreg",
+        "n_iter": 45,
+        "train_bags": 45
+      }
+    }
+  ]
+}

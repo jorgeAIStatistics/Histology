@@ -25,9 +25,10 @@ export const grossStartDraft = defineCommand({
 
 export const grossLoadTranscript = defineCommand({
   name: "gross.loadTranscript",
-  description: "Attach a synthetic dictation transcript and run the deterministic demo extractor. Produces proposals only; nothing is confirmed.",
+  description:
+    "Attach a synthetic dictation transcript and run the deterministic demo extractor. Produces proposals only; nothing is confirmed. expectedVersion is the gross record version the user saw, or null when the part had no gross record yet (a record started by someone else meanwhile is a conflict).",
   permission: "gross.edit",
-  input: z.object({ specimenPartId: id, transcriptKey: z.string().trim().min(1).max(60), expectedVersion: version.optional() }),
+  input: z.object({ specimenPartId: id, transcriptKey: z.string().trim().min(1).max(60), expectedVersion: version.nullable() }),
   run: (ctx, input) => withConflictAuthor(ctx.db, () => loadTranscript(ctx, input.specimenPartId, input.transcriptKey, input.expectedVersion)),
 });
 
@@ -64,6 +65,7 @@ export const grossApprove = defineCommand({
   name: "gross.approve",
   description: "Approve a reviewed gross record for downstream use: creates allocated blocks, the source-entry task and processing eligibility. Blocked by unconfirmed values or a gross-approval hold.",
   permission: "gross.approve",
+  sensitive: true,
   input: z.object({ grossRecordId: id, expectedVersion: version }),
   run: (ctx, input) => withConflictAuthor(ctx.db, () => approve(ctx, input.grossRecordId, input.expectedVersion)),
 });
@@ -80,6 +82,7 @@ export const grossSimulateSourceAck = defineCommand({
   name: "gross.simulateSourceAck",
   description: "Demo simulator: the simulated source system acknowledges an attested entry. No real interface exists.",
   permission: null,
+  audience: "presenter",
   input: z.object({ grossRecordId: id }),
   run: (ctx, input) => simulateSourceAck(ctx, input.grossRecordId),
 });

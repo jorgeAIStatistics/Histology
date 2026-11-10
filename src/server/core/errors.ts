@@ -7,7 +7,20 @@ export type DomainErrorCode =
   | "VALIDATION"
   | "SOURCE_OFFLINE" // the (simulated) source system is unavailable
   | "PRINTER_UNAVAILABLE"
-  | "ASSISTANT_UNAVAILABLE";
+  | "ASSISTANT_UNAVAILABLE"
+  | "IDEMPOTENCY_CONFLICT" // a repeated key from another requester, scope, command or payload
+  | "IDEMPOTENCY_EXPIRED" // a repeated key past its retention window (never re-run)
+  | "AUTH_REQUIRED" // locked build: not in synthetic demo mode and sign-in is not configured
+  // Secured mode (OIDC sign-in, src/server/auth/*):
+  | "SIGN_IN_REQUIRED" // no valid session (none, unknown, revoked or ended by an administrator)
+  | "SESSION_EXPIRED" // the session reached its absolute lifetime; nothing was recorded
+  | "SESSION_LOCKED" // idle or manual lock; sign in again to unlock; nothing was recorded
+  | "REAUTH_REQUIRED" // a sensitive command needs a recent sign-in ("Confirm it's you"); nothing was recorded
+  | "ACTOR_MISMATCH" // the page was rendered for another staff member than the session's (X-HLOS-Actor); nothing was recorded
+  // Server-side failures (never the user's input):
+  | "STORAGE_UNAVAILABLE" // the database refuses writes (read-only, full, cannot be opened); nothing was committed
+  | "STORAGE_FAILED" // a storage error while saving; the outcome of the commit is not known
+  | "SERVER_ERROR"; // an unexpected error; nothing was changed (the transaction rolled back)
 
 export class DomainError extends Error {
   readonly code: DomainErrorCode;
@@ -29,6 +42,17 @@ export const httpStatusFor: Record<DomainErrorCode, number> = {
   SOURCE_OFFLINE: 503,
   PRINTER_UNAVAILABLE: 503,
   ASSISTANT_UNAVAILABLE: 503,
+  IDEMPOTENCY_CONFLICT: 409,
+  IDEMPOTENCY_EXPIRED: 409,
+  STORAGE_UNAVAILABLE: 503,
+  STORAGE_FAILED: 500,
+  SERVER_ERROR: 500,
+  AUTH_REQUIRED: 401,
+  SIGN_IN_REQUIRED: 401,
+  SESSION_EXPIRED: 401,
+  SESSION_LOCKED: 401,
+  REAUTH_REQUIRED: 401,
+  ACTOR_MISMATCH: 409,
 };
 
 export function invariant(condition: unknown, message: string, details?: unknown): asserts condition {

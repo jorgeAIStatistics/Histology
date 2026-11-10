@@ -1,0 +1,12 @@
+/*
+ * Archived concept previews A and C (Stage 4 design exploration, demo mode only).
+ * Their original web fonts were fetched from Google Fonts at build time; the
+ * build must be offline and deterministic, so they are no longer bundled.
+ * These variables name the original family first (used if it is installed on
+ * the viewing machine) and fall back to system stacks. The original renderings
+ * are kept as captures in docs/redesign/concepts/.
+ */
+.aSans { --a-font-sans: "Instrument Sans", ui-sans-serif, system-ui, sans-serif; }
+.aMono { --a-font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace; }
+.cSans { --c-sans: Archivo, ui-sans-serif, system-ui, sans-serif; }
+.cMono { --c-mono: "Source Code Pro", ui-monospace, "SFMono-Regular", Menlo, monospace; }

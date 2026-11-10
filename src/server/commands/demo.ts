@@ -24,6 +24,7 @@ export const runStepCommand = defineCommand({
   name: "demo.runStep",
   description: "Guided demo: run a step's simulator events (and, for rehearsal, its staff actions through the real commands).",
   permission: null,
+  audience: "presenter",
   input: z.object({
     step: z.number().int().min(1).max(8),
     autoStaffActions: z.boolean().optional(),

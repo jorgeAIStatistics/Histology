@@ -9,35 +9,35 @@ import type { PathologistColor } from "@/lib/domain";
 export const DOCTOR_COLORS: Record<PathologistColor, { swatch: string; tint: string; name: string }> = {
   teal: { swatch: "#0F9485", tint: "#E3F4F1", name: "teal" },
   violet: { swatch: "#9A4BD0", tint: "#F3ECFB", name: "violet" },
-  amber: { swatch: "#916A0B", tint: "#FAF1DC", name: "amber" },
+  amber: { swatch: "#916A0B", tint: "#F1EEE9", name: "amber" },
 };
 
 /** Queue-age ordinal ramp: under 1 h, 1 to 4 h, 4 to 8 h, over 8 h. */
-export const AGE_RAMP = ["#62AEDB", "#3B89B4", "#235E7F", "#163F56"] as const;
+export const AGE_RAMP = ["#8F94D6", "#5D63BC", "#3A3F9E", "#1B1F47"] as const;
 export const AGE_BUCKET_LABELS = ["Under 1 h", "1 to 4 h", "4 to 8 h", "Over 8 h"] as const;
 /** Label color for text placed inside a bar of each age step (steps 1-2 take dark labels outside the bar). */
 export const AGE_LABEL_INSIDE = [null, null, "#FFFFFF", "#FFFFFF"] as const;
 
 export const CHART = {
-  grid: "#E4E9ED",
-  axis: "#7A8894",
-  tick: "#56636F",
-  text: "#0F1A23",
-  brand: "#0D5F87",
+  grid: "#E3E6EE",
+  axis: "#878DA8",
+  tick: "#565C78",
+  text: "#151A30",
+  brand: "#3A3F9E",
   surface: "#FFFFFF",
 } as const;
 
 export const ALERT_SOLID = {
-  info: "#2A64B0",
-  success: "#016807",
-  warning: "#E36A22",
-  danger: "#C4232B",
-  hold: "#6E2B66",
+  info: "#3D63B5",
+  success: "#1E6B3B",
+  warning: "#D9650F",
+  danger: "#B42318",
+  hold: "#2F3450",
 } as const;
 
 export const PAS = { bg: "#FFE45C", fg: "#1C1700", border: "#8A7300", row: "#FFF8D6" } as const;
 
-export const TEXT = { ink: "#0F1A23", secondary: "#3E4C59", muted: "#56636F" } as const;
+export const TEXT = { ink: "#151A30", secondary: "#383E5C", muted: "#565C78" } as const;
 
 /** Values mirrored from :root in globals.css, keyed by CSS custom property (for a sync test). */
 export const CSS_TOKEN_MIRROR: Record<string, string> = {

@@ -20,6 +20,27 @@ export interface Ctx {
   correlationId: string;
   /** Demo-clock time, fixed for the duration of one command. */
   now: string;
+  /**
+   * Secured-mode user commands only (set by executeCommand): whether the
+   * session's last sign-in is within the re-authentication window. Operations
+   * that must never run on a stale sign-in (hold release) refuse when it is
+   * false, whichever command reached them. Undefined elsewhere (demo, system).
+   */
+  reauthFresh?: boolean;
+  /**
+   * Set by executeCommand: the permission the running command requires (null
+   * for a permission-less demo or system command). Written on every audit
+   * event the command produces (audit_event.permission).
+   */
+  permission?: Permission | null;
+  /**
+   * Set by executeCommand in secured mode: a non-reversible reference to the
+   * session behind the request (HMAC of the session id hash under the audit
+   * key, 16 hex characters; src/server/core/audit-seal.ts sessionRefFor).
+   * Never the session id or its stored hash. Written on every audit event of
+   * the command (audit_event.session_ref).
+   */
+  sessionRef?: string | null;
 }
 
 export function makeCtx(db: DB, actor: Actor, origin: Origin = "user", correlationId?: string): Ctx {

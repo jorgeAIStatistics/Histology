@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
-import { CircleCheck, OctagonX, Minus } from "lucide-react";
+import { CircleCheck, Minus, TriangleAlert } from "lucide-react";
 import { LabelPreview } from "@/components/domain/label-preview";
 import { Field, Input } from "@/components/ui/field";
 import { decodeLabel, humanLabel, stainCode, type LabelIdentity } from "@/lib/identifiers";
@@ -75,8 +75,8 @@ function FieldTable({ fields, caption }: { fields: RecordFieldCheck[]; caption: 
                   <CircleCheck className="size-3.5 text-success-solid" aria-hidden /> Same
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1 text-danger-fg">
-                  <OctagonX className="size-3.5 text-danger-solid" aria-hidden /> Differs
+                <span className="inline-flex items-center gap-1 font-semibold text-warning-fg">
+                  <TriangleAlert className="size-3.5 text-warning-solid" aria-hidden /> Differs
                 </span>
               )}
             </td>
@@ -90,8 +90,8 @@ function FieldTable({ fields, caption }: { fields: RecordFieldCheck[]; caption: 
 function CheckResult({ title, result, caption }: { title: string; result: ReturnType<typeof compareWithRecord>; caption: string }) {
   if (!result.ok) {
     return (
-      <p className="flex items-start gap-1.5 text-sm text-danger-fg" role="status">
-        <OctagonX className="mt-0.5 size-4 shrink-0 text-danger-solid" aria-hidden />
+      <p className="flex items-start gap-1.5 text-sm text-warning-fg" role="status">
+        <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning-solid" aria-hidden />
         <span>
           {title}: does not decode ({result.reason}).
         </span>
@@ -102,8 +102,8 @@ function CheckResult({ title, result, caption }: { title: string; result: Return
   const same = compared.length > 0 && compared.every((f) => f.ok);
   return (
     <div className="flex flex-col gap-0.5" role="status">
-      <p className={same ? "flex items-start gap-1.5 text-sm text-success-fg" : "flex items-start gap-1.5 text-sm text-danger-fg"}>
-        {same ? <CircleCheck className="mt-0.5 size-4 shrink-0 text-success-solid" aria-hidden /> : <OctagonX className="mt-0.5 size-4 shrink-0 text-danger-solid" aria-hidden />}
+      <p className={same ? "flex items-start gap-1.5 text-sm text-success-fg" : "flex items-start gap-1.5 text-sm text-warning-fg"}>
+        {same ? <CircleCheck className="mt-0.5 size-4 shrink-0 text-success-solid" aria-hidden /> : <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning-solid" aria-hidden />}
         <span>
           {title}: decodes to <span className="id-mono font-medium">{result.text}</span>
           {same ? ", and every encoded field matches the record." : ", which does NOT match the record."}
@@ -121,16 +121,18 @@ function CheckResult({ title, result, caption }: { title: string; result: Return
  * mismatch. A demonstration of the demo identifier format only; a screen
  * preview proves nothing about printed labels on real materials.
  */
-export function LabelPreviewPanel({ payload, text, check }: { payload: string; text: string; check: RecordCheck }) {
+export function LabelPreviewPanel({ payload, text, check, showPreview = true }: { payload: string; text: string; check: RecordCheck; showPreview?: boolean }) {
   const [test, setTest] = useState("");
   const headingId = useId();
   const own = compareWithRecord(payload, check.fields);
   return (
     <section aria-labelledby={headingId} className="flex min-w-0 flex-col gap-2">
-      <SectionTitle id={headingId}>Label preview</SectionTitle>
-      <div className="min-w-0 max-w-full [&_p]:[overflow-wrap:anywhere]">
-        <LabelPreview payload={payload} text={text} />
-      </div>
+      <SectionTitle id={headingId}>{showPreview ? "Label preview" : "Check the code against the record"}</SectionTitle>
+      {showPreview ? (
+        <div className="min-w-0 max-w-full [&_p]:[overflow-wrap:anywhere]">
+          <LabelPreview payload={payload} text={text} />
+        </div>
+      ) : null}
       <div className="rounded-md border border-line bg-surface-subtle p-2.5">
         <p className="mb-1 text-xs font-medium text-ink-secondary">Encode/decode check against the record (demo format)</p>
         <CheckResult title="This label's code" result={own} caption="Fields encoded in this label compared with the record" />

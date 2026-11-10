@@ -1,0 +1,305 @@
+{
+  "arms_not_evidence": [
+    {
+      "arm": "b_stain_macenko",
+      "encoder": "handcrafted-stain-texture-v1",
+      "reason": "dev_cv: the macenko-v1 reference was fitted once on train-split slides of the dataset and is shared by every outer fold, and every development patient is held out by exactly one fold, so each fold's held-out images shaped the normalisation of its own fitting data (preprocessing leakage; label-free, effect unknown)",
+      "stage_status": "valid",
+      "status": "blocked"
+    },
+    {
+      "arm": "b_stain_macenko",
+      "encoder": "midnight-12k",
+      "reason": "dev_cv: the macenko-v1 reference was fitted once on train-split slides of the dataset and is shared by every outer fold, and every development patient is held out by exactly one fold, so each fold's held-out images shaped the normalisation of its own fitting data (preprocessing leakage; label-free, effect unknown)",
+      "stage_status": "valid",
+      "status": "blocked"
+    }
+  ],
+  "database_artifacts": "not checked offline (no database is opened); a stage whose same report bytes the driver_status_snapshot holds invalid or failed is excluded",
+  "driver_status_snapshot": {
+    "at": "2026-10-28T10:33:56+00:00",
+    "stages": {
+      "s0": {
+        "reasons": [],
+        "status": "valid"
+      },
+      "s1": {
+        "reasons": [],
+        "status": "valid"
+      },
+      "s2": {
+        "reasons": [],
+        "status": "valid"
+      },
+      "s3": {
+        "reasons": [],
+        "status": "valid"
+      },
+      "s4": {
+        "reasons": [],
+        "status": "valid"
+      },
+      "s4b": {
+        "reasons": [],
+        "status": "valid"
+      },
+      "s5": {
+        "reasons": [],
+        "status": "valid"
+      },
+      "s6": {
+        "reasons": [
+          "no report"
+        ],
+        "status": "missing"
+      },
+      "s7": {
+        "reasons": [],
+        "status": "valid"
+      },
+      "s8": {
+        "reasons": [],
+        "status": "valid"
+      }
+    }
+  },
+  "excluded_from_results": {},
+  "failed_runs": [],
+  "skipped_work": {
+    "s4": [
+      {
+        "reason": "not built: the engine's fold-safety rule refuses this arm from its declared plan, before any extraction (no wasted compute)",
+        "what": "s4 b_stain_macenko handcrafted-stain-texture-v1 feature-set build"
+      },
+      {
+        "reason": "blocked by the engine: fold_unsafe_preprocessing",
+        "what": "s4 b_stain_macenko handcrafted-stain-texture-v1",
+        "where": "precheck"
+      },
+      {
+        "reason": "not built: the engine's fold-safety rule refuses this arm from its declared plan, before any extraction (no wasted compute)",
+        "what": "s4 b_stain_macenko midnight-12k feature-set build"
+      },
+      {
+        "reason": "blocked by the engine: fold_unsafe_preprocessing",
+        "what": "s4 b_stain_macenko midnight-12k",
+        "where": "precheck"
+      }
+    ],
+    "s4b": [
+      {
+        "reason": "not part of the pre-declared budget comparison: ABMIL caps the instances per bag (max_instances_per_bag), which would conflate two settings",
+        "what": "s4b abmil"
+      }
+    ],
+    "s8": [
+      "s4",
+      "s4b"
+    ]
+  },
+  "stages": {
+    "s0": {
+      "dry_run": false,
+      "finished_at": "2026-10-28T07:24:31+00:00",
+      "reasons": [],
+      "recorded_code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "status": "valid"
+    },
+    "s1": {
+      "dry_run": false,
+      "finished_at": "2026-10-28T07:24:31+00:00",
+      "reasons": [],
+      "recorded_code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "status": "valid"
+    },
+    "s2": {
+      "dry_run": false,
+      "finished_at": "2026-10-28T07:26:39+00:00",
+      "reasons": [],
+      "recorded_code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "status": "valid"
+    },
+    "s3": {
+      "dry_run": false,
+      "finished_at": "2026-10-28T07:53:28+00:00",
+      "reasons": [],
+      "recorded_code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "status": "valid"
+    },
+    "s4": {
+      "dry_run": false,
+      "finished_at": "2026-10-28T08:46:14+00:00",
+      "reasons": [],
+      "recorded_code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "status": "valid"
+    },
+    "s4b": {
+      "dry_run": false,
+      "finished_at": "2026-10-28T10:33:55+00:00",
+      "reasons": [],
+      "recorded_code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "status": "valid"
+    },
+    "s5": {
+      "dry_run": false,
+      "finished_at": "2026-10-28T10:33:56+00:00",
+      "reasons": [],
+      "recorded_code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "status": "valid"
+    },
+    "s6": {
+      "dry_run": null,
+      "finished_at": null,
+      "reasons": [
+        "no report"
+      ],
+      "recorded_code_revision": null,
+      "status": "missing"
+    },
+    "s7": {
+      "dry_run": false,
+      "finished_at": "2026-10-28T10:33:56+00:00",
+      "reasons": [],
+      "recorded_code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "status": "valid"
+    },
+    "s8": {
+      "dry_run": false,
+      "finished_at": "2026-10-28T10:33:56+00:00",
+      "reasons": [],
+      "recorded_code_revision": "8a1a59eb2b4ebf0c9b23e9bba8b4a522525ecd52",
+      "status": "valid"
+    }
+  },
+  "superseded_outputs": [
+    {
+      "at": "2026-10-28T07:24:31+00:00",
+      "from": "s0.json",
+      "kind": "report",
+      "reason": "re-run because the stage was stale: the report has no input fingerprint (written by an earlier driver, sha 2e15ff0097d6\u2026): its inputs cannot be verified, so its existence alone is not reused",
+      "sha256": "13c80299d2127abb5c5f4c1cfc88e58cc16369601cfe41d16c556dd2478ee0d6",
+      "stage": "s0",
+      "to": "_superseded/s0.20261028T032431223610.json"
+    },
+    {
+      "at": "2026-10-28T07:24:31+00:00",
+      "from": "s1.json",
+      "kind": "report",
+      "reason": "re-run because the stage was stale: the report has no input fingerprint (written by an earlier driver, sha 2e15ff0097d6\u2026): its inputs cannot be verified, so its existence alone is not reused",
+      "sha256": "9d49d3a7b028dda47175e1c3701e419d93ff7e2cffd828b5fb8c27289ac6219f",
+      "stage": "s1",
+      "to": "_superseded/s1.20261028T032431267600.json"
+    },
+    {
+      "at": "2026-10-28T07:26:39+00:00",
+      "from": "s2.json",
+      "kind": "report",
+      "reason": "re-run because the stage was stale: the report has no input fingerprint (written by an earlier driver, sha 2e15ff0097d6\u2026): its inputs cannot be verified, so its existence alone is not reused",
+      "sha256": "e7aa82d723cad82db96a53712b7036a3257d254585762fa9a96656ed9d369804",
+      "stage": "s2",
+      "to": "_superseded/s2.20261028T032639290344.json"
+    },
+    {
+      "at": "2026-10-28T07:26:39+00:00",
+      "from": "s3.json",
+      "kind": "state",
+      "reason": "legacy state without a fingerprint: its family and runs belong to unverified inputs",
+      "sha256": "5d7cc381f5a7fd6f6200bff7f76274978dd1835c13d4b98df7d96640f0e274df",
+      "stage": "s3",
+      "to": "_superseded/_state/s3.20261028T032639323624.json"
+    },
+    {
+      "at": "2026-10-28T07:53:28+00:00",
+      "from": "s3.json",
+      "kind": "report",
+      "reason": "re-run because the stage was stale: the report has no input fingerprint (written by an earlier driver, sha 2e15ff0097d6\u2026): its inputs cannot be verified, so its existence alone is not reused",
+      "sha256": "4329d989f1fd138d1f430f5f59efb9d0ff97fd8ff397efa2dcf60cd82cc8665d",
+      "stage": "s3",
+      "to": "_superseded/s3.20261028T035328088434.json"
+    },
+    {
+      "at": "2026-10-28T07:53:28+00:00",
+      "from": "s4.json",
+      "kind": "state",
+      "reason": "legacy state without a fingerprint: its family and runs belong to unverified inputs",
+      "sha256": "49676ded6bda6dde3c5c6e1d3b840cc451747873c6c50c3341e5127adb601cdc",
+      "stage": "s4",
+      "to": "_superseded/_state/s4.20261028T035328212104.json"
+    }
+  ],
+  "supplement": {
+    "blocked_real_cohort_arms": {
+      "source": "blockers.json; exclusions.json arms_not_evidence",
+      "status": "blocked by the engine's fold-safety precheck; never built, never evidence",
+      "what": "s4 b_stain_macenko for both encoders"
+    },
+    "dry_run_reports": {
+      "invalid_arms": "every b_stain_macenko dev_cv arm of the dry runs: one stain reference fitted on the development slides and reused across folds (invalid for CV comparison)",
+      "source": "attachments/pre_fix_inventory.md sections 6-7",
+      "status": "never evidence (plumbing checks on 6 slides in throwaway databases)"
+    },
+    "interrupted_pre_fix_run": {
+      "code": {
+        "code_tree_sha256_prefix": "810e3288",
+        "commit": "782668c",
+        "driver_sha256_prefix": "2e15ff00"
+      },
+      "database_records": {
+        "comparison_families": {
+          "5c326ae6": "S4 ablations, 1 pre-fix S4 run plus 2 pre-fix S3 baseline members, status open (not deleted, not cited)",
+          "8e64b136": "S3 baselines, 16 runs, status open in the database (not deleted, not cited)"
+        },
+        "test_candidate_then": "79aa243e (midnight + abmil): never registered, never released; superseded",
+        "training_runs_at_782668c": 17
+      },
+      "log": {
+        "file": "experiments/reports/_full_run.log (local)",
+        "sha256": "4892404436653b2bb2f8beee9ad1a90c245a0ea8db486af4dd0b272b12d94087"
+      },
+      "pre_fix_extraction_figures": {
+        "figures": [
+          "s2 handcrafted spatial 256 (527f9080): 4.42 s/slide mean, all 60 slides pre-fix",
+          "s2 Midnight-12k spatial 256 (b3b75db2): 56.66 s/slide mean, all 60 slides pre-fix",
+          "s4 handcrafted uniform 256 (2f1f57b2): 4.66 s/slide mean, all 60 slides pre-fix",
+          "s4 Midnight-12k uniform 256 (0ad3a2dd): 50.32 s/slide mean over 30 pre-fix and 30 post-fix extractions",
+          "the real-WSI inference slide's cold extraction, 54.960 s (its b3b75db2 artifact), pre-fix"
+        ],
+        "mitigation": "the post-fix s2 technical validation re-extracted 2 seeded slides per encoder with the post-fix code and matched the stored artifacts exactly (max abs diff 0, identical coordinates)",
+        "sources": [
+          "s2.json encoders.*.technical_validation and feature_set.per_slide[*].original_extraction",
+          "s4.json arms.a_sampling_uniform.*.feature_set.build (already_ready)",
+          "s5.json extraction[0..3]",
+          "_full_run.log (local) and _run2.log (local)",
+          "attachments/pre_fix_inventory.md sections 4-6"
+        ],
+        "what": "per-slide cold-extraction timings and peak RSS reported for these sets come from the pre-fix extractions, not from the post-fix run"
+      },
+      "reused_after_identity_checks": "feature sets 527f9080, b3b75db2, c2aa86f4, c74591ee, 2f1f57b2 (all 60 artifacts of each extracted by this stale pre-fix run at code 782668c; c2aa86f4 and c74591ee share the artifacts of 527f9080 and b3b75db2) and 30 of the 60 artifacts of 0ad3a2dd were reused through the content-addressed cache after identity checks (cache-key identities unchanged); the stopped build 0ad3a2dd (job 6481f266) was resumed by the post-fix run's in-process worker, which extracted the other 30 slides and finished it (03:51:32 local time)",
+      "sources": [
+        "attachments/pre_fix_inventory.md sections 5-6 and 10",
+        "_run2.log (local; sha256 0db2e86b8e9a8ac558490234fe0a5a42fefda7b8ffbc476433288b9589dec01a)",
+        "exclusions.json superseded_outputs"
+      ],
+      "status": "stale and superseded; stopped by the lead during s4, BEFORE any test release",
+      "what_ran": "s0 and s1 (separate invocation), s2, s3 (16 runs, single seed), s4 started: the uniform-sampling handcrafted arm trained; the uniform-sampling Midnight-12k feature-set build (job 6481f266) was stopped with 30 of 60 slides done (pre-fix inventory)",
+      "why_stale": [
+        "pre-fix defects later fixed (ABMIL final model fitted on 34 of 45 bags; calibration evidence gate counted bags, not patients; a single training seed)",
+        "its reports carry no input fingerprint, so the post-fix driver could not verify their inputs and re-ran s0-s3 (see exclusions.json superseded_outputs)"
+      ]
+    },
+    "not_run": [
+      {
+        "what": "s6 test release",
+        "why": "owner's decision; never automatic"
+      },
+      {
+        "what": "sampling budget 1024",
+        "why": "cost; the pre-declared higher budget was 512 and it ran (s4b)"
+      }
+    ],
+    "undecided_near_duplicates": {
+      "handled_by": "attachments/sensitivity_near_duplicates.json (development OOF re-evaluated without the 4 patients); a human decision is still required before any final benchmark",
+      "status": "2 candidate pairs without a human decision (development pool; members in different CV folds)"
+    }
+  }
+}

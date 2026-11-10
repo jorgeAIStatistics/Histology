@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
 
 /**
@@ -19,10 +19,12 @@ export interface LabelPreviewProps {
   showPayload?: boolean;
   /** Show the "Screen preview only" caption (default true). */
   caption?: boolean;
+  /** Only the code, no frame, text or caption (for a label that prints its own text). */
+  bare?: boolean;
   className?: string;
 }
 
-export function LabelPreview({ payload, text, size = 88, showPayload = true, caption = true, className }: LabelPreviewProps) {
+export function LabelPreview({ payload, text, size = 88, showPayload = true, caption = true, bare = false, className }: LabelPreviewProps) {
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,6 +44,21 @@ export function LabelPreview({ payload, text, size = 88, showPayload = true, cap
       cancelled = true;
     };
   }, [payload]);
+
+  if (bare) {
+    return svg ? (
+      <div
+        role="img"
+        aria-label={`DataMatrix label encoding ${text} (screen preview only)`}
+        className={cn("shrink-0 [&>svg]:block [&>svg]:size-full", className)}
+        style={{ width: size, height: size }}
+        // bwip-js output: an SVG of paths generated from the payload (no markup from user input).
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+    ) : (
+      <span aria-hidden className={cn("block shrink-0 rounded-sm bg-surface-sunken", className)} style={{ width: size, height: size }} />
+    );
+  }
 
   return (
     <figure className={cn("inline-flex flex-col gap-1.5", className)}>
@@ -68,7 +85,15 @@ export function LabelPreview({ payload, text, size = 88, showPayload = true, cap
           <span aria-hidden className="block shrink-0 rounded-sm bg-surface-sunken motion-safe:animate-pulse" style={{ width: size, height: size }} />
         )}
         <div className="min-w-0 max-w-[16rem]">
-          <p className="id-mono text-base font-semibold text-black">{text}</p>
+          <p className="id-mono text-base font-semibold whitespace-normal text-black">
+            {/* Wrap only between tokens, never after a hyphen inside "A1-5" or "D26-04783". */}
+            {text.split(" ").map((t, i) => (
+              <Fragment key={i}>
+                {i > 0 ? " " : null}
+                <span className="whitespace-nowrap">{t}</span>
+              </Fragment>
+            ))}
+          </p>
           {showPayload ? (
             <p className="mt-0.5 break-all font-mono text-xs text-ink-muted">
               <span className="sr-only">Encoded: </span>

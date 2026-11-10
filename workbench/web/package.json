@@ -1,0 +1,34 @@
+{
+  "name": "dermpath-workbench-web",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "next dev -p 3600",
+    "build": "next build",
+    "start": "next start -p 3600",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "screenshots": "WB_SCREENSHOTS=1 playwright test"
+  },
+  "dependencies": {
+    "clsx": "2.1.1",
+    "lucide-react": "0.577.0",
+    "motion": "14.1.0",
+    "next": "16.4.2",
+    "openseadragon": "6.1.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "tailwind-merge": "3.7.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0",
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "24.19.2",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vitest": "4.1.12"
+  }
+}

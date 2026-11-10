@@ -1,9 +1,11 @@
 import { Circle, CircleCheck, CirclePause, Info, OctagonX, TriangleAlert, type LucideIcon } from "lucide-react";
 
 /**
- * Shared tone vocabulary (spec §3.1 alert colors). Every tone has a text
- * color, a pale tint, a border, a solid stripe/icon color and an icon shape,
- * so meaning never depends on color alone.
+ * Shared tone vocabulary, mapped to the severity ladder: danger = patient
+ * identity only; warning = sources disagree, data may be wrong, a failure or
+ * missing material; hold = hatched ink; neutral = waiting on a person;
+ * success = done (a quiet check). Every tone has an icon shape and words, so
+ * meaning never depends on color alone.
  */
 export type Tone = "neutral" | "info" | "success" | "warning" | "danger" | "hold";
 export type AlertTone = Exclude<Tone, "neutral" | "hold">;
@@ -18,14 +20,13 @@ export const TONE_ICON: Record<Tone, LucideIcon> = {
 };
 
 /** Static class strings (Tailwind needs complete class names in source). */
-export const TONE_CLASSES: Record<Tone, { fg: string; bg: string; border: string; solidBg: string; solidText: string; stripe: string }> = {
+export const TONE_CLASSES: Record<Tone, { fg: string; bg: string; border: string; solidBg: string; solidText: string }> = {
   neutral: {
     fg: "text-ink-secondary",
     bg: "bg-surface-subtle",
     border: "border-line-strong",
     solidBg: "bg-ink-muted",
     solidText: "text-ink-muted",
-    stripe: "border-l-ink-muted",
   },
   info: {
     fg: "text-info-fg",
@@ -33,15 +34,14 @@ export const TONE_CLASSES: Record<Tone, { fg: string; bg: string; border: string
     border: "border-info-border",
     solidBg: "bg-info-solid",
     solidText: "text-info-solid",
-    stripe: "border-l-info-solid",
   },
+  // Done rung (docs/redesign/visual-system.md): a quiet check in muted ink, never celebratory green.
   success: {
-    fg: "text-success-fg",
-    bg: "bg-success-bg",
-    border: "border-success-border",
-    solidBg: "bg-success-solid",
-    solidText: "text-success-solid",
-    stripe: "border-l-success-solid",
+    fg: "text-ink-secondary",
+    bg: "bg-surface-subtle",
+    border: "border-line",
+    solidBg: "bg-ink-muted",
+    solidText: "text-ink-muted",
   },
   warning: {
     fg: "text-warning-fg",
@@ -49,7 +49,6 @@ export const TONE_CLASSES: Record<Tone, { fg: string; bg: string; border: string
     border: "border-warning-border",
     solidBg: "bg-warning-solid",
     solidText: "text-warning-solid",
-    stripe: "border-l-warning-solid",
   },
   danger: {
     fg: "text-danger-fg",
@@ -57,7 +56,6 @@ export const TONE_CLASSES: Record<Tone, { fg: string; bg: string; border: string
     border: "border-danger-border",
     solidBg: "bg-danger-solid",
     solidText: "text-danger-solid",
-    stripe: "border-l-danger-solid",
   },
   hold: {
     fg: "text-hold-fg",
@@ -65,6 +63,5 @@ export const TONE_CLASSES: Record<Tone, { fg: string; bg: string; border: string
     border: "border-hold-border",
     solidBg: "bg-hold-solid",
     solidText: "text-hold-solid",
-    stripe: "border-l-hold-solid",
   },
 };

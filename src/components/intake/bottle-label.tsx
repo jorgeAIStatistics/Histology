@@ -46,7 +46,7 @@ export function BottleLabel({
           <span>Formalin</span>
           <span>Synthetic card</span>
         </div>
-        <div className="space-y-0.5 border-t border-dashed border-line-strong px-2 py-2 text-sm">
+        <div className="space-y-0.5 border-t border-line-strong px-2 py-2 text-sm">
           {line("Name", observed.patient_name)}
           {line("DOB", observed.birth_date, true)}
           {observed.mrn ? line("MRN", observed.mrn, true) : null}

@@ -1,0 +1,117 @@
+{
+  "count": 0,
+  "disclosures": {
+    "dry_runs": {
+      "dry_run_databases": [
+        {
+          "database": "dryrun/var",
+          "dataset_versions": [
+            {
+              "dataset_version_id": "326099b243e94bfca809728895c73303",
+              "test_releases": []
+            }
+          ],
+          "patient_split_crosswalk_counts": {
+            "dryrun_test->real_test": 2,
+            "dryrun_train->real_test": 2,
+            "dryrun_train->real_train": 2
+          },
+          "patients": 6,
+          "test_releases": []
+        },
+        {
+          "database": "dryrun/var-proof-run",
+          "dataset_versions": [
+            {
+              "dataset_version_id": "b917d05dba4f4c20a30ffb8fbad71675",
+              "test_releases": [
+                "893ebc8f235b4a37b2f1bc2d4f99b8f9"
+              ]
+            }
+          ],
+          "patient_split_crosswalk_counts": {
+            "dryrun_test->real_test": 2,
+            "dryrun_train->real_test": 2,
+            "dryrun_train->real_train": 2
+          },
+          "patients": 6,
+          "test_releases": [
+            {
+              "id": "893ebc8f235b4a37b2f1bc2d4f99b8f9",
+              "release_number": 1,
+              "sealed_patients": 2
+            }
+          ]
+        },
+        {
+          "database": "dryrun-ack/var",
+          "dataset_versions": [
+            {
+              "dataset_version_id": "dd46829b25a942d6b7001f3347a5effd",
+              "test_releases": [
+                "bcff4b466a4a4de5917539f0588025d3"
+              ]
+            },
+            {
+              "dataset_version_id": "67b911c7d46448529fb895aaffe90297",
+              "test_releases": []
+            }
+          ],
+          "patient_split_crosswalk_counts": {
+            "dryrun_test->real_test": 2,
+            "dryrun_train->real_test": 2,
+            "dryrun_train->real_train": 2
+          },
+          "patients": 6,
+          "test_releases": [
+            {
+              "id": "bcff4b466a4a4de5917539f0588025d3",
+              "release_number": 1,
+              "sealed_patients": 2
+            }
+          ]
+        }
+      ],
+      "dry_run_databases_note": "one entry per throwaway database: dryrun-ack/var held two dataset versions of the same 6 patients (one with dry-run release bcff4b46, one without), which the 2026-10-28 package listed as two database entries; the databases of releases ebaba044 and d3815c19 were later reset (pre_fix_inventory.md section 7)",
+      "dry_run_test_releases_note": "two of the four dry-run databases that held releases were later reset; the inventory lists all four release ids (pre_fix_inventory.md section 7)",
+      "dry_run_test_releases_recorded": 4,
+      "overlap_with_real_test_split": {
+        "detail": "Two of the four were dry-run TEST patients scored by dry-run test releases (dry-run models trained on about 4 slides) and their dry-run test predictions were looked at. The other two were dry-run TRAINING patients: their labels were read and their slides were used for the dry-run Macenko references.",
+        "dry_run_test_patients_with_dry_run_test_predictions_looked_at": 2,
+        "dry_run_training_patients": 2,
+        "patients": 4,
+        "real_test_patients": 15,
+        "slides": 4
+      },
+      "required_wording": "unreleased in the real study and not used for model selection (never 'untouched')",
+      "sources": [
+        "attachments/pre_fix_inventory.md section 7",
+        "attachments/pre_fix_inventory.json dry_runs"
+      ],
+      "test_split_slides_extracted_label_free": "separately from the dry runs, the real run's feature-set builds extracted all 15 real test slides label-free (fixed encoders, no labels read; allowed by the design); no real-run model scored them",
+      "used_for_real_cohort_runs_thresholds_or_candidate": false,
+      "what": "Throwaway dry runs of the driver on 6 COBRA slides from 6 patients, imported into separate throwaway databases; every dry run finished before the real split was frozen."
+    },
+    "real_cohort": {
+      "after_bundle_registration": {
+        "sealed_patients": 0,
+        "test_access_audit_rows": 0,
+        "test_releases": 0
+      },
+      "s6": {
+        "reasons": [
+          "no report"
+        ],
+        "status": "missing"
+      },
+      "sources": [
+        "summary.json test_release_history and stage_status.s6",
+        "attachments/inference_measurement.json safety_before / safety_after"
+      ],
+      "statement": "The 15-patient test split of dataset version 1868803e has never been released in the real study. s6 (opt-in test release) was deliberately not run; the decision is the owner's.",
+      "test_releases": 0
+    }
+  },
+  "note": "no test release recorded: no model has been evaluated on the test split and no test metric exists (unreleased and not used for model selection). It is not unread: s1 records its composition (patients and slides per label) and the feature-set builds extract its slides label-free",
+  "releases": []
+}

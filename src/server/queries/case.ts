@@ -7,17 +7,19 @@
  */
 import type { DB } from "@/server/db/db";
 import { demoNow } from "@/server/core/clock";
-import { computeReadiness, STAGE_SHORT, type PartReadiness } from "@/server/domain/readiness";
+import { ALL_SENT_ON_TRAYS, computeReadiness, STAGE_SHORT, type PartReadiness } from "@/server/domain/readiness";
 import {
   BLOCK_STATE, BLOCK_STATE_ORDER, CLARIFICATION_CATEGORY, CLARIFICATION_STATE, CUSTODY_STATE, GROSS_STATE, LABEL_STATE, PRINT_STATE,
   RELATED_STATUS, ROUTING_STATUS, SLIDE_STATE, SLIDE_STATE_ORDER, SOURCE_UPDATE_STATE, WORK_ORDER_STATUS, LATERALITY, PROCEDURE,
-  type BlockState, type SlideState,
+  type BlockState, type SlideState, type Stage,
 } from "@/lib/domain";
 import { ROLE_LABEL, type Role } from "@/lib/roles";
 import { fmtSmart, fmtAge } from "@/lib/time";
 import { actionLabel } from "@/components/case/format";
 import { plural, tidyPlurals } from "@/components/worklist/format";
 import { caseIsComplete, loadCaseRow, loadSourceFreshness, type FreshnessSummary, type HoldEntry, type StainEntry, type WorklistRow } from "./worklist";
+import { holdNextSteps } from "./hold-next";
+import { historyPayload } from "@/server/domain/privacy";
 
 // ---------------------------------------------------------------- types
 
@@ -27,6 +29,19 @@ export interface TrackStep {
   label: string;
   state: StepState;
   detail?: string;
+  /** Physical evidence shown whatever the state, e.g. "Loaded on P1" (last confirmed location, not live). */
+  note?: string;
+  /** Why this step cannot start yet, when that is not a hold (holds are drawn from the hold records). */
+  blocked?: string;
+}
+
+/** The part's current gross record, as the case page names it (derived, read-only). */
+export interface CasePartGross {
+  version: number | null;
+  state: string;
+  grosserName: string | null;
+  reviewedByName: string | null;
+  approvedByName: string | null;
 }
 
 export interface CaseTask {
@@ -59,6 +74,8 @@ export interface CasePart {
   sourceOrderRef: string;
   sourceOrderTenant: string;
   status: string;
+  /** Derived stage key (readiness.ts); stageLabel is its words. */
+  stage: Stage;
   stageLabel: string;
   physical: { steps: TrackStep[]; summary: string };
   documentation: { steps: TrackStep[]; grossState: string; grossRecordVersion: number | null; sourceUpdateState: string; summary: string };
@@ -68,6 +85,9 @@ export interface CasePart {
   explanation: string[];
   stains: StainEntry[];
   owner: CaseTask | null;
+  /** Every open task for this part, oldest first (owner is the first). */
+  openTasks: CaseTask[];
+  gross: CasePartGross | null;
 }
 
 export interface MaterialSlide {
@@ -265,7 +285,16 @@ export interface CaseDetail {
   corrections: CorrectionRecord[];
   tasks: CaseTask[];
   clarifications: CaseClarification[];
-  holdsAll: (HoldEntry & { status: string; releasedAt: string | null; releasedBy: string | null; releaseReason: string | null })[];
+  holdsAll: (HoldEntry & {
+    status: string;
+    releasedAt: string | null;
+    releasedBy: string | null;
+    releaseReason: string | null;
+    /** Active holds: who holds the next step and what it is (the shared helper Operations and grossing use). */
+    owner: string | null;
+    ownerId: string | null;
+    nextStep: string | null;
+  })[];
   history: HistoryEvent[];
   historyFilters: { parts: string[]; actors: string[]; origins: string[] };
   operationalSummary: { label: string; items: SummaryItem[] };
@@ -345,6 +374,15 @@ function physicalSteps(p: PartReadiness): TrackStep[] {
   const grossed = p.physicalState === "grossed" || nb > 0;
   const processingStep = blockStep("processing", "Processed", "processed");
   if (nb && processingStep.state !== "done" && blocks.some((b) => b.state === "processing")) processingStep.state = "current";
+  // A cassette waiting on the processor is shown on the step it waits for, with the reason it may not start (a hold is drawn separately).
+  const loaded = blocks.filter((b) => b.state === "cassette_loaded");
+  if (loaded.length && processingStep.state !== "done") {
+    const locs = [...new Set(loaded.map((b) => b.locationCode).filter((x): x is string => !!x))];
+    const where = locs.length === 1 ? ` on ${locs[0].split("/").pop()}` : "";
+    processingStep.note = `${loaded.length === nb ? "Loaded" : `${loaded.length} of ${nb} loaded`}${where}`;
+    const policy = p.blockedBy.map((b) => /loaded but not eligible for processing: (.+?)(?: \(local policy setting\))?$/.exec(b)?.[1]).find(Boolean);
+    if (policy) processingStep.blocked = policy.charAt(0).toUpperCase() + policy.slice(1);
+  }
   return [
     { key: "received", label: "Received", state: p.status === "canceled" ? "na" : "done" },
     { key: "grossed", label: "Grossed", state: grossed ? "done" : "todo", detail: grossed ? plural(nb, "cassette") : "Not grossed yet" },
@@ -353,11 +391,12 @@ function physicalSteps(p: PartReadiness): TrackStep[] {
     blockStep("sectioned", "Sectioned", "sectioned"),
     slideStep("stained", "Stained", "stained"),
     slideStep("qc", "QC reviewed", "qc_reviewed"),
-    slideStep("delivered", "Delivered", "delivered"),
+    // Tray delivery is recorded digitally; no pathologist receipt is recorded.
+    slideStep("delivered", "Sent on tray", "delivered"),
   ];
 }
 
-function documentationSteps(p: PartReadiness): TrackStep[] {
+function documentationSteps(p: PartReadiness, gross: CasePartGross | null): TrackStep[] {
   const g = p.grossState;
   const has = g !== "not_started";
   const reviewed = g === "operator_reviewed" || g === "approved_for_downstream";
@@ -370,10 +409,14 @@ function documentationSteps(p: PartReadiness): TrackStep[] {
     : su === "source_acknowledged" ? "Source-system update: acknowledged (simulated)"
     : "Source-system update: failed";
   return [
-    { key: "draft", label: "Gross record started", state: has ? "done" : "todo", detail: has ? `${GROSS_STATE[g as keyof typeof GROSS_STATE] ?? g}${p.grossRecordVersion ? `, v${p.grossRecordVersion}` : ""}` : undefined },
+    // The started step names the record (its version), never a later step's state.
+    { key: "draft", label: "Gross record started", state: has ? "done" : "todo", detail: has ? `${g === "draft" ? "Draft" : "Record"}${p.grossRecordVersion ? ` v${p.grossRecordVersion}` : ""}` : undefined },
     // "Operator reviewed" is the stored state name; on screen it says who reviews: the person who grossed it.
-    { key: "reviewed", label: "Reviewed by the grosser", state: reviewed ? "done" : g === "needs_clarification" ? "current" : "todo", detail: g === "needs_clarification" ? "Needs clarification" : undefined },
-    { key: "approved", label: "Approved for downstream use", state: approved ? "done" : "todo" },
+    {
+      key: "reviewed", label: "Reviewed by the grosser", state: reviewed ? "done" : g === "needs_clarification" ? "current" : "todo",
+      detail: g === "needs_clarification" ? "Needs clarification" : reviewed && gross?.reviewedByName ? `By ${gross.reviewedByName}` : undefined,
+    },
+    { key: "approved", label: "Approved for downstream use", state: approved ? "done" : "todo", detail: approved && gross?.approvedByName ? `By ${gross.approvedByName}` : undefined },
     { key: "source", label: sourceLabel, state: su === "source_acknowledged" ? "done" : approved && (su === "pending_entry" || su === "entered_attested" || su === "not_started") ? "current" : su === "failed" ? "current" : "todo" },
   ];
 }
@@ -605,7 +648,16 @@ export function getCase(db: DB, idOrNumber: string): CaseDetail | null {
     const row = partRows.find((r) => r.id === p.partId)!;
     const wp = worklistRow?.parts.find((x) => x.partId === p.partId);
     const physical = physicalSteps(p);
-    const documentation = documentationSteps(p);
+    const gr = p.grossRecordId
+      ? (db.prepare("SELECT grosser_id, reviewed_by, approved_by FROM gross_record WHERE id = ?").get(p.grossRecordId) as
+          | { grosser_id: string | null; reviewed_by: string | null; approved_by: string | null }
+          | undefined)
+      : undefined;
+    const gross: CasePartGross | null =
+      p.grossState === "not_started"
+        ? null
+        : { version: p.grossRecordVersion, state: p.grossState, grosserName: nameOf(gr?.grosser_id), reviewedByName: nameOf(gr?.reviewed_by), approvedByName: nameOf(gr?.approved_by) };
+    const documentation = documentationSteps(p, gross);
     const partTasks = openTasks.filter((t) => t.partDesignation === p.designation);
     const owner = partTasks[0] ?? null;
     const explanation: string[] = [];
@@ -623,14 +675,14 @@ export function getCase(db: DB, idOrNumber: string): CaseDetail | null {
       laterality: p.laterality ? LATERALITY[p.laterality as keyof typeof LATERALITY] ?? p.laterality : null,
       procedure: p.procedure ? PROCEDURE[p.procedure as keyof typeof PROCEDURE] ?? p.procedure : null,
       sourceOrderRef: p.sourceOrderRef, sourceOrderTenant: orderTenant.get(p.sourceOrderId) ?? "Unknown tenant", status: p.status,
-      stageLabel: STAGE_SHORT[p.stage],
+      stage: p.stage, stageLabel: STAGE_SHORT[p.stage],
       physical: { steps: physical, summary: `Last physical step reached: ${physicalSummary}` },
       documentation: {
         steps: documentation, grossState: p.grossState, grossRecordVersion: p.grossRecordVersion, sourceUpdateState: p.sourceUpdateState,
         summary: p.grossState === "not_started" ? "No gross record yet" : `${GROSS_STATE[p.grossState as keyof typeof GROSS_STATE] ?? p.grossState}; ${SOURCE_UPDATE_STATE[p.sourceUpdateState as keyof typeof SOURCE_UPDATE_STATE] ?? p.sourceUpdateState}`,
       },
       holds: wp?.holds ?? p.holds.map((h) => ({ ...h, blocks: h.blocks as string[] })), eligible: p.eligible, blockedBy: p.blockedBy, explanation,
-      stains: wp?.stains ?? [], owner,
+      stains: wp?.stains ?? [], owner, openTasks: partTasks, gross,
     };
   });
 
@@ -826,17 +878,27 @@ export function getCase(db: DB, idOrNumber: string): CaseDetail | null {
 
   // ---- holds (active and released, with scope)
   const holdScopeIds = [accId, ...partIds, ...orderPartIds, ...partRows.map((p) => p.container_id).filter(Boolean) as string[], ...blockRows.map((b) => b.id), ...slideRows.map((s) => s.id), ...woRows.map((w) => w.id), ...intakeIdList];
-  const holdsAll = (db
+  const holdRows = db
     .prepare(
       `SELECT * FROM hold WHERE accession_id = ? OR scope_id IN (${holdScopeIds.map(() => "?").join(",")}) ORDER BY placed_at`,
     )
     .all(accId, ...holdScopeIds) as {
-    id: string; display_id: string; scope_label: string; reason_text: string; blocks: string; clarification_id: string | null; placed_at: string; status: string;
+    id: string; display_id: string; scope_type: string; scope_label: string; reason_text: string; blocks: string; clarification_id: string | null; placed_at: string; status: string;
     released_at: string | null; released_by: string | null; release_reason: string | null;
-  }[]).map((h) => ({
-    id: h.id, displayId: h.display_id, scopeLabel: h.scope_label, reasonText: h.reason_text, blocks: parseJson<string[]>(h.blocks, ["all"]), clarificationId: h.clarification_id,
-    placedAt: h.placed_at, status: h.status, releasedAt: h.released_at, releasedBy: nameOf(h.released_by), releaseReason: h.release_reason,
-  }));
+  }[];
+  // The exact material each hold is on, as the parts see it ("Part B", "A1", "Whole case"); owner and next step from the shared helper.
+  const holdTarget = new Map(parts.flatMap((p) => p.holds.map((h) => [h.id, h.target] as const)));
+  const nextOf = holdNextSteps(db, holdRows.filter((h) => h.status === "active").map((h) => h.id));
+  const holdsAll = holdRows.map((h) => {
+    const next = nextOf.get(h.id);
+    return {
+      id: h.id, displayId: h.display_id, scopeType: h.scope_type, scopeLabel: h.scope_label,
+      target: h.scope_type === "accession" ? "Whole case" : holdTarget.get(h.id) ?? h.scope_label,
+      reasonText: h.reason_text, blocks: parseJson<string[]>(h.blocks, ["all"]), clarificationId: h.clarification_id,
+      placedAt: h.placed_at, status: h.status, releasedAt: h.released_at, releasedBy: nameOf(h.released_by), releaseReason: h.release_reason,
+      owner: next?.owner ?? null, ownerId: next?.ownerId ?? null, nextStep: next?.nextStep ?? null,
+    };
+  });
 
   // ---- history (local audit log)
   const entityIds = [...partOfEntity.keys(), ...woRows.map((w) => w.id), ...holdsAll.map((h) => h.id), ...clarifications.map((c) => c.id), ...tasks.map((t) => t.id), ...related.map((r) => r.id), ...corrections.map((c) => c.id)];
@@ -889,7 +951,8 @@ export function getCase(db: DB, idOrNumber: string): CaseDetail | null {
               : "System",
       actorRole: staffActor && role && ROLE_LABEL[role] ? ROLE_LABEL[role] : null,
       origin: e.origin, originLabel: originLabel(e.origin, e.action, e.id), action: e.action, entityType: e.entity_type, entityId: e.entity_id, summary: readableSummary(e.summary),
-      reason: e.reason, before: e.before_json, after: e.after_json, parts: [...ps].sort(),
+      // A patient reference audited as { id, fingerprint } is shown with the details from the patient record itself (C4).
+      reason: e.reason, before: historyPayload(db, e.before_json), after: historyPayload(db, e.after_json), parts: [...ps].sort(),
     };
   });
   const historyFilters = {
@@ -910,12 +973,13 @@ export function getCase(db: DB, idOrNumber: string): CaseDetail | null {
   const delivered = readiness.parts.filter((p) => p.stage === "delivered").length;
   const isComplete = caseIsComplete(readiness);
   const openWork = parts.flatMap((p) => p.stains).filter((s) => s.workOrder && ["requested", "in_progress", "cancel_review", "amended_review"].includes(s.status));
+  // Tray delivery is recorded digitally: "sent on trays", and no pathologist receipt is recorded.
   const summaryText = isComplete
-    ? `${activeParts.length === 1 ? "The only part is" : `All ${activeParts.length} parts`} delivered; no additional work open.`
+    ? `${activeParts.length === 1 ? "The only part is" : `All ${activeParts.length} parts are`} sent on trays (receipt not recorded); no additional work open.`
     : readiness.isComplete
-      ? `Not complete: ${activeParts.length === 1 ? "the only part is" : `all ${activeParts.length} parts`} delivered, but additional work is open: ${openWork.map((w) => `${w.workOrder} (${WORK_ORDER_STATUS[w.status as keyof typeof WORK_ORDER_STATUS] ?? w.status})`).join(", ")}.`
+      ? `Not complete: ${activeParts.length === 1 ? "the only part is" : `all ${activeParts.length} parts are`} sent on trays, but additional work is open: ${openWork.map((w) => `${w.workOrder} (${WORK_ORDER_STATUS[w.status as keyof typeof WORK_ORDER_STATUS] ?? w.status})`).join(", ")}.`
       // The parts line and readiness under it say each part's stage; the headline gives the count once.
-      : `Not complete: ${delivered} of ${plural(activeParts.length, "part")} delivered${readiness.parts.some((p) => p.holds.length) ? `, ${plural(readiness.parts.filter((p) => p.holds.length).length, "part")} on hold` : ""}.`;
+      : `Not complete: ${delivered} of ${plural(activeParts.length, "part")} sent on trays${readiness.parts.some((p) => p.holds.length) ? `, ${plural(readiness.parts.filter((p) => p.holds.length).length, "part")} on hold` : ""}.`;
 
   const detail: CaseDetail = {
     generatedAt: now,
@@ -1025,7 +1089,7 @@ function buildOperationalSummary(c: CaseDetail, grossRecordPart: Map<string, str
     items.push({ text: "No open tasks on this case.", evidence: [{ label: "Tasks and clarifications", href: "?tab=tasks" }] });
   }
   items.push({
-    text: c.summary.isComplete ? "All parts delivered; no additional work open." : `Case not complete: ${c.summary.text.replace(/^Not complete: /, "")}`,
+    text: c.summary.isComplete ? `${ALL_SENT_ON_TRAYS}. No additional work open.` : `Case not complete: ${c.summary.text.replace(/^Not complete: /, "")}`,
     evidence: [{ label: "Overview", href: "?tab=overview" }],
   });
   return items;

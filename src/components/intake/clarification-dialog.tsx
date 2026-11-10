@@ -12,17 +12,10 @@ import { useCommand } from "@/lib/client/command";
 import { useUnsavedChanges } from "@/lib/client/unsaved";
 import { useToast } from "@/components/ui/toast";
 import { CLARIFICATION_CATEGORY } from "@/lib/domain";
+import { HOLD_BLOCK_WORDS } from "./plan";
+import { useBackToScan } from "./bits";
 
-export const HOLD_BLOCK_WORDS: Record<string, string> = {
-  accession_request: "accession request",
-  routing_confirm: "routing confirmation",
-  gross_approval: "gross approval",
-  processing: "processing",
-  sectioning: "sectioning",
-  print: "label printing",
-  tray_delivery: "tray delivery",
-  all: "every step",
-};
+export { HOLD_BLOCK_WORDS };
 
 export interface ClarificationDraft {
   category: keyof typeof CLARIFICATION_CATEGORY;
@@ -52,6 +45,7 @@ interface CreateResult {
  */
 export function RaiseClarificationDialog({ draft, onClose }: { draft: ClarificationDraft | null; onClose: () => void }) {
   const toast = useToast();
+  const backToScan = useBackToScan();
   const [question, setQuestion] = useState("");
   const [category, setCategory] = useState<string>("other");
   const [priority, setPriority] = useState<string>("high");
@@ -108,7 +102,13 @@ export function RaiseClarificationDialog({ draft, onClose }: { draft: Clarificat
             <Link className="text-sm font-medium text-brand underline-offset-2 hover:underline" href={`/clarifications?selected=${encodeURIComponent(created.displayId)}`}>
               Open {created.displayId} in Clarifications
             </Link>
-            <Button variant="primary" onClick={onClose}>
+            <Button
+              variant="primary"
+              onClick={() => {
+                onClose();
+                backToScan();
+              }}
+            >
               Done
             </Button>
           </>
@@ -163,11 +163,11 @@ export function RaiseClarificationDialog({ draft, onClose }: { draft: Clarificat
             </Field>
             {draft.evidence.length ? (
               <div>
-                <p className="mb-1 text-xs font-medium text-ink-muted">Evidence kept with the clarification (original values)</p>
+                <p className="mb-1 text-sm font-medium text-ink-muted">Evidence kept with the clarification (original values)</p>
                 <table className="w-full border-collapse text-sm">
                   <caption className="sr-only">Discrepancy evidence</caption>
                   <thead>
-                    <tr className="bg-surface-subtle text-left text-xs text-ink-secondary">
+                    <tr className="bg-surface-subtle text-left text-sm text-ink-secondary">
                       <th scope="col" className="px-2 py-1 font-medium">Field</th>
                       <th scope="col" className="px-2 py-1 font-medium">Order (source)</th>
                       <th scope="col" className="px-2 py-1 font-medium">Bottle (observed)</th>
@@ -207,7 +207,7 @@ export function RaiseClarificationDialog({ draft, onClose }: { draft: Clarificat
             ) : null}
             <CommandError error={error} />
             {error?.code === "NOT_FOUND" && /Unknown command/.test(error.message) ? (
-              <p className="text-xs text-ink-secondary">The clarifications module is not available in this build. Nothing was created.</p>
+              <p className="text-sm text-ink-secondary">The clarifications module is not available in this build. Nothing was created.</p>
             ) : null}
           </>
         )}

@@ -2,18 +2,15 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback } from "react";
+import { useCallback, useTransition } from "react";
 import { SidePanelLayout } from "@/components/ui/side-panel";
 import { Table, THead, TBody, TR, TH, TD, TableMessageRow } from "@/components/ui/table";
 import { Tabs } from "@/components/ui/tabs";
-import { StatePill } from "@/components/ui/status-pill";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { CommandButton } from "@/components/ui/command-button";
-import { Field, Select } from "@/components/ui/field";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Kbd } from "@/components/ui/kbd";
 import { Timestamp } from "@/components/domain/timestamp";
-import { useCommand } from "@/lib/client/command";
 import { useSingleKey } from "@/lib/client/keyboard";
 import type { PrinterView, PrintFilter, PrintJobDetail, PrintJobRowView, WorkOrderReviewView, listRecentWorkOrderReviews, slidesAwaitingLabel } from "@/server/queries/materials";
 import { useToast } from "@/components/ui/toast";
@@ -21,6 +18,7 @@ import { useCan } from "@/lib/client/shell-context";
 import { PrintJobPanel } from "./print-job-panel";
 import { WorkOrderReviews } from "./workorder-review";
 import { PrinterChip, PrinterStrip, printerName, useReadOnly } from "./shared";
+import { PrintOutcome } from "./print-outcome";
 
 const FILTERS: { key: PrintFilter; label: string }[] = [
   { key: "attention", label: "Needs attention + last 3 h" },
@@ -28,26 +26,12 @@ const FILTERS: { key: PrintFilter; label: string }[] = [
   { key: "all", label: "All" },
 ];
 
-function PrinterBehaviour({ printer }: { printer: PrinterView }) {
-  const cmd = useCommand<{ status: string }, { printerId: string; status: string }>("printer.setStatus", {
-    successToast: (_r, input) => `${printerName(printer.name)}: ${input.status === "online" ? "ready" : input.status === "offline" ? "unavailable" : "will time out after submission"} (simulated)`,
-  });
-  return (
-    <Field label={`Demo control: ${printerName(printer.name)}`} className="w-[230px]">
-      <Select size="sm" value={printer.status} disabled={cmd.pending} onChange={(e) => void cmd.run({ printerId: printer.id, status: e.target.value })}>
-        <option value="online">Ready</option>
-        <option value="offline">Unavailable</option>
-        <option value="simulate_timeout">Time out after submission</option>
-      </Select>
-    </Field>
-  );
-}
-
 type PrintResultDto = { outcome: string; displayId: string; state?: string; message: string; printerUnavailable?: boolean };
 
 /** New labels: slides with no label yet (for example an additional slide just ordered). */
 function LabelsToPrint({ awaiting, slidePrinter }: { awaiting: ReturnType<typeof slidesAwaitingLabel>; slidePrinter: PrinterView | null }) {
   const router = useRouter();
+  const [, startTransition] = useTransition();
   const readOnly = useReadOnly();
   const can = useCan("print.request");
   const toast = useToast();
@@ -56,19 +40,22 @@ function LabelsToPrint({ awaiting, slidePrinter }: { awaiting: ReturnType<typeof
   return (
     <details className="rounded-md border border-line bg-surface px-3 py-2">
       <summary className="cursor-pointer text-sm font-medium text-ink">
-        Slide labels not yet printed ({awaiting.total}){" "}
-        <span className="font-normal text-ink-muted">· newly ordered additional slides first</span>
+        Slide labels not yet printed ({awaiting.total}) <span className="font-normal text-ink-muted">(newly ordered additional slides first)</span>
       </summary>
       <div className="mt-2">
         <ul className="flex flex-col gap-1.5">
           {awaiting.rows.map((r) => (
             <li key={r.slideId} className="flex flex-wrap items-center justify-between gap-2 rounded-sm border border-line px-2 py-1.5">
               <span className="text-sm">
-                <span className="id-mono font-medium">{r.label}</span>
+                <span className="id-mono font-medium">{r.label}</span>{" "}
                 <span className="text-ink-muted">
-                  {" "}
-                  · {r.physicalState.replace(/_/g, " ")}
-                  {r.workOrderDisplayId ? ` · ${r.workOrderDisplayId}` : ""}
+                  ({r.physicalState.replace(/_/g, " ")}
+                  {r.workOrderDisplayId ? (
+                    <>
+                      , work order <span className="id-mono">{r.workOrderDisplayId}</span>
+                    </>
+                  ) : null}
+                  )
                 </span>
               </span>
               <CommandButton
@@ -91,7 +78,7 @@ function LabelsToPrint({ awaiting, slidePrinter }: { awaiting: ReturnType<typeof
                             ? `${res.displayId}: outcome unknown (simulated timeout)`
                             : `${res.displayId} sent to the printer (simulated)`,
                     body: res.message,
-                    action: { label: `Open ${res.displayId}`, onClick: () => router.push(`/materials?tab=print&selected=${encodeURIComponent(res.displayId)}`, { scroll: false }) },
+                    action: { label: `Open ${res.displayId}`, onClick: () => startTransition(() => router.push(`/materials?tab=print&selected=${encodeURIComponent(res.displayId)}`, { scroll: false })) },
                   })
                 }
               >
@@ -100,7 +87,7 @@ function LabelsToPrint({ awaiting, slidePrinter }: { awaiting: ReturnType<typeof
             </li>
           ))}
         </ul>
-        {offline ? <p className="mt-2 text-xs text-danger-fg">The slide printer is unavailable (simulated): new jobs are kept in the queue until released.</p> : null}
+        {offline ? <p className="mt-2 text-xs text-warning-fg">The slide printer is unavailable (simulated): new jobs are kept in the queue until released.</p> : null}
       </div>
     </details>
   );
@@ -132,8 +119,10 @@ export function PrintTab({
   now: string;
 }) {
   const router = useRouter();
+  const [, startTransition] = useTransition();
   const readOnly = useReadOnly();
   const base = `/materials?tab=print&filter=${filter}`;
+  const open = (displayId: string) => startTransition(() => router.push(hrefFor(displayId), { scroll: false }));
   const hrefFor = (displayId: string) => `${base}&selected=${encodeURIComponent(displayId)}`;
   const selectedId = detail?.job.id ?? null;
   const unknownRows = rows.filter((r) => r.state === "unknown_outcome");
@@ -145,7 +134,7 @@ export function PrintTab({
       if (!rows.length) return;
       const i = rows.findIndex((r) => r.id === selectedId);
       const next = rows[Math.min(rows.length - 1, Math.max(0, i < 0 ? 0 : i + delta))];
-      router.push(hrefFor(next.displayId), { scroll: false });
+      open(next.displayId);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [rows, selectedId, filter],
@@ -154,29 +143,15 @@ export function PrintTab({
 
   return (
     <SidePanelLayout panel={detail ? <PrintJobPanel detail={detail} now={now} closeHref={base} /> : null}>
-      <div className="flex min-w-0 flex-col gap-3 xl:pr-4">
-      <PrinterStrip
-        controls={
-          !readOnly ? (
-            <details className="ml-auto open:basis-full">
-              <summary className="cursor-pointer text-sm font-medium text-brand">Simulate printer behaviour</summary>
-              <div className="mt-2 flex flex-wrap gap-2 rounded-md border border-dashed border-sim-border bg-sim-bg p-2">
-                {printers.map((p) => (
-                  <PrinterBehaviour key={p.id} printer={p} />
-                ))}
-                <p className="basis-full text-xs text-ink-muted">Demo control for the presenter (also in Settings). No real printer is contacted.</p>
-              </div>
-            </details>
-          ) : null
-        }
-      >
+      <div className="flex min-w-0 flex-col gap-3 px-6 py-4 max-xl:px-4">
+      <PrinterStrip>
         {printers.map((p) => (
           <PrinterChip key={p.id} name={p.name} status={p.status} statusLabel={p.statusLabel} queued={p.queued} unknown={p.unknown} />
         ))}
       </PrinterStrip>
 
       {offline.map((p) => (
-        <AlertBanner key={p.id} tone="danger" title={`${printerName(p.name)} is unavailable (simulated)`}>
+        <AlertBanner key={p.id} tone="warning" title={`${printerName(p.name)} is unavailable (simulated)`}>
           {p.queued
             ? `${p.queued} job${p.queued === 1 ? " is" : "s are"} queued. Release ${p.queued === 1 ? "it" : "them"} here once the printer is back; nothing prints before that.`
             : "New print requests are kept in the queue until the printer is back."}{" "}
@@ -203,7 +178,7 @@ export function PrintTab({
         ))}
 
       {unknownRows.length ? (
-        <AlertBanner tone="warning" title={`${unknownRows.length} print job${unknownRows.length === 1 ? "" : "s"} with an unknown outcome. Reconcile before any retry.`}>
+        <AlertBanner tone="warning" title={`${unknownRows.length} print job${unknownRows.length === 1 ? "" : "s"} with an unknown outcome. Reconcile before any reprint.`}>
           {unknownRows.map((r, i) => (
             <span key={r.id}>
               {i ? ", " : ""}
@@ -246,7 +221,7 @@ export function PrintTab({
             </AlertBanner>
           ) : null}
           <p className="text-xs text-ink-muted">
-            Showing {rows.length} of {total} job{total === 1 ? "" : "s"}. Problems first (unknown outcome, output not recorded, failed, queued), then newest. <Kbd>J</Kbd>/<Kbd>K</Kbd> move through rows.
+            Showing {rows.length} of {total} job{total === 1 ? "" : "s"}. Problems first (unknown outcome, output not recorded, failed, queued), then newest. <Kbd>J</Kbd> and <Kbd>K</Kbd> move through the jobs.
           </p>
           {rows.length ? (
             <Table caption="Print jobs. Unknown outcome, failed and queued jobs first, then newest." scroll="container" maxHeight="calc(100vh - 220px)" hideP3={!!detail} wrapperClassName="max-xl:[&_[data-priority='3']]:hidden">
@@ -255,7 +230,7 @@ export function PrintTab({
                   <TH stickyFirst>Print job</TH>
                   <TH>Label for</TH>
                   <TH priority={2}>Reason</TH>
-                  <TH>State</TH>
+                  <TH>Outcome</TH>
                   <TH priority={2}>Submitted</TH>
                   <TH priority={3}>Operator</TH>
                   <TH priority={3}>Printer</TH>
@@ -267,7 +242,7 @@ export function PrintTab({
                     key={r.id}
                     interactive
                     selected={r.id === selectedId}
-                    onClick={() => router.push(hrefFor(r.displayId), { scroll: false })}
+                    onClick={() => open(r.displayId)}
                   >
                     <TD stickyFirst>
                       <Link
@@ -286,12 +261,8 @@ export function PrintTab({
                       {r.purposeLabel}
                       {r.reprintOfDisplayId ? <span className="text-ink-muted"> (of <span className="id-mono">{r.reprintOfDisplayId}</span>)</span> : null}
                     </TD>
-                    <TD>
-                      <span className="flex flex-col items-start gap-0.5">
-                        <StatePill domain="print" state={r.state} size="sm" />
-                        {r.needsOutputCheck ? <span className="text-xs text-ink-secondary">Output not recorded</span> : null}
-                        {r.supersededBy ? <span className="text-xs text-ink-muted">Replaced by <span className="id-mono">{r.supersededBy}</span></span> : null}
-                      </span>
+                    <TD wrap className="min-w-[9.5rem]">
+                      <PrintOutcome row={r} />
                     </TD>
                     <TD priority={2}>{r.submittedAt ? <Timestamp iso={r.submittedAt} now={now} /> : <span className="text-ink-muted">Not submitted</span>}</TD>
                     <TD priority={3}>{r.requestedBy}</TD>

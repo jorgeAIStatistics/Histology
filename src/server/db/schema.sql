@@ -23,15 +23,22 @@ CREATE TABLE id_sequence (
   next_value INTEGER NOT NULL
 );
 
--- Every command may carry an idempotency key (one per user intent). A repeated
--- key returns the original result instead of executing twice (double clicks,
--- network retries).
+-- Every command may carry an idempotency key (one per user intent). A key is
+-- owned by the actor and lab scope that first used it and bound to one command
+-- and one canonical request (request_hash). Only an exact, owned, unexpired
+-- repeat returns the stored result; anything else is refused and the stored
+-- result is never disclosed (src/server/core/idempotency.ts).
 CREATE TABLE command_receipt (
   idempotency_key TEXT PRIMARY KEY,
   command         TEXT NOT NULL,
   actor_id        TEXT,
+  scope           TEXT,                -- laboratory scope (app_setting lab_scope)
+  request_hash    TEXT,                -- sha256 of command + canonical validated input
   result_json     TEXT NOT NULL,
-  at              TEXT NOT NULL
+  correlation_id  TEXT,                -- links the receipt to its audit_event rows
+  at              TEXT NOT NULL,       -- demo-clock time
+  created_at      TEXT,                -- wall clock
+  expires_at      TEXT                 -- wall clock; an expired key is refused, never re-run
 );
 
 ------------------------------------------------------------------------------

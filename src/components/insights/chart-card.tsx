@@ -2,6 +2,7 @@
 
 import { useId, useState, type ReactNode } from "react";
 import { Table2, ChartColumn } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Table, THead, TBody, TH, TR, TD } from "@/components/ui/table";
 import { IllustrativeTag } from "@/components/domain/honesty";
@@ -13,9 +14,11 @@ export interface ChartTable {
 }
 
 /**
- * A titled chart region with the honesty tag in the title row, a
+ * One measure as one evidence sheet: the title with its honesty tag, a
  * "Show as table" toggle (every chart has a table view, design-spec §6.8 and
- * §9), and slots for the Definition disclosure and notes.
+ * §9), the chart with today's figures beside it behind a hairline (never a
+ * box inside the sheet), full-width comparisons below, and the Definition
+ * disclosure in the footer.
  */
 export function ChartCard({
   id,
@@ -37,39 +40,46 @@ export function ChartCard({
   chart: ReactNode;
   table: ChartTable;
   definition?: ReactNode;
-  /** Content beside the chart (stat tiles, today's live figures). */
+  /** Content beside the chart (today's figures), behind a hairline. */
   aside?: ReactNode;
-  /** Full-width content under the chart (e.g. stat tiles too wide for the side column). */
+  /** Full-width content under the chart (the prior-day vs today comparison). */
   below?: ReactNode;
   footnote?: ReactNode;
 }) {
   const [asTable, setAsTable] = useState(false);
+  // Animate only a swap the person asked for, never the first paint.
+  const [swapped, setSwapped] = useState(false);
   const regionId = useId();
   return (
     <Card
       id={id}
       title={
-        <span className="flex flex-wrap items-center gap-2">
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span>{title}</span>
-          <IllustrativeTag>{tag}</IllustrativeTag>
+          <IllustrativeTag className="font-medium tracking-normal">{tag}</IllustrativeTag>
         </span>
       }
       description={subtitle}
       actions={
-        <button
-          type="button"
+        <Button
+          size="sm"
+          variant="secondary"
           aria-pressed={asTable}
           aria-controls={regionId}
-          onClick={() => setAsTable((v) => !v)}
-          className="inline-flex h-8 items-center gap-1.5 rounded-md border border-line-strong bg-surface px-2.5 text-sm font-medium text-ink hover:bg-surface-subtle"
+          icon={asTable ? <ChartColumn /> : <Table2 />}
+          onClick={() => {
+            setAsTable((v) => !v);
+            setSwapped(true);
+          }}
         >
-          {asTable ? <ChartColumn className="size-4" aria-hidden /> : <Table2 className="size-4" aria-hidden />}
           {asTable ? "Show as chart" : "Show as table"}
-        </button>
+        </Button>
       }
+      footer={definition}
     >
-      <div className={aside ? "grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(14rem,18rem)] xl:grid-cols-[minmax(0,1fr)_minmax(16rem,22rem)]" : undefined}>
-        <div id={regionId} className="min-w-0">
+      <div className={aside ? "grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(15rem,19rem)] xl:grid-cols-[minmax(0,1fr)_minmax(17rem,22rem)]" : undefined}>
+        {/* Keyed on the view so the swap the person asked for is visible (reduced motion removes it). */}
+        <div id={regionId} key={asTable ? "table" : "chart"} className={swapped ? "min-w-0 animate-swap-in" : "min-w-0"}>
           {asTable ? (
             <Table caption={table.caption} maxHeight="320px">
               <THead>
@@ -97,11 +107,10 @@ export function ChartCard({
             chart
           )}
         </div>
-        {aside ? <div className="min-w-0">{aside}</div> : null}
+        {aside ? <div className="min-w-0 border-t border-line pt-3 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-4">{aside}</div> : null}
       </div>
       {below ? <div className="mt-4">{below}</div> : null}
-      {footnote ? <div className="mt-3 text-sm text-ink-secondary">{footnote}</div> : null}
-      {definition ? <div className="mt-3">{definition}</div> : null}
+      {footnote ? <div className="mt-3 max-w-[100ch] text-sm text-ink-secondary">{footnote}</div> : null}
     </Card>
   );
 }

@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "PIPELINE TEST - NOT PATHOLOGY VALIDATION. Exercises the benchmark harness end to end on the fictional",
+    "synthetic pipeline-test cohort that `python -m dermpath.seed` creates (project proj-synthetic-cohort).",
+    "The synthetic encoder's embeddings carry a label-derived fixture signal by construction (only in",
+    "synthetic_pipeline_test, only through ml/fixture.py), so its metrics say nothing about pathology.",
+    "Run: cd workbench/api && .venv/bin/python -m dermpath.ml.cli benchmark ../experiments/configs/synthetic_pipeline_benchmark.json"
+  ],
+  "name": "Synthetic pipeline benchmark (PIPELINE TEST)",
+  "description": "Head effects (meanpool_logreg vs abmil) with the synthetic encoder fixed, dev_cv on the development pool, and a small learning curve. A plumbing test of identities, folds, paired comparisons and reports.",
+  "project_id": "proj-synthetic-cohort",
+  "dataset": {"name": "Synthetic pipeline-test cohort (no images, no histology)"},
+  "execution_mode": "synthetic_pipeline_test",
+  "evaluation_protocol": "dev_cv",
+  "encoders": ["synthetic-deterministic-v1"],
+  "heads": ["meanpool_logreg", "abmil"],
+  "seeds": [0],
+  "params": {
+    "pixel_mode": "none",
+    "max_patches_per_slide": 32,
+    "sampling_strategy": "spatial",
+    "sampling_seed": 0,
+    "cv_folds": 5,
+    "threshold_rule": "youden",
+    "min_threshold_evidence": 5,
+    "calibration": "platt",
+    "n_boot": 500
+  },
+  "head_params": {
+    "meanpool_logreg": {"C": 1.0, "class_weight": "balanced"},
+    "abmil": {"max_epochs": 30, "patience": 6, "inner_val_fraction": 0.2, "class_weight": "balanced"}
+  },
+  "learning_curve": {"fractions": [0.5, 1.0], "repeats": 2},
+  "bootstrap": {"n_boot": 1000, "seed": 20261026, "min_patients": 10},
+  "report_path": "experiments/reports/synthetic-pipeline-benchmark.json"
+}

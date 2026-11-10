@@ -1,10 +1,9 @@
-import { TriangleAlert } from "lucide-react";
+import { Info, TriangleAlert } from "lucide-react";
 import { AlertBanner } from "@/components/ui/alert-banner";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StatusPill } from "@/components/ui/status-pill";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
-import { SimulatedLabel } from "@/components/domain/honesty";
 import { fmtDateTime } from "@/lib/time";
 import type { ContactsSettings } from "@/server/queries/settings";
 import { compactHours } from "./bits";
@@ -13,14 +12,14 @@ import { ContactEditButton } from "./contact-editor";
 export function ContactsTab({ data }: { data: ContactsSettings }) {
   const { now, offices } = data;
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       <AlertBanner tone="info" title="Fictional contacts; every channel is simulated">
         This directory decides who a clarification goes to: the primary contact, or the backup while the primary is out. Reminders repeat at most every {data.reminderMinutes} min and a
         second reminder inside the {data.suppressionMinutes}-minute duplicate-suppression window is not sent. First follow-up is due after {data.followUpMinutes.urgent} min (urgent),{" "}
         {data.followUpMinutes.high} min (high) or {data.followUpMinutes.routine} min (routine), within office hours. These are demo defaults to agree with the offices, not clinical rules.
       </AlertBanner>
       {offices.length ? (
-        <div className="grid items-start gap-4 xl:grid-cols-2">
+        <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
           {offices.map((o) => (
             <Card
               key={o.officeId}
@@ -36,8 +35,7 @@ export function ContactsTab({ data }: { data: ContactsSettings }) {
                   ) : null}
                 </span>
               }
-              description={`${o.tenantName} · Hours: ${o.workingHours ? compactHours(o.workingHours) : "Unknown (not on file)"}`}
-              actions={<SimulatedLabel size="xs" />}
+              description={`Source tenant: ${o.tenantName}. Hours: ${o.workingHours ? compactHours(o.workingHours) : "Unknown (not on file)"}.`}
               flush
             >
               <div className="border-b border-line px-4 py-2 text-sm">
@@ -47,8 +45,13 @@ export function ContactsTab({ data }: { data: ContactsSettings }) {
                   </p>
                 ) : null}
                 {o.coverageGap ? (
-                  <p className="mt-0.5 flex items-start gap-1.5 text-warning-fg">
-                    <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning-solid" aria-hidden />
+                  // A backup covering is information, not a warning; an uncovered office is amber (clarifications may not reach anyone).
+                  <p className={o.coverageCovered ? "mt-0.5 flex items-start gap-1.5 text-ink-secondary" : "mt-0.5 flex items-start gap-1.5 text-warning-fg"}>
+                    {o.coverageCovered ? (
+                      <Info className="mt-0.5 size-4 shrink-0 text-info-solid" aria-hidden />
+                    ) : (
+                      <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning-solid" aria-hidden />
+                    )}
                     {o.coverageGap}
                   </p>
                 ) : null}
@@ -67,22 +70,22 @@ export function ContactsTab({ data }: { data: ContactsSettings }) {
                   <TBody>
                     {o.contacts.map((c) => (
                       <TR key={c.id}>
-                        <TD wrap>
+                        <TD wrap className="py-2">
                           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                             <span className="font-medium">{c.name}</span>
                             {c.isPrimary ? <StatusPill size="sm" tone="info">Primary</StatusPill> : null}
                             {c.isEscalation ? <StatusPill size="sm" tone="neutral">Escalation</StatusPill> : null}
                             {!c.isPrimary && !c.isEscalation ? <span className="text-xs text-ink-muted">Backup / coverage</span> : null}
                           </span>
-                          <span className="block text-xs text-ink-muted">
-                            {c.role} · {c.channelLabel}
+                          <span className="block text-sm text-ink-muted">
+                            {c.role}, {c.channelName}
                           </span>
                           {c.categories.length ? <span className="block text-xs text-ink-muted">Covers only: {c.categories.join(", ")}</span> : null}
                           {c.unverified ? <span className="block text-xs text-warning-fg">Unverified contact: delivery outcome stays unknown</span> : null}
                         </TD>
-                        <TD wrap className="min-w-[9rem]">
+                        <TD wrap className="min-w-[9rem] py-2">
                           {c.outUntil ? (
-                            <span className={c.isOutNow ? "font-medium text-warning-fg" : "text-ink-secondary"}>
+                            <span className={c.isOutNow ? "font-semibold text-ink" : "text-ink-secondary"}>
                               {c.isOutNow ? "Out until " : "Was out until "}
                               {fmtDateTime(c.outUntil)} ET
                             </span>

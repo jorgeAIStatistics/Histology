@@ -8,8 +8,12 @@ import { recordWorklistChange } from "../core/feed";
 import { openTask } from "../core/tasks";
 import { updateVersioned } from "../core/versioning";
 import { getSetting, setSetting } from "../core/settings";
+import { holdPartForSourceAmendment } from "./correction";
 import { fmtTime } from "@/lib/time";
+import { log } from "../core/log";
 import { LATERALITY } from "@/lib/domain";
+import { isAccessionMessageType } from "../integration/accession-schemas";
+import { processAccessionMessage } from "../integration/accession-messages";
 
 /**
  * Inbound import from a SIMULATED source system (S6).
@@ -27,6 +31,16 @@ import { LATERALITY } from "@/lib/domain";
  * never interpreted as an instruction and cannot change roles or permissions.
  * Nothing here writes back to the source: local completion never implies a
  * source-system write.
+ *
+ * Stage 6 Phase D (contract "hlos.source-message" 1.0, docs/release/integration-contract.md):
+ * every inbound path (the HTTP endpoint and the in-process pump) reaches this
+ * function through src/server/integration/inbound.ts handleEnvelope. It now
+ * also takes `specimen.submitted` (an order snapshot that names the specimen
+ * lines the source recorded as sent) and dispatches `accession.issued` /
+ * `accession.acknowledged` to src/server/integration/accession-messages.ts,
+ * inside the same duplicate → failed → applied pipeline. The envelope's
+ * `sent_at` (the source's claimed event time) is stored as
+ * integration_event.source_updated_at; received_at stays the local time.
  */
 
 // ------------------------------------------------------------------ payload
@@ -67,13 +81,49 @@ export const SimulatedOrderSchema = z.object({
 export type SimulatedOrder = z.infer<typeof SimulatedOrderSchema>;
 type Specimen = z.infer<typeof SpecimenSchema>;
 
-export const SUPPORTED_MESSAGE_TYPES = ["order.upsert", "order.amend", "order.cancel"] as const;
+/**
+ * `specimen.submitted`: the full order snapshot (same schema, same versioning) plus the specimen lines the
+ * source recorded as sent with this version and how many containers. Each named line must be on the order,
+ * and its container count must equal the line's expected_containers when that is given. It is imported as an
+ * order version (a new line → part_added; after accession → a review task, no part is created). It never
+ * marks a container as received here: receipt is a local, staff-attested event.
+ */
+export const SpecimenSubmittedSchema = SimulatedOrderSchema.extend({
+  submitted: z
+    .array(z.object({ designation: z.string().trim().min(1).max(4), containers: z.number().int().min(1).max(20) }))
+    .min(1)
+    .max(26),
+}).superRefine((p, ctx) => {
+  if (p.status === "canceled") {
+    ctx.addIssue({ code: "custom", path: ["status"], message: "A canceled order cannot submit specimens; send order.cancel instead." });
+  }
+  const seen = new Set<string>();
+  p.submitted.forEach((s, i) => {
+    const key = s.designation.toUpperCase();
+    if (seen.has(key)) ctx.addIssue({ code: "custom", path: ["submitted", i, "designation"], message: "Named twice in submitted." });
+    seen.add(key);
+    const line = p.specimens.find((x) => x.designation.toUpperCase() === key);
+    if (!line) {
+      ctx.addIssue({ code: "custom", path: ["submitted", i, "designation"], message: "Names no specimen line on this order version." });
+    } else if (line.expected_containers !== null && line.expected_containers !== undefined && line.expected_containers !== s.containers) {
+      ctx.addIssue({ code: "custom", path: ["submitted", i, "containers"], message: "Differs from that specimen line's expected_containers." });
+    }
+  });
+});
+
+/** Order-snapshot message types the order importer applies itself (accession.* are dispatched; see above). */
+export const SUPPORTED_MESSAGE_TYPES = ["order.upsert", "order.amend", "order.cancel", "specimen.submitted"] as const;
 
 export interface SourceMessage {
   messageId: string;
   messageType: string;
   /** Object or JSON text. Stored verbatim either way. */
   payload: unknown;
+  /**
+   * The source's claimed event time (contract envelope `sent_at`). Stored as integration_event.source_updated_at.
+   * Absent (direct callers): the payload's own updated_at, as before.
+   */
+  sentAt?: string | null;
 }
 
 export type ImportOutcome = "applied" | "duplicate_ignored" | "stale_ignored" | "failed";
@@ -97,22 +147,27 @@ export interface ReconciliationNote {
     | "order_values_updated"
     | "correction_review_updated"
     | "new_office_review"
-    | "content_conflict_review";
+    | "content_conflict_review"
+    | "accession_confirmed"
+    | "accession_acknowledged"
+    | "accession_mismatch_review";
   summary: string;
   ref?: string;
 }
 
 /** Notes that only describe what changed; every other kind opened (or is) a review item. */
-const INFO_ONLY: ReadonlySet<ReconciliationNote["kind"]> = new Set([
+export const INFO_ONLY: ReadonlySet<ReconciliationNote["kind"]> = new Set([
   "working_values_updated",
   "order_values_updated",
   "part_added",
   "clarification_linked",
   "correction_review_updated",
   "order_created",
+  "accession_confirmed",
+  "accession_acknowledged",
 ]);
 /** Notes that opened a task or review for a person. */
-const OPENS_REVIEW: ReadonlySet<ReconciliationNote["kind"]> = new Set([
+export const OPENS_REVIEW: ReadonlySet<ReconciliationNote["kind"]> = new Set([
   "work_order_cancel_review",
   "work_order_added",
   "correction_review_opened",
@@ -123,6 +178,7 @@ const OPENS_REVIEW: ReadonlySet<ReconciliationNote["kind"]> = new Set([
   "order_level_review",
   "new_office_review",
   "content_conflict_review",
+  "accession_mismatch_review",
 ]);
 
 export interface ImportResult {
@@ -138,7 +194,8 @@ export interface ImportResult {
   reconciliation: ReconciliationNote[];
 }
 
-export type ReceiptVia = "pump" | "replay" | "retry" | "sync";
+/** How a delivery reached the importer: the in-process pump, a demo replay, a staff retry, a sync, or the inbound contract endpoint. */
+export type ReceiptVia = "pump" | "replay" | "retry" | "sync" | "inbound";
 
 class ImportFailure extends Error {}
 
@@ -207,6 +264,7 @@ export function importSourceMessage(ctx: Ctx, sourceId: string, message: SourceM
   const payloadText = typeof message.payload === "string" ? message.payload : JSON.stringify(message.payload ?? null);
   const messageId = String(message.messageId ?? "").trim();
   const messageType = String(message.messageType ?? "").trim() || "unknown";
+  const sentAt = typeof message.sentAt === "string" && message.sentAt.trim() ? message.sentAt.trim() : null;
 
   const existing = messageId
     ? (db.prepare("SELECT * FROM integration_event WHERE source_id = ? AND message_id = ?").get(sourceId, messageId) as EventRow | undefined)
@@ -221,7 +279,10 @@ export function importSourceMessage(ctx: Ctx, sourceId: string, message: SourceM
       action: "integration.duplicate_ignored",
       entityType: "integration_event",
       entityId: existing.id,
+      sourceRef: `${sourceId}:${messageId}:v${(existing as { source_version?: number | null }).source_version ?? "?"}`,
       summary: `${source.name}: duplicate message ${messageId} ignored (receipt #${count})`,
+      before: { receiptCount: existing.receipt_count, outcome: existing.outcome },
+      after: { receiptCount: count, outcome: existing.outcome, sourceId, messageId, messageType, eventId: existing.id, via },
     });
     logReceipt(ctx, { eventId: existing.id, sourceId, messageId, messageType, outcome: "duplicate_ignored", detail, via });
     return { outcome: "duplicate_ignored", eventId: existing.id, messageId, detail, receiptCount: count, reconciliation: [] };
@@ -241,9 +302,9 @@ export function importSourceMessage(ctx: Ctx, sourceId: string, message: SourceM
     }
     // Nested transaction = savepoint: a failure rolls back every partial change
     // (including the integration_event row), so the failure path below never collides with it.
-    result = db.transaction(() => processMessage(ctx, source, { eventId, messageId, messageType, payloadText, isRetry, existing }))();
+    result = db.transaction(() => processMessage(ctx, source, { eventId, messageId, messageType, payloadText, isRetry, existing, sentAt }))();
   } catch (e) {
-    result = recordFailure(ctx, source, { eventId, messageId, messageType, payloadText, existing }, e);
+    result = recordFailure(ctx, source, { eventId, messageId, messageType, payloadText, existing, sentAt }, e);
   }
   // The receipt is a log line written after the outcome is settled; logging can never undo or fail the import.
   logReceipt(ctx, { eventId, sourceId, messageId: result.messageId || `missing-id:${eventId}`, messageType, outcome: result.outcome, detail: result.detail, via });
@@ -253,13 +314,13 @@ export function importSourceMessage(ctx: Ctx, sourceId: string, message: SourceM
 function recordFailure(
   ctx: Ctx,
   source: SourceRow,
-  m: { eventId: string; messageId: string; messageType: string; payloadText: string; existing?: EventRow },
+  m: { eventId: string; messageId: string; messageType: string; payloadText: string; existing?: EventRow; sentAt?: string | null },
   e: unknown,
 ): ImportResult {
   const db = ctx.db;
   const detail =
     e instanceof ImportFailure || e instanceof DomainError ? e.message : `Unexpected processing error: ${e instanceof Error ? e.message : String(e)}`;
-  if (!(e instanceof ImportFailure) && !(e instanceof DomainError)) console.error("[sourceImport] unexpected", e);
+  if (!(e instanceof ImportFailure) && !(e instanceof DomainError)) log("error", "import.unexpected_error", { correlationId: ctx.correlationId, sourceId: source.id, messageId: m.messageId, error: e });
   const entityKey = guessEntityKey(source, m.payloadText);
   const storedMessageId = m.messageId || `missing-id:${m.eventId}`;
   if (m.existing) {
@@ -273,14 +334,17 @@ function recordFailure(
       `INSERT INTO integration_event (id, source_id, message_id, message_type, entity_key, source_version, source_updated_at, received_at, outcome, detail, payload, receipt_count)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'failed', ?, ?, 1)
        ON CONFLICT(source_id, message_id) DO UPDATE SET outcome = 'failed', detail = excluded.detail, receipt_count = receipt_count + 1`,
-    ).run(m.eventId, source.id, storedMessageId, m.messageType, entityKey.key, entityKey.version, entityKey.updatedAt, ctx.now, detail, m.payloadText);
+    ).run(m.eventId, source.id, storedMessageId, m.messageType, entityKey.key, entityKey.version, m.sentAt ?? entityKey.updatedAt, ctx.now, detail, m.payloadText);
   }
   audit(ctx, {
     action: "integration.import_failed",
     entityType: "integration_event",
     entityId: m.eventId,
+    sourceRef: `${source.id}:${storedMessageId}:v${entityKey.version ?? "?"}`,
     summary: `${source.name}: message ${m.messageId || "(no id)"} could not be applied — kept in the failure queue`,
     reason: detail,
+    before: m.existing ? { outcome: m.existing.outcome, receiptCount: m.existing.receipt_count } : undefined,
+    after: { outcome: "failed", sourceId: source.id, messageId: storedMessageId, messageType: m.messageType, eventId: m.eventId, entityKey: entityKey.key, sourceVersion: entityKey.version },
   });
   return { outcome: "failed", eventId: m.eventId, messageId: m.messageId, detail, reconciliation: [] };
 }
@@ -294,13 +358,17 @@ interface ProcessInput {
   payloadText: string;
   isRetry: boolean;
   existing?: EventRow;
+  /** The source's claimed event time (envelope sent_at); null → the payload's updated_at. */
+  sentAt?: string | null;
 }
 
 function processMessage(ctx: Ctx, source: SourceRow, m: ProcessInput): ImportResult {
   const db = ctx.db;
   if (!source.tenant_id) throw new ImportFailure(`${source.name} has no source tenant, so its identifiers have no namespace. Message not applied.`);
+  // accession.issued / accession.acknowledged: compared with the local record and recorded; never issue or renumber.
+  if (isAccessionMessageType(m.messageType)) return processAccessionMessage(ctx, source, m);
   if (!(SUPPORTED_MESSAGE_TYPES as readonly string[]).includes(m.messageType)) {
-    throw new ImportFailure(`Unsupported message type "${m.messageType}". Supported: ${SUPPORTED_MESSAGE_TYPES.join(", ")}.`);
+    throw new ImportFailure(`Unsupported message type "${m.messageType}". Supported: ${[...SUPPORTED_MESSAGE_TYPES, "accession.issued", "accession.acknowledged"].join(", ")}.`);
   }
   let raw: unknown;
   try {
@@ -308,7 +376,7 @@ function processMessage(ctx: Ctx, source: SourceRow, m: ProcessInput): ImportRes
   } catch {
     throw new ImportFailure("Payload is not valid JSON. Stored verbatim; nothing was applied.");
   }
-  const parsed = SimulatedOrderSchema.safeParse(raw);
+  const parsed = (m.messageType === "specimen.submitted" ? SpecimenSubmittedSchema : SimulatedOrderSchema).safeParse(raw);
   if (!parsed.success) {
     const issues = parsed.error.issues.slice(0, 4).map((i) => `${i.path.join(".") || "payload"}: ${i.message}`).join("; ");
     throw new ImportFailure(`Payload failed validation (${issues}). Stored verbatim; nothing was applied.`);
@@ -324,12 +392,12 @@ function processMessage(ctx: Ctx, source: SourceRow, m: ProcessInput): ImportRes
     if (m.existing) {
       db.prepare(
         `UPDATE integration_event SET outcome = ?, detail = ?, entity_key = ?, source_version = ?, source_updated_at = ?, receipt_count = receipt_count + 1 WHERE id = ?`,
-      ).run(outcome, `${detail} (${outcome === "applied" ? "applied" : "processed"} on retry at ${fmtTime(ctx.now)} ET)`, entityKey, p.version, p.updated_at, m.eventId);
+      ).run(outcome, `${detail} (${outcome === "applied" ? "applied" : "processed"} on retry at ${fmtTime(ctx.now)} ET)`, entityKey, p.version, m.sentAt ?? p.updated_at, m.eventId);
     } else {
       db.prepare(
         `INSERT INTO integration_event (id, source_id, message_id, message_type, entity_key, source_version, source_updated_at, received_at, outcome, detail, payload, receipt_count)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
-      ).run(m.eventId, source.id, m.messageId, m.messageType, entityKey, p.version, p.updated_at, ctx.now, outcome, detail, m.payloadText);
+      ).run(m.eventId, source.id, m.messageId, m.messageType, entityKey, p.version, m.sentAt ?? p.updated_at, ctx.now, outcome, detail, m.payloadText);
     }
     return { outcome, eventId: m.eventId, messageId: m.messageId, detail, sourceOrderId: p.order_id, version: p.version, reconciliation: [], ...extra };
   };
@@ -363,7 +431,19 @@ function processMessage(ctx: Ctx, source: SourceRow, m: ProcessInput): ImportRes
       action: "integration.stale_ignored",
       entityType: "source_order",
       entityId: order.id,
+      sourceRef: `${source.id}:${m.messageId}:v${p.version}`,
       summary: `${source.name}: ${p.order_id} v${p.version} ignored as stale (stored v${order.source_version})${contentConflict ? "; same version with different content sent for review" : ""}`,
+      before: { sourceVersion: order.source_version },
+      after: {
+        sourceVersion: order.source_version,
+        receivedVersion: p.version,
+        sourceId: source.id,
+        messageId: m.messageId,
+        messageType: m.messageType,
+        eventId: m.eventId,
+        contentConflict,
+        reviewTaskIds: notes.map((n) => n.ref).filter(Boolean),
+      },
     });
     return finish("stale_ignored", detail, { orderId: order.id, previousVersion: order.source_version, reconciliation: notes });
   }
@@ -377,7 +457,21 @@ function processMessage(ctx: Ctx, source: SourceRow, m: ProcessInput): ImportRes
       action: "integration.order_imported",
       entityType: "source_order",
       entityId: created.orderId,
+      sourceRef: `${source.id}:${m.messageId}:v${p.version}`,
       summary: `${source.name}: new order ${p.order_id} v${p.version} imported (simulated source)`,
+      after: {
+        sourceOrderId: p.order_id,
+        tenantId: source.tenant_id,
+        sourceVersion: p.version,
+        sourceStatus: isCancel ? "canceled" : "active",
+        patientRefId: (db.prepare("SELECT patient_ref_id p FROM source_order WHERE id = ?").get(created.orderId) as { p: string }).p,
+        parts: p.specimens.map((s) => s.designation),
+        sourceId: source.id,
+        messageId: m.messageId,
+        messageType: m.messageType,
+        eventId: m.eventId,
+        reconciliation: created.notes.map((n) => ({ kind: n.kind, ref: n.ref ?? null })),
+      },
     });
     return finish("applied", detail, { orderId: created.orderId, reconciliation: [{ kind: "order_created", summary: base, ref: p.order_id }, ...created.notes] });
   }
@@ -407,7 +501,7 @@ interface PatientRow {
  * tenant's namespace (never matched to another tenant's office or guessed by name). With no approved
  * routing rule, its items go to the routing exception lane, and a supervisor gets a review task.
  */
-function ensureOffice(ctx: Ctx, source: SourceRow, p: SimulatedOrder, notes: ReconciliationNote[]): { id: string; name: string } {
+function ensureOffice(ctx: Ctx, source: SourceRow, p: SimulatedOrder, notes: ReconciliationNote[], msg: { messageId: string; eventId: string }): { id: string; name: string } {
   const db = ctx.db;
   const tenant = source.tenant_id!;
   const known = db.prepare("SELECT id, name FROM office WHERE tenant_id = ? AND source_office_id = ?").get(tenant, p.office_id) as
@@ -438,26 +532,36 @@ function ensureOffice(ctx: Ctx, source: SourceRow, p: SimulatedOrder, notes: Rec
     action: "office.created_from_source",
     entityType: "office",
     entityId: id,
+    sourceRef: `${source.id}:${msg.messageId}:v${p.version}`,
     summary: `${source.name}: office ${p.office_id} was not in the directory for this tenant; recorded as new and unreviewed (${code}). Items route to the exception lane until a rule is approved.`,
+    after: { officeId: id, tenantId: tenant, sourceOfficeId: p.office_id, code, status: "new_unreviewed", reviewTaskId: taskId, sourceOrderId: p.order_id, sourceId: source.id, messageId: msg.messageId, eventId: msg.eventId },
   });
   notes.push({ kind: "new_office_review", summary: `Office ${p.office_id} was new for this tenant: recorded as unreviewed (${code}); supervisor review task opened; items go to the routing exception lane.`, ref: taskId });
   return { id, name };
 }
 
-function samePerson(row: PatientRow, p: SimulatedOrder["patient"]): { same: boolean; what: string[] } {
+/** `what` quotes both values (task titles and the import detail, shown where identification happens); `fields` names them only (audit trail). */
+function samePerson(row: PatientRow, p: SimulatedOrder["patient"]): { same: boolean; what: string[]; fields: string[] } {
   const [family, given] = splitName(p.name);
   const what: string[] = [];
+  const fields: string[] = [];
   const norm = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
-  if (norm(row.family_name) !== norm(family) || norm(row.given_name) !== norm(given)) what.push(`name ${row.family_name}, ${row.given_name} → ${p.name}`);
-  if (row.birth_date.trim() !== p.birth_date.trim()) what.push(`date of birth ${row.birth_date} → ${p.birth_date}`);
-  return { same: what.length === 0, what };
+  if (norm(row.family_name) !== norm(family) || norm(row.given_name) !== norm(given)) {
+    what.push(`name ${row.family_name}, ${row.given_name} → ${p.name}`);
+    fields.push("name");
+  }
+  if (row.birth_date.trim() !== p.birth_date.trim()) {
+    what.push(`date of birth ${row.birth_date} → ${p.birth_date}`);
+    fields.push("date of birth");
+  }
+  return { same: what.length === 0, what, fields };
 }
 
 function createOrderFromPayload(ctx: Ctx, source: SourceRow, p: SimulatedOrder, m: ProcessInput, isCancel: boolean): { orderId: string; notes: ReconciliationNote[] } {
   const db = ctx.db;
   const tenant = source.tenant_id!;
   const notes: ReconciliationNote[] = [];
-  const office = ensureOffice(ctx, source, p, notes);
+  const office = ensureOffice(ctx, source, p, notes, { messageId: m.messageId, eventId: m.eventId });
   // Patient reference: (tenant, MRN) is the key. A name is never a key.
   const existingPatient = db.prepare("SELECT * FROM patient_ref WHERE tenant_id = ? AND source_mrn = ?").get(tenant, p.patient.mrn) as PatientRow | undefined;
   let patient: { id: string } | undefined = existingPatient;
@@ -519,7 +623,7 @@ function applyNewerVersion(ctx: Ctx, source: SourceRow, order: OrderRow, p: Simu
   const versionLabel = `${p.order_id} v${p.version}`;
   const amendNote = p.amendment_note ? ` (${p.amendment_note})` : "";
 
-  const orderLevel = reconcileOrderLevel(ctx, source, order, p, versionLabel);
+  const orderLevel = reconcileOrderLevel(ctx, source, order, p, versionLabel, { messageId: m.messageId, eventId: m.eventId });
   notes.push(...orderLevel.notes);
 
   const changeSummary = isCancel ? `Order canceled at source${amendNote}` : `Amended at source${amendNote}`;
@@ -588,9 +692,19 @@ function applyNewerVersion(ctx: Ctx, source: SourceRow, order: OrderRow, p: Simu
     action: isCancel ? "integration.order_canceled" : "integration.order_amended",
     entityType: "source_order",
     entityId: order.id,
+    sourceRef: `${source.id}:${m.messageId}:v${p.version}`,
     summary: `${source.name}: ${p.order_id} v${order.source_version} → v${p.version} ${isCancel ? "canceled at source" : "amended at source"}${amendNote}. Original v${order.source_version} kept.`,
     before: { source_version: order.source_version, source_status: order.source_status },
-    after: { source_version: p.version, source_status: isCancel ? "canceled" : "amended", reconciliation: notes.map((n) => n.kind) },
+    after: {
+      source_version: p.version,
+      source_status: isCancel ? "canceled" : "amended",
+      reconciliation: notes.map((n) => n.kind),
+      reconciliationRefs: notes.map((n) => ({ kind: n.kind, ref: n.ref ?? null })),
+      sourceId: source.id,
+      messageId: m.messageId,
+      messageType: m.messageType,
+      eventId: m.eventId,
+    },
   });
   return notes;
 }
@@ -609,6 +723,7 @@ function reconcileOrderLevel(
   order: OrderRow,
   p: SimulatedOrder,
   versionLabel: string,
+  msg: { messageId: string; eventId: string },
 ): { notes: ReconciliationNote[]; patch: Record<string, unknown> } {
   const db = ctx.db;
   const tenant = source.tenant_id!;
@@ -639,9 +754,15 @@ function reconcileOrderLevel(
   if (!cur) return { notes, patch };
 
   const review: string[] = [];
+  // The same changes for the audit trail: patient identifiers named by field only (C4); the task keeps both values.
+  const reviewAudit: string[] = [];
+  const both = (text: string, audited = text) => {
+    review.push(text);
+    reviewAudit.push(audited);
+  };
   let urgent = false;
   if (cur.source_mrn !== p.patient.mrn) {
-    review.push(`patient MRN ${cur.source_mrn} → ${p.patient.mrn} (order stays linked to the original patient)`);
+    both(`patient MRN ${cur.source_mrn} → ${p.patient.mrn} (order stays linked to the original patient)`, "patient MRN (order stays linked to the original patient)");
     urgent = true;
   } else {
     const cmp = samePerson(
@@ -649,16 +770,16 @@ function reconcileOrderLevel(
       p.patient,
     );
     if (!cmp.same) {
-      review.push(`patient ${cmp.what.join(", ")} (patient record not changed)`);
+      both(`patient ${cmp.what.join(", ")} (patient record not changed)`, `patient ${cmp.fields.join(", ")} (patient record not changed)`);
       urgent = true;
     }
   }
   if (cur.source_office_id !== p.office_id) {
     const target = db.prepare("SELECT name FROM office WHERE tenant_id = ? AND source_office_id = ?").get(tenant, p.office_id) as { name: string } | undefined;
-    review.push(`office ${cur.office_name} → ${target?.name ?? `${p.office_id} (not in the directory)`} (routing not changed; nothing re-routed)`);
+    both(`office ${cur.office_name} → ${target?.name ?? `${p.office_id} (not in the directory)`} (routing not changed; nothing re-routed)`);
   }
   if ((cur.source_encounter_id ?? null) !== (p.encounter_id ?? null)) {
-    review.push(`encounter ${cur.source_encounter_id ?? "Unknown"} → ${p.encounter_id ?? "Unknown"} (related-order decisions may need a second look)`);
+    both(`encounter ${cur.source_encounter_id ?? "Unknown"} → ${p.encounter_id ?? "Unknown"} (related-order decisions may need a second look)`);
   }
   const provider = p.ordering_provider_id ?? null;
   const resolvedProvider = resolveClinician(db, tenant, provider);
@@ -668,7 +789,7 @@ function reconcileOrderLevel(
       const name = (db.prepare("SELECT display_name FROM clinician WHERE id = ?").get(resolvedProvider) as { display_name: string }).display_name;
       notes.push({ kind: "order_values_updated", summary: `Ordering provider ${cur.provider_name ?? "Unknown"} → ${name}.`, ref: order.id });
     } else {
-      review.push(
+      both(
         `ordering provider ${cur.provider_name ?? "Unknown"} → ${provider ? `${provider} (not in the directory; previous provider kept)` : "not given (previous provider kept)"}`,
       );
     }
@@ -692,7 +813,21 @@ function reconcileOrderLevel(
       action: "integration.order_level_change_review",
       entityType: "source_order",
       entityId: order.id,
-      summary: `${source.name}: ${versionLabel} changed ${review.join("; ")} — sent for review, not applied`,
+      sourceRef: `${source.id}:${msg.messageId}:v${p.version}`,
+      summary: `${source.name}: ${versionLabel} changed ${reviewAudit.join("; ")} — sent for review, not applied`,
+      before: { patientRefId: order.patient_ref_id, officeId: order.office_id, encounterId: order.encounter_id, sourceVersion: order.source_version },
+      after: {
+        // Not applied: the working values stay as they were until a person reviews the task.
+        patientRefId: order.patient_ref_id,
+        officeId: order.office_id,
+        encounterId: order.encounter_id,
+        receivedVersion: p.version,
+        changes: reviewAudit,
+        reviewTaskId: taskId,
+        sourceId: source.id,
+        messageId: msg.messageId,
+        eventId: msg.eventId,
+      },
     });
     notes.push({
       kind: urgent ? "patient_conflict" : "order_level_review",
@@ -1142,6 +1277,9 @@ function openCorrectionReview(ctx: Ctx, order: OrderRow, part: OrderPartRow, sp:
     summary: `${display} opened: ${versionLabel} changed ${changes.map((c) => c.label.toLowerCase()).join(", ")} on issued ${sp.accession_number} part ${sp.designation}. Part site and identity unchanged.`,
     after: originalRefs,
   });
+  // Until the review is closed, the affected part may not move on with the superseded details: an ordinary
+  // scoped hold (gross approval, print, tray delivery) that every screen and command already honours.
+  holdPartForSourceAmendment(ctx, id);
   return { kind: "correction_review_opened", summary: `${sp.accession_number} part ${sp.designation}: correction review ${display} opened (issued part not changed).`, ref: id };
 }
 
@@ -1381,7 +1519,11 @@ function sortKeys(v: unknown): unknown {
 
 function guessEntityKey(source: SourceRow, payloadText: string): { key: string; version: number | null; updatedAt: string | null } {
   try {
-    const p = JSON.parse(payloadText) as { order_id?: unknown; version?: unknown; updated_at?: unknown };
+    const p = JSON.parse(payloadText) as { order_id?: unknown; version?: unknown; updated_at?: unknown; request_id?: unknown };
+    if (typeof p.order_id !== "string" && typeof p.request_id === "string") {
+      // An accession message (accession.issued / accession.acknowledged): keyed by the lab's request id.
+      return { key: `${source.tenant_id ?? source.id}:accession_request:${p.request_id.slice(0, 40)}`, version: null, updatedAt: null };
+    }
     return {
       key: `${source.tenant_id ?? source.id}:${typeof p.order_id === "string" ? p.order_id : "unknown"}`,
       version: typeof p.version === "number" ? p.version : null,
@@ -1410,6 +1552,6 @@ function logReceipt(
         .run(newId(ctx.db, "irc"), r.eventId, r.sourceId, r.messageId, r.messageType, ctx.now, r.outcome, r.detail, r.via);
     })();
   } catch (e) {
-    console.error("[sourceImport] receipt log not written (import outcome unaffected)", e);
+    log("error", "import.receipt_log_failed", { correlationId: ctx.correlationId, sourceId: r.sourceId, messageId: r.messageId, error: e });
   }
 }

@@ -6,6 +6,7 @@ import { audit } from "../core/audit";
 import { recordWorklistChange } from "../core/feed";
 import { closeTasks, openTask } from "../core/tasks";
 import { updateVersioned } from "../core/versioning";
+import { placeHold, releaseHold, type HoldRow, type HoldTransition } from "./holds";
 
 /**
  * Post-accession discrepancy → correction review (SM-10).
@@ -81,6 +82,69 @@ export function snapshotRefs(db: DB, accessionId: string): Record<string, unknow
     .all(accessionId, accessionId);
   const intake = db.prepare("SELECT display_id FROM intake_item WHERE accession_id = ? ORDER BY display_id").all(accessionId);
   return { accession: a, parts, blocks, slides, labels, intakeItems: intake, capturedFor: "correction review (original references kept)" };
+}
+
+// ---------------------------------------------------------------- pending source amendment → ordinary scoped hold
+
+/**
+ * A correction review opened because the source order of an ISSUED part changed (the source import opens it)
+ * means the part's identity data may be wrong until a person reviews it. The part gets an ordinary scoped
+ * hold, linked to the review through its reason code, so every screen and every command that checks holds
+ * sees it; closing the review releases it (with an audit record from holds.ts).
+ */
+export const SOURCE_AMENDMENT_HOLD_BLOCKS: HoldTransition[] = ["gross_approval", "print", "tray_delivery"];
+const CORRECTION_HOLD_PREFIX = "correction_review:";
+
+export function correctionHoldReason(correctionId: string): string {
+  return `${CORRECTION_HOLD_PREFIX}${correctionId}`;
+}
+
+/** The correction review a hold is linked to, or null. */
+export function correctionIdOfHold(reasonCode: string | null | undefined): string | null {
+  return reasonCode && reasonCode.startsWith(CORRECTION_HOLD_PREFIX) ? reasonCode.slice(CORRECTION_HOLD_PREFIX.length) : null;
+}
+
+/** The issued specimen part a correction review is about (from its snapshot of original references), or null. */
+export function correctionPart(db: DB, c: Pick<CorrectionRow, "accession_id" | "original_refs">): { id: string; designation: string; accession_number: string } | null {
+  let designation: string | null = null;
+  try {
+    const refs = JSON.parse(c.original_refs) as { part_designation?: unknown };
+    designation = typeof refs.part_designation === "string" ? refs.part_designation : null;
+  } catch {
+    designation = null;
+  }
+  if (!designation) return null;
+  return (
+    (db
+      .prepare("SELECT sp.id, sp.designation, a.accession_number FROM specimen_part sp JOIN accession a ON a.id = sp.accession_id WHERE sp.accession_id = ? AND sp.designation = ?")
+      .get(c.accession_id, designation) as { id: string; designation: string; accession_number: string } | undefined) ?? null
+  );
+}
+
+/**
+ * Place the scoped hold for a correction review opened by a source amendment on an issued part. Idempotent
+ * (one active hold per part and review). Returns null when the review names no issued part.
+ * To be called by the source import right after it opens the review.
+ */
+export function holdPartForSourceAmendment(ctx: Ctx, correctionId: string): HoldRow | null {
+  const c = ctx.db.prepare("SELECT * FROM correction_review WHERE id = ?").get(correctionId) as CorrectionRow | undefined;
+  if (!c) throw new DomainError("NOT_FOUND", "Correction review was not found");
+  if (c.status === "closed_no_change" || c.status === "closed_corrected_in_source") return null;
+  const part = correctionPart(ctx.db, c);
+  if (!part) return null;
+  return placeHold(ctx, {
+    scope: { type: "specimen_part", id: part.id },
+    scopeLabel: `${part.accession_number} part ${part.designation}`,
+    blocks: SOURCE_AMENDMENT_HOLD_BLOCKS,
+    reasonCode: correctionHoldReason(c.id),
+    reasonText: `Source order amended after accession; correction review ${c.display_id} open`,
+    accessionId: c.accession_id,
+  });
+}
+
+/** Active holds linked to a correction review. */
+export function holdsForCorrection(db: DB, correctionId: string): HoldRow[] {
+  return db.prepare("SELECT * FROM hold WHERE status = 'active' AND reason_code = ? ORDER BY placed_at").all(correctionHoldReason(correctionId)) as HoldRow[];
 }
 
 function leadOwner(db: DB): string | null {
@@ -176,6 +240,10 @@ export function closeCorrection(
   }) as unknown as CorrectionRow;
   closeTasks(ctx, "correction_review", "correction_review", c.id);
   const acc = db.prepare("SELECT accession_number FROM accession WHERE id = ?").get(c.accession_id) as { accession_number: string };
+  // A closed review releases the hold it placed (a referral keeps it: the review is still open at the source).
+  if (closing) {
+    for (const h of holdsForCorrection(db, c.id)) releaseHold(ctx, h.id, `Correction review ${c.display_id} closed: ${CORRECTION_STATUS_LABEL[input.outcome]}. ${input.note.trim()}`);
+  }
   if (!closing) {
     openTask(ctx, {
       kind: "correction_review",

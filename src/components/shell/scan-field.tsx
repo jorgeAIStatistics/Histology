@@ -1,12 +1,31 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { LoaderCircle, ScanLine, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { PREFS } from "@/lib/client/pref-keys";
 import { usePref } from "@/lib/client/preferences";
 import { useScan } from "@/lib/client/scan";
 import { TONE_CLASSES, TONE_ICON } from "@/components/ui/tone";
+import { IdText } from "@/components/domain/id-text";
+
+/** The scan target's words, with each hyphenated identifier (TRY-M-03, RR-0192) kept on one line. */
+function TargetLabel({ label }: { label: string }) {
+  const parts = label.split(/(\S+-\S+)/);
+  return (
+    <>
+      {parts.map((part, i) =>
+        i % 2 === 1 ? (
+          <span key={i} className="whitespace-nowrap">
+            {part}
+          </span>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+}
 
 /**
  * Global scan / search field (spec §5.1, §7). Same place on every page, 40px
@@ -20,11 +39,17 @@ export function ScanField() {
   const scan = useScan();
   const [value, setValue] = useState("");
   const [visible, setVisible] = useState(false);
+  // Long results are clamped to two lines so the line under the field covers as little of the page as possible.
+  const [expanded, setExpanded] = useState(false);
+  const [clamped, setClamped] = useState(false);
+  const messageRef = useRef<HTMLParagraphElement>(null);
   const [politeMsg, setPoliteMsg] = useState("");
   const [alertMsg, setAlertMsg] = useState("");
   const [suffix] = usePref(PREFS.scannerSuffix);
   const resultId = useId();
   const lastAt = useRef(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const lineRef = useRef<HTMLDivElement>(null);
 
   const result = scan.result;
 
@@ -36,6 +61,7 @@ export function ScanField() {
     }
     lastAt.current = result.at;
     setVisible(true);
+    setExpanded(false);
     setPoliteMsg("");
     setAlertMsg("");
     const say = window.setTimeout(() => {
@@ -50,6 +76,37 @@ export function ScanField() {
     };
   }, [result]);
 
+  // Keyboard focus never sits under the result line (WCAG 2.4.11): when focus moves to a control of the page that the
+  // line covers (the screen's tabs under it, at 200% zoom all of them), the line closes, as Esc or its X would close it.
+  // The result was already announced; focus within the scan field and the line itself leaves it open.
+  useEffect(() => {
+    if (!visible) return;
+    let frame = 0;
+    const onFocusIn = (e: FocusEvent) => {
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      if (!target || wrapRef.current?.contains(target)) return;
+      cancelAnimationFrame(frame);
+      // After the browser has scrolled the focused control into view.
+      frame = requestAnimationFrame(() => {
+        const line = lineRef.current?.getBoundingClientRect();
+        const r = target.getBoundingClientRect();
+        if (line && r.left < line.right && r.right > line.left && r.top < line.bottom && r.bottom > line.top) setVisible(false);
+      });
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("focusin", onFocusIn);
+    };
+  }, [visible]);
+
+  // "Show all" only when the two-line clamp actually hides text (any width, any message).
+  useLayoutEffect(() => {
+    const el = messageRef.current;
+    if (!el || expanded) return;
+    setClamped(el.scrollHeight > el.clientHeight + 1);
+  }, [result, visible, expanded]);
+
   const submit = async () => {
     const v = value;
     if (!v.trim() || scan.pending) return;
@@ -62,7 +119,7 @@ export function ScanField() {
   const c = TONE_CLASSES[tone];
 
   return (
-    <div className="relative min-w-[260px] max-w-[560px] flex-1 xl:min-w-[380px]">
+    <div ref={wrapRef} className="relative min-w-[200px] max-w-[560px] flex-1 max-lg:max-w-none">
       <div
         className={cn(
           "flex h-10 items-stretch overflow-hidden rounded-md border border-line-strong bg-surface",
@@ -72,13 +129,17 @@ export function ScanField() {
         <label
           htmlFor="scan-field"
           className={cn(
-            "flex max-w-[55%] shrink-0 cursor-text items-center gap-1.5 border-r border-line px-2.5 text-sm font-medium",
+            "flex max-w-[55%] shrink-0 cursor-text items-center gap-1.5 border-r border-line px-2.5 text-sm font-medium max-xl:px-2",
             scan.isDefault ? "bg-surface-subtle text-ink-secondary" : "bg-brand-50 text-brand-ink",
           )}
         >
           <ScanLine className="size-4 shrink-0" aria-hidden />
           <span className="sr-only">Scan target: </span>
-          <span className="truncate">{scan.target.label}</span>
+          {/* Where the field is narrow (1024px, a signed-in bar) the target takes a second line instead of cutting its
+              identifier ("Check block for RR-01…"); an identifier never splits across the two lines. */}
+          <span className="line-clamp-2 leading-tight" title={scan.target.label}>
+            <TargetLabel label={scan.target.label} />
+          </span>
         </label>
         <input
           id="scan-field"
@@ -124,15 +185,24 @@ export function ScanField() {
 
       {visible && result ? (
         <div
+          ref={lineRef}
           id={resultId}
           className={cn(
-            "animate-fade-in absolute left-0 right-0 top-[calc(100%+4px)] z-50 flex items-start gap-2 rounded-md border border-l-4 bg-surface px-2.5 py-1.5 text-sm shadow-2",
+            "animate-rise-in absolute left-0 right-0 top-[calc(100%+4px)] z-50 flex items-start gap-2 rounded-lg border bg-surface px-2.5 py-1.5 text-sm shadow-3",
             c.border,
-            c.stripe,
           )}
         >
           <ResultIcon className={cn("mt-0.5 size-4 shrink-0", c.solidText)} aria-hidden />
-          <p className={cn("min-w-0 flex-1", tone === "danger" || tone === "warning" ? c.fg : "text-ink")}>{result.message}</p>
+          <div className="min-w-0 flex-1">
+            <p ref={messageRef} className={cn(!expanded && "line-clamp-2", tone === "danger" || tone === "warning" ? c.fg : "text-ink")} title={result.message}>
+              <IdText text={result.message} />
+            </p>
+            {clamped || expanded ? (
+              <button type="button" onClick={() => setExpanded((v) => !v)} className="mt-0.5 text-xs font-medium text-brand underline underline-offset-2">
+                {expanded ? "Show less" : "Show all"}
+              </button>
+            ) : null}
+          </div>
           <button
             type="button"
             onClick={() => setVisible(false)}

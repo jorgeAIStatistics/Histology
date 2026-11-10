@@ -1,0 +1,3 @@
+# Evidence exporter (scripts/export_evidence.py): its temporary package directory exists only during an export
+# (and is deleted on failure); never commit one left behind by a killed export.
+evidence/.tmp-*/

@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
-import { plexMono, plexSans } from "./fonts";
+import { hloMono, hloSans } from "./fonts";
 import { AppShell } from "@/components/shell/app-shell";
 import { DENSITY_BOOT_SCRIPT } from "@/lib/client/pref-keys";
 
@@ -23,7 +23,7 @@ export const dynamic = "force-dynamic";
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en-US" className={`${plexSans.variable} ${plexMono.variable}`} suppressHydrationWarning>
+    <html lang="en-US" className={`${hloSans.variable} ${hloMono.variable}`} suppressHydrationWarning>
       <head>
         {/* Applies the density preference before first paint (no flash). */}
         <script dangerouslySetInnerHTML={{ __html: DENSITY_BOOT_SCRIPT }} />

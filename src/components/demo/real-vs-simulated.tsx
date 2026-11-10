@@ -6,7 +6,7 @@ import { COPY_GUARD, REAL_VS_SIMULATED, type CapabilityRow } from "./content";
 function Status({ s }: { s: CapabilityRow["status"] }) {
   if (s === "Simulated") return <SimulatedLabel />;
   const Icon = s === "Working in this demo" ? CircleCheck : s === "Not implemented" ? CircleMinus : CircleHelp;
-  const cls = s === "Working in this demo" ? "text-success-solid" : "text-ink-muted";
+  const cls = s === "Working in this demo" ? "text-ink" : "text-ink-muted";
   return (
     <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-sm text-ink">
       <Icon className={`size-4 shrink-0 ${cls}`} aria-hidden />
@@ -22,7 +22,7 @@ export function RealVsSimulated() {
   return (
     <section aria-labelledby="rvs-title" className="grid gap-3">
       <div>
-        <h2 id="rvs-title" className="text-md font-semibold text-ink">
+        <h2 id="rvs-title" className="text-lg font-bold tracking-[-0.01em] text-ink">
           Real vs simulated
         </h2>
         <p className="max-w-[90ch] text-sm text-ink-secondary">
@@ -41,7 +41,9 @@ export function RealVsSimulated() {
         <TBody>
           {rows.map((r) => (
             <TR key={r.capability}>
-              <TD wrap>{r.capability}</TD>
+              <TD wrap className="font-medium">
+                {r.capability}
+              </TD>
               <TD>
                 <Status s={r.status} />
               </TD>
@@ -52,7 +54,7 @@ export function RealVsSimulated() {
           ))}
         </TBody>
       </Table>
-      <p className="text-xs text-ink-muted">{COPY_GUARD}</p>
+      <p className="text-sm text-ink-muted">{COPY_GUARD}</p>
     </section>
   );
 }

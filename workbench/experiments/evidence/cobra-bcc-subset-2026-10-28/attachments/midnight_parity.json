@@ -1,0 +1,35 @@
+{
+  "banner": "Midnight-12k adapter parity record, 2026-10-26 (before the engine fix rounds; the adapter code it exercised is not pinned by a code tree hash in this record). Compared the workbench adapter with transformers Dinov2Model.from_pretrained on the same local weights; kaiko's own pipeline was not run. Patches come from the public CC0 CMU-1-Small-Region slide, not from COBRA.",
+  "record": {
+    "date": "2026-10-26",
+    "key_conversion": {
+      "renamed": 400,
+      "split": 80
+    },
+    "load_seconds": {
+      "cpu": 9.4,
+      "mps": 11.0
+    },
+    "machine": "macOS arm64, Apple GPU (MPS), 18 GB RAM",
+    "max_rss_gib_two_models_loaded": 9.03,
+    "mps_vs_cpu": {
+      "cos_min": 0.9999999403953552,
+      "max_abs_diff": 6.9141387939453125e-06
+    },
+    "parity_vs_transformers_from_pretrained": {
+      "cos_min": 0.9999999403953552,
+      "device": "cpu fp32",
+      "max_abs_diff": 2.0265579223632812e-06,
+      "n": 8
+    },
+    "patches": "16 real tissue patches, 224 px at level 0 (0.499 um/px) of the CC0 CMU-1-Small-Region slide",
+    "throughput_fp32": {
+      "cpu_patches_per_s": 1.48,
+      "mps_patches_per_s": 5.32
+    },
+    "weights": "kaiko-ai/midnight model.safetensors sha256 52c14f20386ca17c2af8a7bf32c31c352668a8fbf6aefc88d86be6eaa0c72ca1 (matches Hugging Face LFS oid)"
+  },
+  "record_sha256": "5bd7e23186278a0ff97bcd5f2889cd35a5a0b9a92467f7711f7cb703676297bd",
+  "script_sha256": "2b81b5175bdbca8daf40abe3264b9859ecb34ac9cd2077aa3f1d2aad52b78dc0",
+  "weights_now": "see attachments/bulky_artifacts_index.json weights (re-hashed 2026-10-28)"
+}

@@ -1,0 +1,385 @@
+[
+ {
+  "vn": "1440",
+  "name": "operations",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1440",
+  "name": "intake-rel0112-kim",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [
+   "More below in your next step <- BUTTON.inline-flex shrink-0 select-no"
+  ],
+  "errors": []
+ },
+ {
+  "vn": "1440",
+  "name": "clarify",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1440",
+  "name": "gross",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1440",
+  "name": "worklist-histotech",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1440",
+  "name": "materials-trays",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [
+   "Dr. Elena Marsh (24 slides ready)Dr. Nad <- SECTION.sticky top-[var(--hlo-chrome-h",
+   "Open tray <- DIV.grid grid-cols-[minmax(0,1fr)_"
+  ],
+  "errors": []
+ },
+ {
+  "vn": "1440",
+  "name": "materials-retrieval",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1440",
+  "name": "insights",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1440",
+  "name": "console-world",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1440",
+  "name": "console-outages",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1366",
+  "name": "operations",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1366",
+  "name": "intake-rel0112-kim",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [
+   "More below in your next step <- BUTTON.inline-flex shrink-0 select-no"
+  ],
+  "errors": []
+ },
+ {
+  "vn": "1366",
+  "name": "clarify",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1366",
+  "name": "gross",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1366",
+  "name": "worklist-histotech",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1366",
+  "name": "materials-trays",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [
+   "Dr. Elena Marsh (24 slides ready)Dr. Nad <- SECTION.sticky top-[var(--hlo-chrome-h",
+   "Open tray <- DIV.grid grid-cols-[minmax(0,1fr)_"
+  ],
+  "errors": []
+ },
+ {
+  "vn": "1366",
+  "name": "materials-retrieval",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1366",
+  "name": "insights",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1366",
+  "name": "console-world",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1366",
+  "name": "console-outages",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1024",
+  "name": "operations",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1024",
+  "name": "intake-rel0112-kim",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [
+   "More below in your next step <- BUTTON.inline-flex shrink-0 select-no"
+  ],
+  "errors": []
+ },
+ {
+  "vn": "1024",
+  "name": "clarify",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1024",
+  "name": "gross",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1024",
+  "name": "worklist-histotech",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1024",
+  "name": "materials-trays",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [
+   "Dr. Elena Marsh (24 slides ready)Dr. Nad <- SECTION.sticky top-[var(--hlo-chrome-h",
+   "Open tray <- DIV.px-4 pt-3 pb-2.5",
+   "Record as not on tray… <- DIV.absolute inset-x-0 bottom-0 bg",
+   "Record as not on tray… <- SPAN."
+  ],
+  "errors": []
+ },
+ {
+  "vn": "1024",
+  "name": "materials-retrieval",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [
+   "Scan D26-03909 A1 <- BUTTON.flex min-h-[max(2rem,var(--hlo"
+  ],
+  "errors": []
+ },
+ {
+  "vn": "1024",
+  "name": "insights",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1024",
+  "name": "console-world",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "1024",
+  "name": "console-outages",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "zoom200",
+  "name": "operations",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "zoom200",
+  "name": "intake-rel0112-kim",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "zoom200",
+  "name": "clarify",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "zoom200",
+  "name": "gross",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "zoom200",
+  "name": "worklist-histotech",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "zoom200",
+  "name": "materials-trays",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [
+   "TRY-F-01Sent (receipt not recorded) <- SUMMARY.flex min-h-[max(2.25rem,var(--",
+   "Dr. Elena Marsh (24 slides ready)Dr. Nad <- SPAN.",
+   "Open tray <- SECTION.sticky top-[var(--hlo-chrome-h"
+  ],
+  "errors": []
+ },
+ {
+  "vn": "zoom200",
+  "name": "materials-retrieval",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "zoom200",
+  "name": "insights",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "zoom200",
+  "name": "console-world",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ },
+ {
+  "vn": "zoom200",
+  "name": "console-outages",
+  "status": 200,
+  "page": 0,
+  "bar": 0,
+  "obscured": [],
+  "errors": []
+ }
+]
